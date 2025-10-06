@@ -1,0 +1,28 @@
+name: drawform_flutter_app
+description: A cross‑platform Flutter application for Drawform.  
+publish_to: none
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.1.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  go_router: ^7.1.1
+  # Cross‑platform Python integration. This package embeds a Python runtime
+  # on desktop platforms (macOS, Windows and Linux). See documentation for usage【50642741854547†L191-L194】.
+  python_ffi: ^0.4.4
+  # State management. Feel free to replace with Riverpod or another solution.
+  provider: ^6.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    -  python/

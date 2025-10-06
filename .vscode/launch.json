@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Drawform (Windows)",
+      "type": "dart",
+      "request": "launch",
+      "program": "lib/main.dart",
+      "flutterMode": "debug",
+      "env": {
+        "PYTHONPATH": "${env:USERPROFILE}\\AppData\\Local\\Programs\\Python\\Python311\\Lib;${env:USERPROFILE}\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages;${workspaceFolder}\\python"
+      }
+    }
+  ]
+}
