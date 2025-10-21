@@ -1,8 +1,12 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/auth_service.dart';
+import '../../theme/ai_theme.dart';
+import '../../widgets/ai_background.dart';
+import '../../widgets/ai_gradient_button.dart';
 import '../../widgets/labeled_cupertino_field.dart';
 
 class RegisterPage extends StatefulWidget {
@@ -45,7 +49,9 @@ class _RegisterPageState extends State<RegisterPage> {
       _error = null;
     });
 
-    if (_emailError != null || _passwordError != null || _confirmError != null) {
+    if (_emailError != null ||
+        _passwordError != null ||
+        _confirmError != null) {
       return;
     }
 
@@ -66,91 +72,187 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = CupertinoTheme.of(context).textTheme;
-    return CupertinoPageScaffold(
-      backgroundColor: CupertinoColors.systemGroupedBackground,
-      navigationBar: const CupertinoNavigationBar(
-        middle: Text('Registrieren'),
-      ),
-      child: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'Konto anlegen',
-                    style: textTheme.navTitleTextStyle,
-                    textAlign: TextAlign.center,
+    final cupertinoTheme = CupertinoTheme.of(context);
+    final textStyle = cupertinoTheme.textTheme.textStyle;
+    final brightness = Theme.of(context).brightness;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return AiBackground(
+      child: CupertinoPageScaffold(
+        backgroundColor: Colors.transparent,
+        navigationBar: CupertinoNavigationBar(
+          backgroundColor: AiTheme.glassSurfaceColor
+              .resolveFrom(context)
+              .withValues(alpha: 0.85),
+          border: null,
+          middle: ShaderMask(
+            shaderCallback: (Rect bounds) =>
+                AiTheme.accentGradient(brightness).createShader(bounds),
+            blendMode: BlendMode.srcIn,
+            child: const Text(
+              'Neues Konto',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 18,
+              ),
+            ),
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: DecoratedBox(
+                  decoration: AiTheme.glassSurface(
+                    brightness: brightness,
+                    borderRadius: AiTheme.largeRadius,
+                    opacity: 0.88,
                   ),
-                  const SizedBox(height: 24),
-                  LabeledCupertinoField(
-                    label: 'E-Mail',
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    errorText: _emailError,
-                    onChanged: (_) {
-                      if (_emailError != null) {
-                        setState(() => _emailError = null);
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  LabeledCupertinoField(
-                    label: 'Passwort',
-                    controller: _passwordController,
-                    obscureText: true,
-                    errorText: _passwordError,
-                    onChanged: (_) {
-                      if (_passwordError != null) {
-                        setState(() => _passwordError = null);
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  LabeledCupertinoField(
-                    label: 'Passwort bestätigen',
-                    controller: _confirmController,
-                    obscureText: true,
-                    errorText: _confirmError,
-                    onChanged: (_) {
-                      if (_confirmError != null) {
-                        setState(() => _confirmError = null);
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  if (_error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Text(
-                        _error!,
-                        style: const TextStyle(
-                          color: CupertinoColors.destructiveRed,
-                          fontSize: 13,
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: AiTheme.accentGradient(brightness),
+                              ),
+                              padding: const EdgeInsets.all(14),
+                              child: const Icon(
+                                CupertinoIcons.person_add_solid,
+                                color: Colors.white,
+                                size: 22,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Konto anlegen',
+                                    style: textStyle.copyWith(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Erstelle einen Account und profitiere von AI-gestützten Workflows für deine Fertigungsprojekte.',
+                                    style: textStyle.copyWith(
+                                      fontSize: 14,
+                                      height: 1.4,
+                                      color: textStyle.color?.withValues(alpha: 0.7),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                        textAlign: TextAlign.center,
-                      ),
+                        const SizedBox(height: 28),
+                        LabeledCupertinoField(
+                          label: 'E-Mail',
+                          controller: _emailController,
+                          placeholder: 'team@drawform.ai',
+                          keyboardType: TextInputType.emailAddress,
+                          errorText: _emailError,
+                          onChanged: (_) {
+                            if (_emailError != null) {
+                              setState(() => _emailError = null);
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 18),
+                        LabeledCupertinoField(
+                          label: 'Passwort',
+                          controller: _passwordController,
+                          placeholder: '••••••••',
+                          obscureText: true,
+                          errorText: _passwordError,
+                          onChanged: (_) {
+                            if (_passwordError != null) {
+                              setState(() => _passwordError = null);
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 18),
+                        LabeledCupertinoField(
+                          label: 'Passwort bestätigen',
+                          controller: _confirmController,
+                          placeholder: '••••••••',
+                          obscureText: true,
+                          errorText: _confirmError,
+                          onChanged: (_) {
+                            if (_confirmError != null) {
+                              setState(() => _confirmError = null);
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 18),
+                        if (_error != null)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 6),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              color: CupertinoColors.destructiveRed
+                                  .withValues(alpha: 0.12),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  CupertinoIcons
+                                      .exclamationmark_triangle_fill,
+                                  color: CupertinoColors.destructiveRed,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _error!,
+                                    style: const TextStyle(
+                                      color: CupertinoColors.destructiveRed,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 12),
+                        AiGradientButton(
+                          label: 'Registrieren',
+                          onPressed: _loading ? null : _submit,
+                          busy: _loading,
+                        ),
+                        const SizedBox(height: 16),
+                        CupertinoButton(
+                          padding: EdgeInsets.zero,
+                          onPressed:
+                              _loading ? null : () => context.go('/login'),
+                          child: Text(
+                            'Zurück zur Anmeldung',
+                            style: textStyle.copyWith(
+                              color: colorScheme.secondary.withValues(alpha: 0.95),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  CupertinoButton.filled(
-                    onPressed: _loading ? null : _submit,
-                    child: _loading
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CupertinoActivityIndicator(),
-                          )
-                        : const Text('Registrieren'),
                   ),
-                  const SizedBox(height: 8),
-                  CupertinoButton(
-                    onPressed: () => context.go('/login'),
-                    child: const Text('Zurück zur Anmeldung'),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
