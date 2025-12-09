@@ -1,95 +1,85 @@
-# Drawform Flutter App
+# Drawform AI Workspace (React)
 
-Drawform ist eine desktopfokussierte Flutter-Anwendung, die ein lokal eingebettetes Python-Runtime über `python_ffi` anbindet. Das UI orientiert sich an modernen iOS-Designprinzipien, bietet einen Beispiel-Workflow für Export-Funktionalitäten und demonstriert ein leichtgewichtiges Authentifizierungs-Setup komplett in Flutter/Dart.
-
-## Inhaltsverzeichnis
-
-- [Architektur](#architektur)
-- [Features](#features)
-- [Systemvoraussetzungen](#systemvoraussetzungen)
-- [Projektstruktur](#projektstruktur)
-- [Lokale Entwicklung](#lokale-entwicklung)
-  - [Abhängigkeiten installieren](#abhängigkeiten-installieren)
-  - [App starten](#app-starten)
-  - [Tests](#tests)
-- [Python-Integration](#python-integration)
-- [Konfiguration](#konfiguration)
-- [Bekannte Einschränkungen](#bekannte-einschränkungen)
-
-## Architektur
-
-- **Flutter UI**: Strukturierte Navigation via `go_router`. Auf mobilen/niedrigen Breiten wird ein `CupertinoTabScaffold` eingesetzt, auf großen Displays eine Seitenleiste mit iOS-Look & Feel.
-- **State**: Ein einfacher `AuthController` (ChangeNotifier) hält Authentifizierungsstatus, Beispiel-Credentials und Benutzerprofil-Daten im Speicher.
-- **Python Bridge**: Über `python_ffi` wird ein eingebetteter Python-Interpreter gestartet. Der Service sorgt dafür, dass der Python-Skriptordner (`python/`) im `sys.path` liegt und stellt Wrapper für `exporter.py`-Funktionen bereit.
+Ein kompletter Rewrite der Drawform-App auf Basis von React, TypeScript und Vite.  
+Das neue Frontend setzt den iOSâ€¯26 Glass Look konsequent um, fÃ¼hlt sich wie eine KIâ€‘Experience an und kann auf demselben Server wie [Drawform-Website](https://github.com/LuTag99/Drawform-Website) ausgeliefert werden.
 
 ## Features
 
-- iOS-inspiriertes, responsives UI für Projekte, Dashboard, Export und Profilverwaltung.
-- Beispiel-Auth-Flow mit Login, Registrierung, Passwort-zurücksetzen und Profil-Sektion (Passwort/Bild ändern).
-- Export-Workflow, der via Python FFI einen Dummy-Export auf Dateiebene ausführt.
-- Zentraler Logout-Knopf sowohl in der Seitenleiste als auch im mobilen Navigationskopf.
+- Glasiges, responsives UI mit Desktop-Sidebar & Mobile-Tab-Bar.
+- Auth-Flow (Login, Registrierung, Passwort-Reset) ohne Backend â€“ Status bleibt im LocalStorage.
+- Dashboard mit AIâ€‘Insights (OpenAI) und animiertem Canvas-Chart.
+- ProjektÃ¼bersicht, Export-Center inkl. Server-Aufruf `/api/export`, Profilverwaltung mit Avatar + Passwortwechsel.
+- Komponentenbibliothek fÃ¼r Glass Cards, Gradient Buttons, Chips usw.
 
-## Systemvoraussetzungen
+## Tech-Stack
 
-- Flutter SDK 3.10+ (getestet mit Flutter 3.35.x).
-- Windows 10/11 für Desktop-Build (weitere Plattformen erfordern eigene Anpassungen).
-- Visual Studio 2022 Build Tools (für Windows Desktop Builds).
-- Optional: Android- oder Web-Toolchain, falls zusätzliche Targets benötigt werden.
+- React 19, React Router 7, TypeScript.
+- Vite 7 als Dev- und Build-Tool.
+- Framer Motion fÃ¼r subtile Animationen.
+- clsx + Custom CSS (glassmorphism + iOS Typographie).
+
+## Schnellstart
+
+```bash
+npm install
+cp .env.example .env.local   # OpenAI Key eintragen
+npm run dev
+```
+
+| Script           | Zweck                               |
+| ---------------- | ----------------------------------- |
+| `npm run dev`    | Vite-Dev-Server auf `5173`          |
+| `npm run build`  | Type-Check + Production Build (`dist/`) |
+| `npm run preview`| Vorschau des gebauten Bundles       |
+| `npm run lint`   | ESLint Ã¼ber das Repo                |
+
+## OpenAI-Anbindung
+
+- Leg deinen Key in `.env.local` als `VITE_OPENAI_API_KEY=sk-...` ab.  
+- Der Key wird **nie** ins Repo eingecheckt (`.env` ist ignoriert).  
+- `src/services/aiService.ts` ruft `https://api.openai.com/v1/chat/completions` (Modell `gpt-4.1-mini`).  
+- Fehlt der Key oder schlÃ¤gt der Call fehl, fÃ¤llt die App auf kuratierte Insights zurÃ¼ck.
+
+> **Sicherheitstipp:** Hinterlege den Key vorzugsweise serverseitig (Proxy oder Edge Function), damit er beim Deployment nicht im Browser landet.
+
+## Export-Service & gemeinsamer Server
+
+- `src/services/exportService.ts` erwartet einen Endpoint `POST /api/export` auf **derselben Domain** wie die Website.  
+- Lokal simuliert der Service den Export, sobald kein Backend antwortet.  
+- FÃ¼r eine gemeinsame Auslieferung mit [Drawform-Website](https://github.com/LuTag99/Drawform-Website):
+  1. `npm run build`
+  2. Den Inhalt aus `dist/` in das Webserver-Verzeichnis der bestehenden Seite kopieren (z.â€¯B. als Unterordner `/ai`).
+  3. Reverse-Proxy/Rewrite so konfigurieren, dass `/api/export` an euren Pythonâ€‘/Nodeâ€‘Service weitergeleitet wird.
 
 ## Projektstruktur
 
 ```
-lib/
-  main.dart                # Einstiegspunkt, Routing & Shell
-  pages/                   # UI-Seiten (Projekte, Dashboard, Export, Auth, Profil)
-  services/
-    auth_service.dart      # In-Memory Authentifizierung & Profil-Verwaltung
-    python_service.dart    # Python-Konnektor via python_ffi
-  widgets/                 # Cupertino-Helfer-Komponenten
-python/
-  exporter.py              # Dummy-Funktion für Export, arbeitet auf Dateisystemebene
-windows/                   # Desktop Runner
+src/
+  components/        # Glas-UI Bausteine (Buttons, Header, Cards)
+  layouts/           # Auth Layout + App Shell (Sidebar, Mobile Nav)
+  pages/             # Auth, Dashboard, Projekte, Export, Profil
+  providers/         # AuthContext (LocalStorage)
+  services/          # OpenAI-Client + Export-API Stub
+  styles/            # globals.css mit Glass Look Tokens
 ```
 
-## Lokale Entwicklung
+## Deployment
 
-### Abhängigkeiten installieren
-
-```powershell
-C:\src\flutter\bin\flutter.bat pub get
+```bash
+npm run build
+# dist/ nach Drawform-Website kopieren oder als eigenes Static Hosting ausliefern
 ```
 
-### App starten
+Auf klassischen Hosts (Nginx/Apache) reicht es, das `dist/`-Verzeichnis neben die bestehende Website zu legen und via Rewrite auf `index.html` zu routen. FÃ¼r moderne Deployments (Vercel, Netlify, Cloudflare Pages) einfach das Repo verbinden und `npm run build` als Build Command hinterlegen.
 
-```powershell
-C:\src\flutter\bin\flutter.bat run -d windows
-```
+### Plesk/Ubuntu Server
 
-> Tipp: Füge `C:\src\flutter\bin` permanent zu deinem `PATH` hinzu, damit du `flutter` ohne vollen Pfad aufrufen kannst.
+FÃ¼r klassische Plesk-Server (Apache/Nginx) findest du eine Schritt-fÃ¼r-Schritt-Anleitung unter `deploy/plesk/README.md`. Darin: Build erstellen, ZIP hochladen, `.htaccess` fÃ¼r SPA-Routing und Proxy-Hinweise fÃ¼r `/api/export`.
 
-### Tests
+## Weiterentwicklung
 
-Aktuell existieren keine Widget-/Unit-Tests. Du kannst dennoch das Standardskript ausführen:
+- Die Authentifizierung ist absichtlich lokal gehalten. HÃ¤nge hier dein bestehendes Backend an (`AuthProvider` austauschen).  
+- FÃ¼r AI-Features lassen sich weitere Panels (Co-Pilot, Generative Assist) leicht Ã¼ber `fetchAiInsight` erweitern.  
+- Die Export-Seite unterstÃ¼tzt bereits Drag & Drop â€“ bei Bedarf Dateianalyse/Progress-Bar ergÃ¤nzen.
 
-```powershell
-C:\src\flutter\bin\flutter.bat test
-```
-
-## Python-Integration
-
-- Die Python-Skripte liegen unter `python/` und werden beim Build als Flutter-Asset eingebunden (siehe `pubspec.yaml`).
-- `python_service.dart` sorgt dafür, dass `Directory.current` plus `python/` in `sys.path` eingefügt wird. Der Aufruf `PythonService.exportToVector` lädt `exporter.py` und ruft `export_to_vector` mit Pfad + Zielformat auf.
-- Die Beispielimplementierung kopiert die Eingabedatei lediglich in einen `exports/`-Unterordner und passt die Dateiendung an. Ersetze die Logik durch echte Export-Pipelines.
-
-## Konfiguration
-
-- **Launch-Konfiguration**: `.vscode/launch.json` setzt `PYTHONPATH`, so dass der Python-Interpreter lokal installierte Pakete sowie das Projektverzeichnis findet.
-- **Theme**: Die Cupertino-Looks sind in `main.dart` über `ThemeData` und `CupertinoThemeData` parametrisiert. Passe Farben/Schatten dort an.
-- **Navigation**: Neue Seiten oder Routen werden im `GoRouter` in `main.dart` ergänzt. Für geschützte Bereiche genügt die Anpassung des Redirect-Blocks.
-
-## Bekannte Einschränkungen
-
-- Authentifizierung ist rein In-Memory; nach App-Neustart existieren keine Benutzer.
-- `python_ffi` wird auf dem Web-Target nicht unterstützt. Dort sollte `PythonFfi.initialize()` fehlschlagen und in `main.dart` abgefangen werden.
-- Abhängigkeiten (z.?B. `go_router`) sind auf ältere Minor-Versionen gepinnt. Prüfe vor einem Upgrade API-Änderungen und passe Code an.
-- Kein automatisiertes Testing/CI vorhanden.
+Viel SpaÃŸ mit dem neuen Glass Look! âœ¨

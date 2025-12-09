@@ -2,14 +2,12 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Drawform (Windows)",
-      "type": "dart",
+      "name": "Drawform Web (Vite)",
+      "type": "pwa-chrome",
       "request": "launch",
-      "program": "lib/main.dart",
-      "flutterMode": "debug",
-      "env": {
-        "PYTHONPATH": "${env:USERPROFILE}\\AppData\\Local\\Programs\\Python\\Python311\\Lib;${env:USERPROFILE}\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages;${workspaceFolder}\\python"
-      }
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/src",
+      "preLaunchTask": "npm: dev"
     }
   ]
 }
