@@ -1,0 +1,12 @@
+services:
+  api:
+    build:
+      context: ./server
+    ports:
+      - "8000:8000"
+    environment:
+      - FREECAD_CMD=/usr/bin/FreeCADCmd
+      - QT_QPA_PLATFORM=offscreen
+    volumes:
+      - ./server:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload

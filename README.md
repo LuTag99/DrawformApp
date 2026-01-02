@@ -26,6 +26,13 @@ cp .env.example .env.local   # OpenAI Key eintragen
 npm run dev
 ```
 
+## Lokales Backend (STEP -> PDF)
+
+Fuer den MVP-Export (STEP -> A3 PDF mit ISO7200-Schriftkopf) gibt es einen lokalen FastAPI-Service.
+Details und Setup findest du unter `server/README.md`.
+
+Optional kannst du das Backend auch per Docker starten (siehe `server/README.md`).
+
 | Script           | Zweck                               |
 | ---------------- | ----------------------------------- |
 | `npm run dev`    | Vite-Dev-Server auf `5173`          |

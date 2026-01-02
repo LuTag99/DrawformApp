@@ -28,3 +28,12 @@ coverage
 *.sln
 *.sw?
 *.zip
+
+# Python backend
+server/.venv
+server/__pycache__
+**/__pycache__/
+*.pyc
+server/.cache
+server/tmp
+server/_debug
