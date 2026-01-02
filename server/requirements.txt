@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+svglib>=1.5
+reportlab>=4.2
