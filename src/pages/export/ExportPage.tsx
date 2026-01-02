@@ -1,17 +1,30 @@
-import { type FormEvent, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { HiOutlineArrowUpTray } from 'react-icons/hi2';
 import SectionHeader from '../../components/SectionHeader';
 import { GradientButton } from '../../components/GradientButton';
-import { requestVectorExport } from '../../services/exportService';
-
-const formats = ['dxf', 'dwg', 'svg', 'pdf'];
+import { requestPdfExport } from '../../services/exportService';
 
 export function ExportPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [format, setFormat] = useState('dxf');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [downloadName, setDownloadName] = useState<string | null>(null);
+  const [copyState, setCopyState] = useState<'idle' | 'success' | 'error'>('idle');
+  const [showPreview, setShowPreview] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const [logText, setLogText] = useState<string | null>(null);
+  const [logBusy, setLogBusy] = useState(false);
+  const [logCopyState, setLogCopyState] = useState<'idle' | 'success' | 'error'>('idle');
+
+  useEffect(() => {
+    return () => {
+      if (downloadUrl) {
+        URL.revokeObjectURL(downloadUrl);
+      }
+    };
+  }, [downloadUrl]);
 
   const onSelectFile = () => {
     fileInputRef.current?.click();
@@ -21,21 +34,51 @@ export function ExportPage() {
     const file = event.target.files?.[0];
     setSelectedFile(file ?? null);
     setStatus(null);
+    setDownloadName(null);
+    setShowPreview(false);
+    setShowLog(false);
+    setLogText(null);
+    setDownloadUrl((current) => {
+      if (current) {
+        URL.revokeObjectURL(current);
+      }
+      return null;
+    });
   };
 
   const handleExport = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selectedFile) {
-      setStatus({ type: 'error', message: 'Bitte zuerst eine Datei wählen.' });
+      setStatus({ type: 'error', message: 'Bitte zuerst eine STEP-Datei waehlen.' });
+      return;
+    }
+    const extension = selectedFile.name.split('.').pop()?.toLowerCase();
+    if (!extension || !['step', 'stp'].includes(extension)) {
+      setStatus({ type: 'error', message: 'Nur STEP-Dateien (.step/.stp) sind erlaubt.' });
       return;
     }
     setBusy(true);
+    setDownloadName(null);
+    setShowPreview(false);
+    setShowLog(false);
+    setLogText(null);
+    setDownloadUrl((current) => {
+      if (current) {
+        URL.revokeObjectURL(current);
+      }
+      return null;
+    });
     try {
-      const result = await requestVectorExport(selectedFile, format);
+      const result = await requestPdfExport(selectedFile);
       setStatus({
         type: result.success ? 'success' : 'error',
-        message: result.path ? `${result.message} · Pfad: ${result.path}` : result.message,
+        message: result.message,
       });
+      if (result.success && result.blobUrl) {
+        setDownloadUrl(result.blobUrl);
+        setDownloadName(result.fileName ?? 'drawing.pdf');
+        setShowPreview(true);
+      }
     } catch (error) {
       setStatus({
         type: 'error',
@@ -46,32 +89,129 @@ export function ExportPage() {
     }
   };
 
+  const copyStatusMessage = async () => {
+    if (!status?.message) {
+      return;
+    }
+    setCopyState('idle');
+    const message = status.message;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(message);
+        setCopyState('success');
+        window.setTimeout(() => setCopyState('idle'), 1800);
+        return;
+      }
+      throw new Error('Clipboard unavailable');
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = message;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        setCopyState('success');
+        window.setTimeout(() => setCopyState('idle'), 1800);
+      } catch {
+        setCopyState('error');
+        window.prompt('Fehlertext kopieren:', message);
+        window.setTimeout(() => setCopyState('idle'), 1800);
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+  };
+
+  const toggleLog = async () => {
+    const nextShow = !showLog;
+    setShowLog(nextShow);
+    if (!nextShow) {
+      return;
+    }
+    if (logText || logBusy) {
+      return;
+    }
+    setLogBusy(true);
+    try {
+      const response = await fetch('/api/logs/last');
+      if (!response.ok) {
+        const message = await response.text();
+        setLogText(message || `Log nicht verfuegbar (${response.status}).`);
+        return;
+      }
+      const text = await response.text();
+      setLogText(text || 'Log ist leer.');
+    } catch (error) {
+      setLogText((error as Error)?.message ?? 'Log konnte nicht geladen werden.');
+    } finally {
+      setLogBusy(false);
+    }
+  };
+
+  const copyLog = async () => {
+    if (!logText) {
+      return;
+    }
+    setLogCopyState('idle');
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(logText);
+        setLogCopyState('success');
+        window.setTimeout(() => setLogCopyState('idle'), 1800);
+        return;
+      }
+      throw new Error('Clipboard unavailable');
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = logText;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        setLogCopyState('success');
+        window.setTimeout(() => setLogCopyState('idle'), 1800);
+      } catch {
+        setLogCopyState('error');
+        window.prompt('Log kopieren:', logText);
+        window.setTimeout(() => setLogCopyState('idle'), 1800);
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+  };
+
   return (
     <div className="glass-panel shell-card">
       <SectionHeader
         title="Exportcenter"
-        subtitle="Wandle CAD-Modelle verlustfrei in Vektorformate – gleiche Server-Infrastruktur wie drawform.ai."
+        subtitle="STEP zu 2D-Fertigungszeichnung: A3 Querformat, ISO 7200, mm."
       />
       <form onSubmit={handleExport} className="stack" style={{ marginTop: '1.5rem' }}>
         <div className="form-field">
-          <label>3D Modell</label>
+          <label>STEP Modell</label>
           <div className="upload-tile">
             <div>
-              <strong>{selectedFile?.name ?? 'Noch keine Datei gewählt'}</strong>
+              <strong>{selectedFile?.name ?? 'Noch keine Datei gewaehlt'}</strong>
               <p style={{ margin: '0.35rem 0 0', color: 'var(--text-secondary)' }}>
-                Unterstützte Formate: STL, OBJ, STEP, IGES
+                Unterstuetzte Formate: STEP (.step, .stp)
               </p>
             </div>
             <GradientButton
               type="button"
-              label="Datei wählen"
+              label="Datei waehlen"
               icon={<HiOutlineArrowUpTray />}
               onClick={onSelectFile}
             />
             <input
               ref={fileInputRef}
               type="file"
-              accept=".stl,.obj,.step,.iges"
+              accept=".step,.stp"
               style={{ display: 'none' }}
               onChange={handleFileChange}
             />
@@ -80,31 +220,91 @@ export function ExportPage() {
         <div className="form-field">
           <label>Zielformat</label>
           <div className="format-selector">
-            {formats.map((item) => (
-              <button
-                key={item}
-                type="button"
-                className={`format-chip ${format === item ? 'active' : ''}`}
-                onClick={() => setFormat(item)}
-              >
-                {item.toUpperCase()}
-              </button>
-            ))}
+            <button type="button" className="format-chip active" disabled>
+              PDF (A3)
+            </button>
+            <span className="chip chip--ghost">Top + Front + Right + Iso</span>
           </div>
         </div>
-        <GradientButton
-          type="submit"
-          label="Export starten"
-          busy={busy}
-          busyLabel="Export läuft …"
-        />
+        <GradientButton type="submit" label="PDF erzeugen" busy={busy} busyLabel="Erzeuge PDF..." />
+        {downloadUrl && (
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button type="button" className="gradient-button" onClick={() => setShowPreview((value) => !value)}>
+              {showPreview ? 'Preview schliessen' : 'Preview anzeigen'}
+            </button>
+            <a className="gradient-button" href={downloadUrl} download={downloadName ?? 'drawing.pdf'}>
+              PDF herunterladen
+            </a>
+          </div>
+        )}
+        {status && (
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button type="button" className="gradient-button" onClick={toggleLog} disabled={logBusy}>
+              {logBusy ? 'Log laden...' : showLog ? 'Log schliessen' : 'Log anzeigen'}
+            </button>
+          </div>
+        )}
+        {downloadUrl && showPreview && (
+          <div className="glass-panel--soft" style={{ padding: '1rem', borderRadius: 20 }}>
+            <div
+              style={{
+                position: 'relative',
+                width: '100%',
+                aspectRatio: '420 / 297',
+                borderRadius: 16,
+                overflow: 'hidden',
+                background: '#fff',
+              }}
+            >
+              <iframe
+                title="PDF Preview"
+                src={downloadUrl}
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none' }}
+              />
+            </div>
+          </div>
+        )}
+        {showLog && (
+          <div className="glass-panel--soft" style={{ padding: '1rem', borderRadius: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+              <button type="button" className="chip chip--ghost" onClick={copyLog} disabled={!logText}>
+                {logCopyState === 'success'
+                  ? 'Kopiert'
+                  : logCopyState === 'error'
+                    ? 'Kopie fehlgeschlagen'
+                    : 'Log kopieren'}
+              </button>
+            </div>
+            <pre
+              style={{
+                margin: 0,
+                fontSize: 12,
+                lineHeight: 1.5,
+                whiteSpace: 'pre-wrap',
+                maxHeight: 280,
+                overflow: 'auto',
+              }}
+            >
+              {logText ?? 'Log wird geladen...'}
+            </pre>
+          </div>
+        )}
         {status && (
           <div
             className={`status-banner ${
               status.type === 'success' ? 'status-banner--success' : 'status-banner--error'
             }`}
           >
-            {status.message}
+            <span style={{ flex: 1 }}>{status.message}</span>
+            {status.type === 'error' && (
+              <button type="button" className="chip chip--ghost" onClick={copyStatusMessage}>
+                {copyState === 'success'
+                  ? 'Kopiert'
+                  : copyState === 'error'
+                    ? 'Kopie fehlgeschlagen'
+                    : 'Fehler kopieren'}
+              </button>
+            )}
           </div>
         )}
       </form>

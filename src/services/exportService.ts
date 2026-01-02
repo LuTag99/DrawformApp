@@ -1,37 +1,75 @@
 export interface ExportResult {
   success: boolean;
   message: string;
-  path?: string;
+  fileName?: string;
+  blobUrl?: string;
 }
 
-async function sleep(duration = 1200) {
-  return new Promise((resolve) => setTimeout(resolve, duration));
+function getFileNameFromDisposition(value: string | null, fallback: string) {
+  if (!value) {
+    return fallback;
+  }
+  const match = value.match(/filename="([^"]+)"/i);
+  return match?.[1] ?? fallback;
 }
 
-export async function requestVectorExport(
-  file: File,
-  format: string,
-): Promise<ExportResult> {
+async function readErrorMessage(response: Response) {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (contentType.includes('application/json')) {
+    try {
+      const payload = (await response.json()) as { detail?: string; message?: string };
+      if (payload?.detail) {
+        return payload.detail;
+      }
+      if (payload?.message) {
+        return payload.message;
+      }
+    } catch {
+      return `Export failed (${response.status})`;
+    }
+  }
+  const text = await response.text();
+  return text || `Export failed (${response.status})`;
+}
+
+export async function requestPdfExport(file: File): Promise<ExportResult> {
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('format', format);
+  formData.append('format', 'pdf');
   try {
     const response = await fetch('/api/export', {
       method: 'POST',
       body: formData,
     });
     if (!response.ok) {
-      throw new Error('Server meldete einen Fehler.');
+      return {
+        success: false,
+        message: await readErrorMessage(response),
+      };
     }
-    const payload = (await response.json()) as ExportResult;
-    return payload;
-  } catch (error) {
-    console.warn('Falling back to local export stub', error);
-    await sleep();
+
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('application/pdf')) {
+      return {
+        success: false,
+        message: await readErrorMessage(response),
+      };
+    }
+
+    const blob = await response.blob();
+    const fallbackName = `${file.name.replace(/\.[^.]+$/, '')}.pdf`;
+    const fileName = getFileNameFromDisposition(response.headers.get('content-disposition'), fallbackName);
+    const blobUrl = URL.createObjectURL(blob);
     return {
       success: true,
-      message: 'Export erfolgreich ausgeführt (lokale Simulation).',
-      path: `/exports/${file.name.replace(/\.[^.]+$/, '')}.${format}`,
+      message: 'PDF erstellt.',
+      fileName,
+      blobUrl,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: (error as Error)?.message ?? 'Export konnte nicht gestartet werden.',
     };
   }
 }

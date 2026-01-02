@@ -12,7 +12,7 @@ import { AiBackground } from './components/AiBackground';
 import { useAuth } from './hooks/useAuth';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { loading } = useAuth();
 
   if (loading) {
     return (
@@ -20,9 +20,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
         <div className="chip">Lade Workspace …</div>
       </div>
     );
-  }
-  if (!user) {
-    return <Navigate to="/login" replace />;
   }
   return <>{children}</>;
 }
