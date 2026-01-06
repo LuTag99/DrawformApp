@@ -859,6 +859,7 @@ def main():
     dim_z = bb.ZLength
     log(f"Bounds mm: X={dim_x:.2f} Y={dim_y:.2f} Z={dim_z:.2f}")
 
+    projection_method = "FIRST_ANGLE"
     sheet_w = 420.0
     sheet_h = 297.0
     margin = 10.0
@@ -911,13 +912,21 @@ def main():
     extent_forward = axis_extent(points, forward_dir)
 
     # Fixed projection layout:
-    # FRONT at top-left, TOP below FRONT, LEFT to the right of FRONT, ISO bottom-right.
-    views = [
-        ("Front", front_dir, center_left_x, center_top_y),
-        ("Left", left_dir, center_right_x, center_top_y),
-        ("Top", top_dir, center_left_x, center_bottom_y),
-        ("Iso", iso_dir, center_right_x, center_bottom_y),
-    ]
+    # FIRST_ANGLE: TOP below FRONT, right-side view placed to the left of FRONT.
+    if projection_method == "FIRST_ANGLE":
+        views = [
+            ("Left", left_dir, center_left_x, center_top_y),
+            ("Front", front_dir, center_right_x, center_top_y),
+            ("Top", top_dir, center_right_x, center_bottom_y),
+            ("Iso", iso_dir, center_left_x, center_bottom_y),
+        ]
+    else:
+        views = [
+            ("Front", front_dir, center_left_x, center_top_y),
+            ("Left", left_dir, center_right_x, center_top_y),
+            ("Top", top_dir, center_left_x, center_bottom_y),
+            ("Iso", iso_dir, center_right_x, center_bottom_y),
+        ]
 
     view_data = []
     for name, direction, cx, cy in views:
