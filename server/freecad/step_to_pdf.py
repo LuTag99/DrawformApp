@@ -617,6 +617,17 @@ def projected_bounds(points, direction):
     return min(xs), max(xs), min(ys), max(ys)
 
 
+def projected_bounds_with_basis(points, right, up):
+    if right is None or up is None:
+        return None
+    projected = [(point.dot(right), point.dot(up)) for point in points]
+    if not projected:
+        return None
+    xs = [point[0] for point in projected]
+    ys = [point[1] for point in projected]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
 def axis_extent(points, axis):
     axis_norm = normalize_vec(axis)
     if axis_norm is None:
@@ -677,10 +688,10 @@ def compute_view_directions(shape, points=None):
     if front_dir is None:
         return None
     front_dir = snap_axis(front_dir)
-    frame = derive_view_frame(front_dir)
+    frame = derive_view_frame(front_dir, axes=axes, points=centered)
     if frame is None:
         return None
-    right_dir, top_dir, iso_dir = frame
+    right_dir, top_dir, iso_dir, frame_debug = frame
     left_dir = choose_side_direction(shape, right_dir, points=points)
     return {
         "front": front_dir,
@@ -692,18 +703,60 @@ def compute_view_directions(shape, points=None):
             "projected_areas": {item[0]: item[2] for item in scored},
             "detail_scores": {item[0]: item[3] for item in scored},
             "chosen_front": best[0],
+            "up_axis": frame_debug.get("up_axis"),
+            "front_inplane_rotated": frame_debug.get("front_inplane_rotated"),
         },
     }
 
 
-def derive_view_frame(front_dir):
+def derive_view_frame(front_dir, axes=None, points=None):
     forward = snap_axis(front_dir.negative())
     if forward is None:
         return None
-    up_hint = App.Vector(0, 0, 1)
-    if abs(forward.dot(up_hint)) > 0.9:
-        up_hint = App.Vector(0, 1, 0)
-    right = normalize_vec(up_hint.cross(forward))
+    fallback = False
+    up_axis_name = None
+    up_candidate = None
+    if axes is not None:
+        axis_defs = [("e1", axes[0]), ("e2", axes[1]), ("e3", axes[2])]
+        best = None
+        best_ortho = None
+        best_z = None
+        for name, axis in axis_defs:
+            axis_norm = normalize_vec(axis)
+            if axis_norm is None:
+                continue
+            ortho = abs(axis_norm.dot(forward))
+            z_score = abs(axis_norm.dot(App.Vector(0, 0, 1)))
+            if best is None:
+                best = (name, axis_norm)
+                best_ortho = ortho
+                best_z = z_score
+                continue
+            if ortho + 1e-6 < best_ortho:
+                best = (name, axis_norm)
+                best_ortho = ortho
+                best_z = z_score
+            elif abs(ortho - best_ortho) <= 1e-6 and z_score > best_z + 1e-6:
+                best = (name, axis_norm)
+                best_ortho = ortho
+                best_z = z_score
+        if best and best_ortho is not None and best_ortho < 0.98:
+            up_axis_name, up_candidate = best
+            if up_candidate.dot(App.Vector(0, 0, 1)) < 0:
+                up_candidate = up_candidate.negative()
+        else:
+            fallback = True
+    else:
+        fallback = True
+
+    if fallback or up_candidate is None:
+        up_hint = App.Vector(0, 0, 1)
+        if abs(forward.dot(up_hint)) > 0.9:
+            up_hint = App.Vector(0, 1, 0)
+        up_candidate = normalize_vec(up_hint)
+        up_axis_name = "hint"
+
+    right = normalize_vec(up_candidate.cross(forward))
     if right is None:
         return None
     up = normalize_vec(forward.cross(right))
@@ -713,6 +766,22 @@ def derive_view_frame(front_dir):
     up = snap_axis(up)
     if right is None or up is None:
         return None
+
+    rotated = False
+    if points:
+        bounds_a = projected_bounds_with_basis(points, right, up)
+        bounds_b = projected_bounds_with_basis(points, up, right.negative())
+        if bounds_a and bounds_b:
+            w_a, h_a = bounds_size(bounds_a)
+            w_b, h_b = bounds_size(bounds_b)
+            ratio_a = w_a / h_a if h_a > 1e-6 else 0.0
+            ratio_b = w_b / h_b if h_b > 1e-6 else 0.0
+            if ratio_b > ratio_a and ratio_b > 1.1:
+                right_old = right
+                right = up
+                up = right_old.negative()
+                rotated = True
+
     top_dir = up
     iso_basis = normalize_vec(App.Vector(1, 1, 1))
     if iso_basis is None:
@@ -722,7 +791,10 @@ def derive_view_frame(front_dir):
     )
     if iso_dir is None:
         return None
-    return right, top_dir, iso_dir
+    return right, top_dir, iso_dir, {
+        "up_axis": up_axis_name,
+        "front_inplane_rotated": rotated,
+    }
 
 
 def build_page_svg(template_path, meta, views_svg, dimensions_text, annotation_y):
@@ -813,7 +885,7 @@ def main():
             right_dir = App.Vector(1, 0, 0)
             iso_dir = App.Vector(1, -1, 1)
         else:
-            right_dir, top_dir, iso_dir = fallback_frame
+            right_dir, top_dir, iso_dir, _ = fallback_frame
             left_dir = choose_side_direction(shape, right_dir, points=points)
     else:
         front_dir = view_dirs["front"]
@@ -825,6 +897,10 @@ def main():
         log(f"Front selection: {debug['chosen_front']}")
         log(f"Projected areas: {debug['projected_areas']}")
         log(f"Detail scores: {debug['detail_scores']}")
+        if debug.get("up_axis") is not None:
+            log(f"Front up axis: {debug['up_axis']}")
+        if debug.get("front_inplane_rotated") is not None:
+            log(f"Front in-plane rotated: {debug['front_inplane_rotated']}")
 
     log(f"Front dir: {front_dir.x:.4f},{front_dir.y:.4f},{front_dir.z:.4f}")
     log(f"Top dir: {top_dir.x:.4f},{top_dir.y:.4f},{top_dir.z:.4f}")
