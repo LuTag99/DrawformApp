@@ -63,16 +63,6 @@ def extract_svg_bounds(svg_group):
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def extract_svg_points(svg_group):
-    paths = re.findall(r'd="([^"]+)"', svg_group)
-    points = []
-    for path in paths:
-        numbers = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", path)
-        for index in range(0, len(numbers) - 1, 2):
-            points.append((float(numbers[index]), float(numbers[index + 1])))
-    return points
-
-
 def svg_detail_score(svg_group):
     paths = re.findall(r'd="([^"]+)"', svg_group)
     segments = []
@@ -568,40 +558,24 @@ def rotation_for_view_with_axes(direction, desired_right, desired_up):
 
 def rotation_for_view_with_expected(direction, desired_up, svg_bounds, expected_w, expected_h):
     svg_w, svg_h = bounds_size(svg_bounds)
-    base = rotation_for_view(direction, desired_up)
+    swap = False
     if (
-        expected_w is None
-        or expected_h is None
-        or expected_w <= 1e-6
-        or expected_h <= 1e-6
+        expected_w is not None
+        and expected_h is not None
+        and expected_w > 1e-6
+        and expected_h > 1e-6
     ):
-        return base
-    candidates = [0, 90, 180, 270]
+        delta_keep = abs(svg_w - expected_w) + abs(svg_h - expected_h)
+        delta_swap = abs(svg_h - expected_w) + abs(svg_w - expected_h)
+        swap = delta_swap + 1e-9 < delta_keep
+    base = rotation_for_view(direction, desired_up)
+    candidates = [90, 270] if swap else [0, 180]
 
     def distance(a, b):
         delta = abs(a - b) % 360
         return min(delta, 360 - delta)
 
-    best = None
-    best_err = None
-    for rot in candidates:
-        w = svg_w if rot % 180 == 0 else svg_h
-        h = svg_h if rot % 180 == 0 else svg_w
-        err = abs(w - expected_w) + abs(h - expected_h)
-        if best is None:
-            best = rot
-            best_err = err
-            continue
-        if err < best_err - 1e-6:
-            best = rot
-            best_err = err
-            continue
-        if abs(err - best_err) <= 1e-6:
-            if distance(rot, base) < distance(best, base):
-                best = rot
-            elif distance(rot, base) == distance(best, base) and rot < best:
-                best = rot
-    return best
+    return min(candidates, key=lambda value: (distance(value, base), value))
 
 
 def projected_bounds(points, direction):
@@ -918,46 +892,20 @@ def main():
     front_item = next((item for item in view_data if item["name"] == "Front"), None)
     top_item = next((item for item in view_data if item["name"] == "Top"), None)
     if front_item and top_item:
-        def transformed_x_extents(item, scale):
-            bounds = item["svg_bounds"]
-            if item["rotation_deg"] % 180 != 0:
-                center_bounds = rotate_bounds_90(bounds)
-            else:
-                center_bounds = bounds
-            center_x_local = (center_bounds[0] + center_bounds[1]) / 2
-            center_y_local = (center_bounds[2] + center_bounds[3]) / 2
-            points = extract_svg_points(item["svg"])
-            if not points:
-                return None, None
-            min_tx = None
-            max_tx = None
-            rot = item["rotation_deg"] % 360
-            for x_val, y_val in points:
-                x_local = x_val - center_x_local
-                y_local = y_val + center_y_local
-                if rot == 90:
-                    x_local, y_local = -y_local, x_local
-                elif rot == 180:
-                    x_local, y_local = -x_local, -y_local
-                elif rot == 270:
-                    x_local, y_local = y_local, -x_local
-                x_world = x_local * scale + item["cx"]
-                if min_tx is None or x_world < min_tx:
-                    min_tx = x_world
-                if max_tx is None or x_world > max_tx:
-                    max_tx = x_world
-            return min_tx, max_tx
-
-        front_min_x, front_max_x = transformed_x_extents(front_item, ortho_scale)
-        top_min_x, top_max_x = transformed_x_extents(top_item, ortho_scale)
-        if front_min_x is not None and top_min_x is not None:
-            shift_left = front_min_x - top_min_x
-            shift_right = front_max_x - top_max_x
-            shift = (shift_left + shift_right) * 0.5
-            top_item["cx"] += shift
-            err = abs((top_min_x + shift) - front_min_x) + abs((top_max_x + shift) - front_max_x)
-            if err > 1e-3:
-                log(f"Top align residual: {err:.4f} mm")
+        front_bounds = (
+            rotate_bounds_90(front_item["svg_bounds"])
+            if front_item["rotation_deg"] % 180 != 0
+            else front_item["svg_bounds"]
+        )
+        top_bounds = (
+            rotate_bounds_90(top_item["svg_bounds"])
+            if top_item["rotation_deg"] % 180 != 0
+            else top_item["svg_bounds"]
+        )
+        front_w = bounds_size(front_bounds)[0] * ortho_scale
+        top_w = bounds_size(top_bounds)[0] * ortho_scale
+        front_left = front_item["cx"] - front_w / 2
+        top_item["cx"] = front_left + top_w / 2
 
     view_groups = []
     for item in view_data:
