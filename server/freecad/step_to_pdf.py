@@ -63,16 +63,6 @@ def extract_svg_bounds(svg_group):
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def extract_svg_points(svg_group):
-    paths = re.findall(r'd="([^"]+)"', svg_group)
-    points = []
-    for path in paths:
-        numbers = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", path)
-        for index in range(0, len(numbers) - 1, 2):
-            points.append((float(numbers[index]), float(numbers[index + 1])))
-    return points
-
-
 def svg_detail_score(svg_group):
     paths = re.findall(r'd="([^"]+)"', svg_group)
     segments = []
@@ -568,40 +558,24 @@ def rotation_for_view_with_axes(direction, desired_right, desired_up):
 
 def rotation_for_view_with_expected(direction, desired_up, svg_bounds, expected_w, expected_h):
     svg_w, svg_h = bounds_size(svg_bounds)
-    base = rotation_for_view(direction, desired_up)
+    swap = False
     if (
-        expected_w is None
-        or expected_h is None
-        or expected_w <= 1e-6
-        or expected_h <= 1e-6
+        expected_w is not None
+        and expected_h is not None
+        and expected_w > 1e-6
+        and expected_h > 1e-6
     ):
-        return base
-    candidates = [0, 90, 180, 270]
+        delta_keep = abs(svg_w - expected_w) + abs(svg_h - expected_h)
+        delta_swap = abs(svg_h - expected_w) + abs(svg_w - expected_h)
+        swap = delta_swap + 1e-9 < delta_keep
+    base = rotation_for_view(direction, desired_up)
+    candidates = [90, 270] if swap else [0, 180]
 
     def distance(a, b):
         delta = abs(a - b) % 360
         return min(delta, 360 - delta)
 
-    best = None
-    best_err = None
-    for rot in candidates:
-        w = svg_w if rot % 180 == 0 else svg_h
-        h = svg_h if rot % 180 == 0 else svg_w
-        err = abs(w - expected_w) + abs(h - expected_h)
-        if best is None:
-            best = rot
-            best_err = err
-            continue
-        if err < best_err - 1e-6:
-            best = rot
-            best_err = err
-            continue
-        if abs(err - best_err) <= 1e-6:
-            if distance(rot, base) < distance(best, base):
-                best = rot
-            elif distance(rot, base) == distance(best, base) and rot < best:
-                best = rot
-    return best
+    return min(candidates, key=lambda value: (distance(value, base), value))
 
 
 def projected_bounds(points, direction):
@@ -609,17 +583,6 @@ def projected_bounds(points, direction):
     if basis is None:
         return None
     right, up = basis
-    projected = [(point.dot(right), point.dot(up)) for point in points]
-    if not projected:
-        return None
-    xs = [point[0] for point in projected]
-    ys = [point[1] for point in projected]
-    return min(xs), max(xs), min(ys), max(ys)
-
-
-def projected_bounds_with_basis(points, right, up):
-    if right is None or up is None:
-        return None
     projected = [(point.dot(right), point.dot(up)) for point in points]
     if not projected:
         return None
@@ -688,10 +651,10 @@ def compute_view_directions(shape, points=None):
     if front_dir is None:
         return None
     front_dir = snap_axis(front_dir)
-    frame = derive_view_frame(front_dir, axes=axes, points=centered)
+    frame = derive_view_frame(front_dir)
     if frame is None:
         return None
-    right_dir, top_dir, iso_dir, frame_debug = frame
+    right_dir, top_dir, iso_dir = frame
     left_dir = choose_side_direction(shape, right_dir, points=points)
     return {
         "front": front_dir,
@@ -703,60 +666,18 @@ def compute_view_directions(shape, points=None):
             "projected_areas": {item[0]: item[2] for item in scored},
             "detail_scores": {item[0]: item[3] for item in scored},
             "chosen_front": best[0],
-            "up_axis": frame_debug.get("up_axis"),
-            "front_inplane_rotated": frame_debug.get("front_inplane_rotated"),
         },
     }
 
 
-def derive_view_frame(front_dir, axes=None, points=None):
+def derive_view_frame(front_dir):
     forward = snap_axis(front_dir.negative())
     if forward is None:
         return None
-    fallback = False
-    up_axis_name = None
-    up_candidate = None
-    if axes is not None:
-        axis_defs = [("e1", axes[0]), ("e2", axes[1]), ("e3", axes[2])]
-        best = None
-        best_ortho = None
-        best_z = None
-        for name, axis in axis_defs:
-            axis_norm = normalize_vec(axis)
-            if axis_norm is None:
-                continue
-            ortho = abs(axis_norm.dot(forward))
-            z_score = abs(axis_norm.dot(App.Vector(0, 0, 1)))
-            if best is None:
-                best = (name, axis_norm)
-                best_ortho = ortho
-                best_z = z_score
-                continue
-            if ortho + 1e-6 < best_ortho:
-                best = (name, axis_norm)
-                best_ortho = ortho
-                best_z = z_score
-            elif abs(ortho - best_ortho) <= 1e-6 and z_score > best_z + 1e-6:
-                best = (name, axis_norm)
-                best_ortho = ortho
-                best_z = z_score
-        if best and best_ortho is not None and best_ortho < 0.98:
-            up_axis_name, up_candidate = best
-            if up_candidate.dot(App.Vector(0, 0, 1)) < 0:
-                up_candidate = up_candidate.negative()
-        else:
-            fallback = True
-    else:
-        fallback = True
-
-    if fallback or up_candidate is None:
-        up_hint = App.Vector(0, 0, 1)
-        if abs(forward.dot(up_hint)) > 0.9:
-            up_hint = App.Vector(0, 1, 0)
-        up_candidate = normalize_vec(up_hint)
-        up_axis_name = "hint"
-
-    right = normalize_vec(up_candidate.cross(forward))
+    up_hint = App.Vector(0, 0, 1)
+    if abs(forward.dot(up_hint)) > 0.9:
+        up_hint = App.Vector(0, 1, 0)
+    right = normalize_vec(up_hint.cross(forward))
     if right is None:
         return None
     up = normalize_vec(forward.cross(right))
@@ -766,22 +687,6 @@ def derive_view_frame(front_dir, axes=None, points=None):
     up = snap_axis(up)
     if right is None or up is None:
         return None
-
-    rotated = False
-    if points:
-        bounds_a = projected_bounds_with_basis(points, right, up)
-        bounds_b = projected_bounds_with_basis(points, up, right.negative())
-        if bounds_a and bounds_b:
-            w_a, h_a = bounds_size(bounds_a)
-            w_b, h_b = bounds_size(bounds_b)
-            ratio_a = w_a / h_a if h_a > 1e-6 else 0.0
-            ratio_b = w_b / h_b if h_b > 1e-6 else 0.0
-            if ratio_b > ratio_a and ratio_b > 1.1:
-                right_old = right
-                right = up
-                up = right_old.negative()
-                rotated = True
-
     top_dir = up
     iso_basis = normalize_vec(App.Vector(1, 1, 1))
     if iso_basis is None:
@@ -791,10 +696,7 @@ def derive_view_frame(front_dir, axes=None, points=None):
     )
     if iso_dir is None:
         return None
-    return right, top_dir, iso_dir, {
-        "up_axis": up_axis_name,
-        "front_inplane_rotated": rotated,
-    }
+    return right, top_dir, iso_dir
 
 
 def build_page_svg(template_path, meta, views_svg, dimensions_text, annotation_y):
@@ -859,7 +761,6 @@ def main():
     dim_z = bb.ZLength
     log(f"Bounds mm: X={dim_x:.2f} Y={dim_y:.2f} Z={dim_z:.2f}")
 
-    projection_method = "FIRST_ANGLE"
     sheet_w = 420.0
     sheet_h = 297.0
     margin = 10.0
@@ -886,7 +787,7 @@ def main():
             right_dir = App.Vector(1, 0, 0)
             iso_dir = App.Vector(1, -1, 1)
         else:
-            right_dir, top_dir, iso_dir, _ = fallback_frame
+            right_dir, top_dir, iso_dir = fallback_frame
             left_dir = choose_side_direction(shape, right_dir, points=points)
     else:
         front_dir = view_dirs["front"]
@@ -898,10 +799,6 @@ def main():
         log(f"Front selection: {debug['chosen_front']}")
         log(f"Projected areas: {debug['projected_areas']}")
         log(f"Detail scores: {debug['detail_scores']}")
-        if debug.get("up_axis") is not None:
-            log(f"Front up axis: {debug['up_axis']}")
-        if debug.get("front_inplane_rotated") is not None:
-            log(f"Front in-plane rotated: {debug['front_inplane_rotated']}")
 
     log(f"Front dir: {front_dir.x:.4f},{front_dir.y:.4f},{front_dir.z:.4f}")
     log(f"Top dir: {top_dir.x:.4f},{top_dir.y:.4f},{top_dir.z:.4f}")
@@ -912,21 +809,13 @@ def main():
     extent_forward = axis_extent(points, forward_dir)
 
     # Fixed projection layout:
-    # FIRST_ANGLE: TOP below FRONT, right-side view placed to the left of FRONT.
-    if projection_method == "FIRST_ANGLE":
-        views = [
-            ("Left", left_dir, center_left_x, center_top_y),
-            ("Front", front_dir, center_right_x, center_top_y),
-            ("Top", top_dir, center_right_x, center_bottom_y),
-            ("Iso", iso_dir, center_left_x, center_bottom_y),
-        ]
-    else:
-        views = [
-            ("Front", front_dir, center_left_x, center_top_y),
-            ("Left", left_dir, center_right_x, center_top_y),
-            ("Top", top_dir, center_left_x, center_bottom_y),
-            ("Iso", iso_dir, center_right_x, center_bottom_y),
-        ]
+    # FRONT at top-left, TOP below FRONT, LEFT to the right of FRONT, ISO bottom-right.
+    views = [
+        ("Front", front_dir, center_left_x, center_top_y),
+        ("Left", left_dir, center_right_x, center_top_y),
+        ("Top", top_dir, center_left_x, center_bottom_y),
+        ("Iso", iso_dir, center_right_x, center_bottom_y),
+    ]
 
     view_data = []
     for name, direction, cx, cy in views:
@@ -1003,46 +892,20 @@ def main():
     front_item = next((item for item in view_data if item["name"] == "Front"), None)
     top_item = next((item for item in view_data if item["name"] == "Top"), None)
     if front_item and top_item:
-        def transformed_x_extents(item, scale):
-            bounds = item["svg_bounds"]
-            if item["rotation_deg"] % 180 != 0:
-                center_bounds = rotate_bounds_90(bounds)
-            else:
-                center_bounds = bounds
-            center_x_local = (center_bounds[0] + center_bounds[1]) / 2
-            center_y_local = (center_bounds[2] + center_bounds[3]) / 2
-            points = extract_svg_points(item["svg"])
-            if not points:
-                return None, None
-            min_tx = None
-            max_tx = None
-            rot = item["rotation_deg"] % 360
-            for x_val, y_val in points:
-                x_local = x_val - center_x_local
-                y_local = y_val + center_y_local
-                if rot == 90:
-                    x_local, y_local = -y_local, x_local
-                elif rot == 180:
-                    x_local, y_local = -x_local, -y_local
-                elif rot == 270:
-                    x_local, y_local = y_local, -x_local
-                x_world = x_local * scale + item["cx"]
-                if min_tx is None or x_world < min_tx:
-                    min_tx = x_world
-                if max_tx is None or x_world > max_tx:
-                    max_tx = x_world
-            return min_tx, max_tx
-
-        front_min_x, front_max_x = transformed_x_extents(front_item, ortho_scale)
-        top_min_x, top_max_x = transformed_x_extents(top_item, ortho_scale)
-        if front_min_x is not None and top_min_x is not None:
-            shift_left = front_min_x - top_min_x
-            shift_right = front_max_x - top_max_x
-            shift = (shift_left + shift_right) * 0.5
-            top_item["cx"] += shift
-            err = abs((top_min_x + shift) - front_min_x) + abs((top_max_x + shift) - front_max_x)
-            if err > 1e-3:
-                log(f"Top align residual: {err:.4f} mm")
+        front_bounds = (
+            rotate_bounds_90(front_item["svg_bounds"])
+            if front_item["rotation_deg"] % 180 != 0
+            else front_item["svg_bounds"]
+        )
+        top_bounds = (
+            rotate_bounds_90(top_item["svg_bounds"])
+            if top_item["rotation_deg"] % 180 != 0
+            else top_item["svg_bounds"]
+        )
+        front_w = bounds_size(front_bounds)[0] * ortho_scale
+        top_w = bounds_size(top_bounds)[0] * ortho_scale
+        front_left = front_item["cx"] - front_w / 2
+        top_item["cx"] = front_left + top_w / 2
 
     view_groups = []
     for item in view_data:
