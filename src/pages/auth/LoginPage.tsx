@@ -1,15 +1,15 @@
-import { type FormEvent, useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { AuthLayout } from '../../layouts/AuthLayout';
-import { InputField } from '../../components/InputField';
 import { GradientButton } from '../../components/GradientButton';
 import { useAuth } from '../../hooks/useAuth';
 
+const DEMO_EMAIL = 'demo@drawform.local';
+const DEMO_PASSWORD = 'drawform';
+
 export function LoginPage() {
-  const { login, user, loading } = useAuth();
+  const { login, register, user, loading } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -17,10 +17,12 @@ export function LoginPage() {
     return <Navigate to="/" replace />;
   }
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleQuickLogin = async () => {
     setBusy(true);
-    const error = await login(email, password);
+    let error = await login(DEMO_EMAIL, DEMO_PASSWORD);
+    if (error) {
+      error = await register(DEMO_EMAIL, DEMO_PASSWORD);
+    }
     if (error) {
       setStatus(error);
     } else {
@@ -31,40 +33,19 @@ export function LoginPage() {
 
   return (
     <AuthLayout
-      title="Willkommen zurück"
-      subtitle="Melde dich in deinem Drawform AI Workspace an."
-      footer={
-        <>
-          Kein Account? <Link to="/register">Registrieren</Link> ·{' '}
-          <Link to="/forgot-password">Passwort vergessen</Link>
-        </>
-      }
+      title="Willkommen"
+      subtitle="Starte den Drawform AI Workspace."
     >
       {status && <div className="status-banner status-banner--error">{status}</div>}
-      <form onSubmit={handleSubmit} className="stack">
-        <InputField
-          label="E-Mail"
-          type="email"
-          required
-          placeholder="you@drawform.ai"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-        />
-        <InputField
-          label="Passwort"
-          type="password"
-          required
-          placeholder="••••••••"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-        />
+      <div className="stack">
         <GradientButton
-          type="submit"
+          type="button"
           label="Anmelden"
           busy={busy}
-          busyLabel="AI prüft Anmeldedaten …"
+          busyLabel="Workspace wird geladen..."
+          onClick={handleQuickLogin}
         />
-      </form>
+      </div>
     </AuthLayout>
   );
 }

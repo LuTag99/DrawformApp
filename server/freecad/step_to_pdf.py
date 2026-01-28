@@ -891,21 +891,34 @@ def main():
 
     front_item = next((item for item in view_data if item["name"] == "Front"), None)
     top_item = next((item for item in view_data if item["name"] == "Top"), None)
-    if front_item and top_item:
+    left_item = next((item for item in view_data if item["name"] == "Left"), None)
+    if front_item:
         front_bounds = (
-            rotate_bounds_90(front_item["svg_bounds"])
+            rotate_bounds_90(front_item["proj_bounds"])
             if front_item["rotation_deg"] % 180 != 0
-            else front_item["svg_bounds"]
+            else front_item["proj_bounds"]
         )
+        front_w, front_h = bounds_size(front_bounds)
+        front_w *= ortho_scale
+        front_h *= ortho_scale
+    if front_item and top_item:
         top_bounds = (
-            rotate_bounds_90(top_item["svg_bounds"])
+            rotate_bounds_90(top_item["proj_bounds"])
             if top_item["rotation_deg"] % 180 != 0
-            else top_item["svg_bounds"]
+            else top_item["proj_bounds"]
         )
-        front_w = bounds_size(front_bounds)[0] * ortho_scale
         top_w = bounds_size(top_bounds)[0] * ortho_scale
         front_left = front_item["cx"] - front_w / 2
         top_item["cx"] = front_left + top_w / 2
+    if front_item and left_item:
+        left_bounds = (
+            rotate_bounds_90(left_item["proj_bounds"])
+            if left_item["rotation_deg"] % 180 != 0
+            else left_item["proj_bounds"]
+        )
+        left_h = bounds_size(left_bounds)[1] * ortho_scale
+        front_top = front_item["cy"] - front_h / 2
+        left_item["cy"] = front_top + left_h / 2
 
     view_groups = []
     for item in view_data:
