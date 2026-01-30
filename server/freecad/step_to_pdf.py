@@ -254,6 +254,62 @@ def compute_stroke_width(scale, stroke_base=0.12, min_width=0.001):
     return max(min_width, stroke_base / max(scale, 0.05))
 
 
+def compute_transformed_bounds(svg_bounds, center_x, center_y, scale, rotation_deg):
+    """
+    Compute the actual paper-space bounding box after the SVG transformation.
+    This exactly mimics what build_view_group does.
+    
+    The SVG transform is: translate(cx,cy) scale(s) rotate(deg) translate(-local_cx, local_cy)
+    Applied RIGHT TO LEFT: inner_translate -> rotate -> scale -> outer_translate
+    """
+    min_x, max_x, min_y, max_y = svg_bounds
+    
+    # IMPORTANT: build_view_group rotates bounds FIRST, then calculates local center
+    if rotation_deg % 180 != 0:
+        rotated = rotate_bounds_90(svg_bounds)
+        min_x_r, max_x_r, min_y_r, max_y_r = rotated
+        center_x_local = (min_x_r + max_x_r) / 2
+        center_y_local = (min_y_r + max_y_r) / 2
+    else:
+        center_x_local = (min_x + max_x) / 2
+        center_y_local = (min_y + max_y) / 2
+    
+    # The SVG inner translate is: translate(-center_x_local, center_y_local)
+    # This means ADD (-center_x_local) to x, and ADD (center_y_local) to y
+    inner_tx = -center_x_local
+    inner_ty = center_y_local
+    
+    # Transform the four corners of the ORIGINAL SVG bounds
+    corners = [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
+    paper_corners = []
+    
+    for px, py in corners:
+        # Step 1: inner translate - ADD the translation values
+        x1 = px + inner_tx
+        y1 = py + inner_ty
+        
+        # Step 2: rotate (SVG rotates clockwise for positive angles)
+        rad = math.radians(rotation_deg)
+        cos_r = math.cos(rad)
+        sin_r = math.sin(rad)
+        x2 = x1 * cos_r - y1 * sin_r
+        y2 = x1 * sin_r + y1 * cos_r
+        
+        # Step 3: scale
+        x3 = x2 * scale
+        y3 = y2 * scale
+        
+        # Step 4: outer translate
+        x4 = x3 + center_x
+        y4 = y3 + center_y
+        
+        paper_corners.append((x4, y4))
+    
+    xs = [c[0] for c in paper_corners]
+    ys = [c[1] for c in paper_corners]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
 def build_view_group(
     svg_group,
     bounds,
@@ -265,11 +321,12 @@ def build_view_group(
     stroke_base=0.006,
     dimension_svg="",
 ):
-    if rotation_deg % 180 != 0:
-        bounds = rotate_bounds_90(bounds)
+    # Always use the ORIGINAL bounds for calculating the local center
+    # The geometry must be centered BEFORE rotation
     min_x, max_x, min_y, max_y = bounds
     center_x_local = (min_x + max_x) / 2
     center_y_local = (min_y + max_y) / 2
+    
     if stroke_width is None:
         stroke_width = compute_stroke_width(scale, stroke_base=stroke_base)
     svg_group = re.sub(r'stroke-width="[^"]+"', f'stroke-width="{stroke_width:.4f}"', svg_group)
@@ -874,6 +931,7 @@ def main():
     ortho_scale = min(
         item["scale_fit"] for item in view_data if item["name"] in ("Top", "Front", "Left")
     )
+    log(f"ALIGN ortho_scale={ortho_scale:.4f}")
     iso_item = next(item for item in view_data if item["name"] == "Iso")
     iso_bounds = (
         rotate_bounds_90(iso_item["proj_bounds"])
@@ -892,33 +950,45 @@ def main():
     front_item = next((item for item in view_data if item["name"] == "Front"), None)
     top_item = next((item for item in view_data if item["name"] == "Top"), None)
     left_item = next((item for item in view_data if item["name"] == "Left"), None)
+    
+    # Simple alignment based on scaled dimensions (like CAD software does)
+    # After rotation, width and height may swap
+    def get_paper_dimensions(item, scale):
+        """Get width and height in paper space after rotation"""
+        svg_w, svg_h = bounds_size(item["svg_bounds"])
+        if item["rotation_deg"] % 180 != 0:
+            # 90 or 270 degree rotation swaps width and height
+            return svg_h * scale, svg_w * scale
+        return svg_w * scale, svg_h * scale
+    
+    # Calculate Front's left edge position
     if front_item:
-        front_bounds = (
-            rotate_bounds_90(front_item["proj_bounds"])
-            if front_item["rotation_deg"] % 180 != 0
-            else front_item["proj_bounds"]
-        )
-        front_w, front_h = bounds_size(front_bounds)
-        front_w *= ortho_scale
-        front_h *= ortho_scale
+        front_paper_w, front_paper_h = get_paper_dimensions(front_item, ortho_scale)
+        front_left = front_item["cx"] - front_paper_w / 2
+        front_top = front_item["cy"] - front_paper_h / 2
+        log(f"ALIGN Front: cx={front_item['cx']:.2f}, paper_w={front_paper_w:.2f}, left_edge={front_left:.2f}")
+    
+    # Align Top view: move cx so its left edge matches Front's left edge
     if front_item and top_item:
-        top_bounds = (
-            rotate_bounds_90(top_item["proj_bounds"])
-            if top_item["rotation_deg"] % 180 != 0
-            else top_item["proj_bounds"]
-        )
-        top_w = bounds_size(top_bounds)[0] * ortho_scale
-        front_left = front_item["cx"] - front_w / 2
-        top_item["cx"] = front_left + top_w / 2
+        top_paper_w, top_paper_h = get_paper_dimensions(top_item, ortho_scale)
+        # Top's left edge = top_cx - top_paper_w / 2
+        # We want: top_left = front_left
+        # So: top_cx - top_paper_w / 2 = front_left
+        # top_cx = front_left + top_paper_w / 2
+        new_top_cx = front_left + top_paper_w / 2
+        log(f"ALIGN Top: paper_w={top_paper_w:.2f}, old_cx={top_item['cx']:.2f}, new_cx={new_top_cx:.2f}")
+        top_item["cx"] = new_top_cx
+    
+    # Align Left view: move cy so its top edge matches Front's top edge  
     if front_item and left_item:
-        left_bounds = (
-            rotate_bounds_90(left_item["proj_bounds"])
-            if left_item["rotation_deg"] % 180 != 0
-            else left_item["proj_bounds"]
-        )
-        left_h = bounds_size(left_bounds)[1] * ortho_scale
-        front_top = front_item["cy"] - front_h / 2
-        left_item["cy"] = front_top + left_h / 2
+        left_paper_w, left_paper_h = get_paper_dimensions(left_item, ortho_scale)
+        # Left's top edge = left_cy - left_paper_h / 2
+        # We want: left_top = front_top
+        # So: left_cy - left_paper_h / 2 = front_top
+        # left_cy = front_top + left_paper_h / 2
+        new_left_cy = front_top + left_paper_h / 2
+        log(f"ALIGN Left: paper_h={left_paper_h:.2f}, old_cy={left_item['cy']:.2f}, new_cy={new_left_cy:.2f}")
+        left_item["cy"] = new_left_cy
 
     view_groups = []
     for item in view_data:
@@ -959,6 +1029,7 @@ def main():
     dimensions_text = "Overall size: X={:.1f} mm, Y={:.1f} mm, Z={:.1f} mm".format(
         dim_x, dim_y, dim_z
     )
+    log("DEBUG: dimensions_text set")
 
     template_path = Path(__file__).resolve().parent.parent / "templates" / "iso7200_a3_landscape.svg"
     if not template_path.exists():
