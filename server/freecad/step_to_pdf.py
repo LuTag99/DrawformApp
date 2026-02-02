@@ -1455,6 +1455,91 @@ def main():
         log(f"ALIGN Left: paper_h={left_paper_h:.2f}, old_cy={left_item['cy']:.2f}, new_cy={new_left_cy:.2f}")
         left_item["cy"] = new_left_cy
 
+    # === BOUNDS CHECKING: Ensure all views fit within drawing area ===
+    # Drawing area limits (excluding margin and title block)
+    draw_left = margin
+    draw_top = margin
+    draw_right = sheet_w - margin
+    draw_bottom = sheet_h - margin - title_block_h
+    
+    def compute_view_bounds(item, scale):
+        """Compute the bounding box of a view in paper coordinates."""
+        paper_w, paper_h = get_paper_dimensions(item, scale)
+        cx, cy = item["cx"], item["cy"]
+        return {
+            "left": cx - paper_w / 2,
+            "top": cy - paper_h / 2,
+            "right": cx + paper_w / 2,
+            "bottom": cy + paper_h / 2,
+        }
+    
+    def compute_all_views_bbox():
+        """Compute the bounding box enclosing all views."""
+        all_left, all_top = float('inf'), float('inf')
+        all_right, all_bottom = float('-inf'), float('-inf')
+        
+        for item in view_data:
+            scale = item.get("scale", ortho_scale)
+            vb = compute_view_bounds(item, scale)
+            all_left = min(all_left, vb["left"])
+            all_top = min(all_top, vb["top"])
+            all_right = max(all_right, vb["right"])
+            all_bottom = max(all_bottom, vb["bottom"])
+        
+        return all_left, all_top, all_right, all_bottom
+    
+    # Check if all views fit within drawing area
+    all_left, all_top, all_right, all_bottom = compute_all_views_bbox()
+    log(f"BOUNDS: All views bbox: left={all_left:.2f}, top={all_top:.2f}, right={all_right:.2f}, bottom={all_bottom:.2f}")
+    log(f"BOUNDS: Drawing area: left={draw_left:.2f}, top={draw_top:.2f}, right={draw_right:.2f}, bottom={draw_bottom:.2f}")
+    
+    # Calculate how much we need to shift
+    shift_x, shift_y = 0.0, 0.0
+    
+    if all_left < draw_left:
+        shift_x = draw_left - all_left
+        log(f"BOUNDS: Views extend past left edge by {-all_left + draw_left:.2f}mm, shifting right")
+    elif all_right > draw_right:
+        shift_x = draw_right - all_right
+        log(f"BOUNDS: Views extend past right edge by {all_right - draw_right:.2f}mm, shifting left")
+    
+    if all_top < draw_top:
+        shift_y = draw_top - all_top
+        log(f"BOUNDS: Views extend past top edge by {-all_top + draw_top:.2f}mm, shifting down")
+    elif all_bottom > draw_bottom:
+        shift_y = draw_bottom - all_bottom
+        log(f"BOUNDS: Views extend past bottom edge by {all_bottom - draw_bottom:.2f}mm, shifting up")
+    
+    # Apply shift to all views if needed
+    if abs(shift_x) > 0.01 or abs(shift_y) > 0.01:
+        log(f"BOUNDS: Applying shift: dx={shift_x:.2f}, dy={shift_y:.2f}")
+        for item in view_data:
+            item["cx"] += shift_x
+            item["cy"] += shift_y
+        
+        # Recompute bbox after shift
+        all_left, all_top, all_right, all_bottom = compute_all_views_bbox()
+        log(f"BOUNDS: After shift: left={all_left:.2f}, top={all_top:.2f}, right={all_right:.2f}, bottom={all_bottom:.2f}")
+        
+        # Check if views still don't fit (need to reduce scale)
+        if all_left < draw_left or all_right > draw_right or all_top < draw_top or all_bottom > draw_bottom:
+            log("BOUNDS: WARNING - Views still don't fit after shift, scale reduction needed")
+            # Calculate required scale reduction
+            views_w = all_right - all_left
+            views_h = all_bottom - all_top
+            avail_w = draw_right - draw_left
+            avail_h = draw_bottom - draw_top
+            
+            scale_factor_w = avail_w / views_w if views_w > 0 else 1.0
+            scale_factor_h = avail_h / views_h if views_h > 0 else 1.0
+            scale_reduction = min(scale_factor_w, scale_factor_h, 1.0)
+            
+            if scale_reduction < 1.0:
+                log(f"BOUNDS: Reducing scale by factor {scale_reduction:.3f}")
+                # This is a simplified approach - in production would need to recalculate positions
+                # For now, just log the warning
+                log("BOUNDS: Scale reduction not yet implemented - views may be clipped")
+
     # === JSON REPORT FOR AUTOMATED TESTING ===
     def build_report():
         """Build a JSON report with all computed values for verification."""
