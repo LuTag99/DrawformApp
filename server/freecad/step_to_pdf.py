@@ -51,14 +51,15 @@ def replace_text(svg, key, value):
 
 def extract_svg_bounds(svg_group):
     """
-    Extract bounding box from SVG path data.
+    Extract bounding box from SVG elements including paths and circles.
     Correctly handles SVG path commands (M, L, A, etc.) to extract only coordinates.
     Arc commands (A/a) have format: A rx ry x-rotation large-arc sweep x y
     where only the last two numbers are coordinates.
     """
-    paths = re.findall(r'd="([^"]+)"', svg_group)
     coords = []
     
+    # Extract from path elements
+    paths = re.findall(r'd="([^"]+)"', svg_group)
     for path in paths:
         # Parse SVG path commands properly
         # Split by command letters, keeping the letter
@@ -84,6 +85,67 @@ def extract_svg_bounds(svg_group):
         # Process last command
         if current_cmd and numbers:
             coords.extend(_extract_coords_from_command(current_cmd, numbers))
+    
+    # Extract from circle elements: <circle cx="X" cy="Y" r="R" />
+    circles = re.findall(r'<circle[^>]+cx\s*=\s*"([^"]+)"[^>]+cy\s*=\s*"([^"]+)"[^>]+r\s*=\s*"([^"]+)"', svg_group)
+    for cx, cy, r in circles:
+        cx, cy, r = float(cx), float(cy), float(r)
+        # Circle bounds: center ± radius
+        coords.append((cx - r, cy - r))
+        coords.append((cx + r, cy + r))
+    
+    # Also check for circles with attributes in different order
+    circles2 = re.findall(r'<circle[^>]+>', svg_group)
+    for circle in circles2:
+        cx_match = re.search(r'cx\s*=\s*"([^"]+)"', circle)
+        cy_match = re.search(r'cy\s*=\s*"([^"]+)"', circle)
+        r_match = re.search(r'\br\s*=\s*"([^"]+)"', circle)
+        if cx_match and cy_match and r_match:
+            cx = float(cx_match.group(1))
+            cy = float(cy_match.group(1))
+            r = float(r_match.group(1))
+            coords.append((cx - r, cy - r))
+            coords.append((cx + r, cy + r))
+    
+    # Extract from ellipse elements: <ellipse cx="X" cy="Y" rx="RX" ry="RY" />
+    ellipses = re.findall(r'<ellipse[^>]+>', svg_group)
+    for ellipse in ellipses:
+        cx_match = re.search(r'cx\s*=\s*"([^"]+)"', ellipse)
+        cy_match = re.search(r'cy\s*=\s*"([^"]+)"', ellipse)
+        rx_match = re.search(r'rx\s*=\s*"([^"]+)"', ellipse)
+        ry_match = re.search(r'ry\s*=\s*"([^"]+)"', ellipse)
+        if cx_match and cy_match and rx_match and ry_match:
+            cx = float(cx_match.group(1))
+            cy = float(cy_match.group(1))
+            rx = float(rx_match.group(1))
+            ry = float(ry_match.group(1))
+            coords.append((cx - rx, cy - ry))
+            coords.append((cx + rx, cy + ry))
+    
+    # Extract from line elements: <line x1="X1" y1="Y1" x2="X2" y2="Y2" />
+    lines = re.findall(r'<line[^>]+>', svg_group)
+    for line in lines:
+        x1 = re.search(r'x1\s*=\s*"([^"]+)"', line)
+        y1 = re.search(r'y1\s*=\s*"([^"]+)"', line)
+        x2 = re.search(r'x2\s*=\s*"([^"]+)"', line)
+        y2 = re.search(r'y2\s*=\s*"([^"]+)"', line)
+        if x1 and y1:
+            coords.append((float(x1.group(1)), float(y1.group(1))))
+        if x2 and y2:
+            coords.append((float(x2.group(1)), float(y2.group(1))))
+    
+    # Extract from rect elements: <rect x="X" y="Y" width="W" height="H" />
+    rects = re.findall(r'<rect[^>]+>', svg_group)
+    for rect in rects:
+        x = re.search(r'\bx\s*=\s*"([^"]+)"', rect)
+        y = re.search(r'\by\s*=\s*"([^"]+)"', rect)
+        w = re.search(r'width\s*=\s*"([^"]+)"', rect)
+        h = re.search(r'height\s*=\s*"([^"]+)"', rect)
+        if x and y and w and h:
+            rx, ry = float(x.group(1)), float(y.group(1))
+            rw, rh = float(w.group(1)), float(h.group(1))
+            coords.append((rx, ry))
+            coords.append((rx + rw, ry + rh))
     
     if not coords:
         return 0.0, 1.0, 0.0, 1.0
