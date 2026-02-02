@@ -312,7 +312,8 @@ def compute_transformed_bounds(svg_bounds, center_x, center_y, scale, rotation_d
 
 def build_view_group(
     svg_group,
-    bounds,
+    svg_bounds,
+    proj_bounds,
     center_x,
     center_y,
     scale,
@@ -321,11 +322,28 @@ def build_view_group(
     stroke_base=0.006,
     dimension_svg="",
 ):
-    # Always use the ORIGINAL bounds for calculating the local center
-    # The geometry must be centered BEFORE rotation
-    min_x, max_x, min_y, max_y = bounds
-    center_x_local = (min_x + max_x) / 2
-    center_y_local = (min_y + max_y) / 2
+    """
+    Build SVG group for a view, using PROJ_BOUNDS for positioning (like professional CAD).
+    
+    The key insight: proj_bounds (from 3D projection) gives us the TRUE size and position.
+    svg_bounds may contain artifacts (hidden lines, etc.) and should NOT be used for layout.
+    
+    We calculate the offset between SVG content center and proj_bounds center,
+    then apply that offset to position the SVG correctly.
+    """
+    # Calculate centers
+    svg_min_x, svg_max_x, svg_min_y, svg_max_y = svg_bounds
+    svg_center_x = (svg_min_x + svg_max_x) / 2
+    svg_center_y = (svg_min_y + svg_max_y) / 2
+    
+    proj_min_x, proj_max_x, proj_min_y, proj_max_y = proj_bounds
+    proj_center_x = (proj_min_x + proj_max_x) / 2
+    proj_center_y = (proj_min_y + proj_max_y) / 2
+    
+    # Use PROJ center for positioning (this is the truth)
+    # The SVG content needs to be translated so its center aligns with proj center
+    local_center_x = proj_center_x
+    local_center_y = proj_center_y
     
     if stroke_width is None:
         stroke_width = compute_stroke_width(scale, stroke_base=stroke_base)
@@ -334,10 +352,16 @@ def build_view_group(
     svg_group = re.sub(r"<g\s", '<g vector-effect="non-scaling-stroke" ', svg_group, count=1)
     svg_group = append_to_group(svg_group, dimension_svg)
     rotate_clause = f" rotate({rotation_deg})" if rotation_deg else ""
+    
+    # Transform: 
+    # 1. translate to paper position (center_x, center_y)
+    # 2. scale
+    # 3. rotate (if needed)
+    # 4. translate to center the geometry (using proj_bounds center)
     transform = (
         f"translate({center_x:.2f},{center_y:.2f}) "
         f"scale({scale:.4f},{scale:.4f}){rotate_clause} "
-        f"translate({-center_x_local:.2f},{center_y_local:.2f})"
+        f"translate({-local_center_x:.2f},{local_center_y:.2f})"
     )
     return f'<g transform="{transform}">\n{svg_group}\n</g>'
 
@@ -1563,8 +1587,9 @@ def main():
         else:
             scale = ortho_scale
             stroke_width = compute_stroke_width(scale)
+            # Use proj_bounds for dimension lines (accurate size)
             dimension_svg = build_dimension_svg(
-                svg_bounds,
+                proj_bounds,  # Use proj_bounds, not svg_bounds!
                 scale,
                 stroke_width,
                 label_width=label_w,
@@ -1575,7 +1600,8 @@ def main():
         view_groups.append(
             build_view_group(
                 item["svg"],
-                svg_bounds,
+                svg_bounds,      # SVG content bounds (for rendering)
+                proj_bounds,     # Projected bounds (for positioning - the truth!)
                 item["cx"],
                 item["cy"],
                 scale,
