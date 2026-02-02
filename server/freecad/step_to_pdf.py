@@ -323,27 +323,20 @@ def build_view_group(
     dimension_svg="",
 ):
     """
-    Build SVG group for a view, using PROJ_BOUNDS for positioning (like professional CAD).
+    Build SVG group for a view.
     
-    The key insight: proj_bounds (from 3D projection) gives us the TRUE size and position.
-    svg_bounds may contain artifacts (hidden lines, etc.) and should NOT be used for layout.
-    
-    We calculate the offset between SVG content center and proj_bounds center,
-    then apply that offset to position the SVG correctly.
+    The SVG content is centered around its own bounds (svg_bounds).
+    The dimension lines are also in svg_bounds coordinates (drawn around the geometry).
+    The paper position (center_x, center_y) is calculated based on proj_bounds for layout.
     """
-    # Calculate centers
+    # Calculate SVG center (where the content actually is)
     svg_min_x, svg_max_x, svg_min_y, svg_max_y = svg_bounds
     svg_center_x = (svg_min_x + svg_max_x) / 2
     svg_center_y = (svg_min_y + svg_max_y) / 2
     
-    proj_min_x, proj_max_x, proj_min_y, proj_max_y = proj_bounds
-    proj_center_x = (proj_min_x + proj_max_x) / 2
-    proj_center_y = (proj_min_y + proj_max_y) / 2
-    
-    # Use PROJ center for positioning (this is the truth)
-    # The SVG content needs to be translated so its center aligns with proj center
-    local_center_x = proj_center_x
-    local_center_y = proj_center_y
+    # Use SVG center for the transformation (content is centered around this)
+    local_center_x = svg_center_x
+    local_center_y = svg_center_y
     
     if stroke_width is None:
         stroke_width = compute_stroke_width(scale, stroke_base=stroke_base)
@@ -357,7 +350,7 @@ def build_view_group(
     # 1. translate to paper position (center_x, center_y)
     # 2. scale
     # 3. rotate (if needed)
-    # 4. translate to center the geometry (using proj_bounds center)
+    # 4. translate to center the geometry (using SVG center)
     transform = (
         f"translate({center_x:.2f},{center_y:.2f}) "
         f"scale({scale:.4f},{scale:.4f}){rotate_clause} "
@@ -1630,41 +1623,43 @@ def main():
         proj_w, proj_h = bounds_size(proj_bounds)
         svg_w, svg_h = bounds_size(svg_bounds)
         
-        # The dimension lines are drawn in SVG coordinates:
-        # - Horizontal dimension line (above view) shows "label_width" 
-        # - Vertical dimension line (right of view) shows "label_height"
+        # The dimension lines are drawn in SVG coordinates, then rotated with the view.
+        # We want the labels to show the TRUE 3D dimensions as they appear on paper.
         #
-        # After rotation, these lines swap positions:
-        # - 90° rotation: horizontal becomes right, vertical becomes top
-        # - So after 90°, the original "label_width" appears on the RIGHT, 
-        #   and original "label_height" appears on TOP
+        # proj_w = 3D projected width (what we want to show as HORIZONTAL on paper)
+        # proj_h = 3D projected height (what we want to show as VERTICAL on paper)
         #
-        # We want:
-        # - TOP (horizontal after rotation) to show the longer 3D dimension
-        # - RIGHT (vertical after rotation) to show the shorter 3D dimension
+        # In SVG coordinates (before rotation):
+        # - If proj_swap=False: SVG width = proj_w, SVG height = proj_h
+        # - If proj_swap=True: SVG width = proj_h, SVG height = proj_w
         #
-        # proj_w and proj_h are 3D projected bounds
-        # svg_w and svg_h tell us which dimension is horizontal/vertical in SVG
-        
-        # Determine which 3D dimension corresponds to which SVG axis
-        # If swap=True, SVG dimensions are swapped relative to proj dimensions
-        if item.get("proj_swap", False):
-            # SVG width corresponds to proj_h, SVG height corresponds to proj_w
-            svg_horizontal_3d = proj_h  # What 3D dimension is horizontal in SVG
-            svg_vertical_3d = proj_w    # What 3D dimension is vertical in SVG
-        else:
-            svg_horizontal_3d = proj_w
-            svg_vertical_3d = proj_h
-        
+        # The dim lines are drawn relative to SVG bounds:
+        # - Horizontal dim line (at top of SVG) will show "label_width"
+        # - Vertical dim line (at right of SVG) will show "label_height"
+        #
+        # After rotation:
+        # - 0°: horizontal stays horizontal, vertical stays vertical
+        # - 90°: horizontal becomes vertical (RIGHT), vertical becomes horizontal (TOP)
+        # - 180°: same as 0° for this purpose
+        # - 270°: same as 90° for this purpose
+        #
+        # We want FINAL appearance:
+        # - TOP dimension shows proj_w (paper width)
+        # - RIGHT dimension shows proj_h (paper height)
+        #
+        # Working backwards from final position to SVG label assignment:
         if item["rotation_deg"] % 180 != 0:
-            # After 90° rotation:
-            # - Original vertical (svg_vertical_3d) becomes horizontal dimension
-            # - Original horizontal (svg_horizontal_3d) becomes vertical dimension
-            label_w = svg_vertical_3d    # Now shown on horizontal dim line (top)
-            label_h = svg_horizontal_3d  # Now shown on vertical dim line (right)
+            # 90° or 270° rotation: axes swap
+            # TOP (after) = vertical dim line (before), so label_height = proj_w
+            # RIGHT (after) = horizontal dim line (before), so label_width = proj_h
+            label_w = proj_h  # Will appear on RIGHT after rotation
+            label_h = proj_w  # Will appear on TOP after rotation
         else:
-            label_w = svg_horizontal_3d  # Shown on horizontal dim line (top)
-            label_h = svg_vertical_3d    # Shown on vertical dim line (right)
+            # 0° or 180° rotation: no axis swap
+            # TOP = horizontal dim line, so label_width = proj_w
+            # RIGHT = vertical dim line, so label_height = proj_h
+            label_w = proj_w  # Will appear on TOP
+            label_h = proj_h  # Will appear on RIGHT
         
         if name == "Iso":
             scale = item.get("scale", ortho_scale * 0.75)
@@ -1672,13 +1667,14 @@ def main():
         else:
             scale = ortho_scale
             stroke_width = compute_stroke_width(scale)
-            # Use proj_bounds for dimension lines (accurate size)
+            # Dimension lines are drawn around the SVG geometry (svg_bounds)
+            # but labels show the TRUE 3D dimensions (from proj_bounds)
             dimension_svg = build_dimension_svg(
-                proj_bounds,  # Use proj_bounds, not svg_bounds!
+                svg_bounds,  # Use svg_bounds for LINE positions (around the geometry)
                 scale,
                 stroke_width,
-                label_width=label_w,
-                label_height=label_h,
+                label_width=label_w,   # TRUE 3D dimension for horizontal
+                label_height=label_h,  # TRUE 3D dimension for vertical
                 rotation_deg=item["rotation_deg"],
             )
         stroke_width = compute_stroke_width(scale)
