@@ -675,6 +675,208 @@ def axis_extent(points, axis):
     return max(values) - min(values) if values else 0.0
 
 
+def first_angle_projection(shape, points):
+    """
+    First-Angle (ISO/DIN) Projection System:
+    
+    1. Define FRONT view (direction + up vector)
+    2. Derive view coordinate system
+    3. LEFT = look from LEFT side (-VIEW_RIGHT)
+    4. TOP = look from ABOVE (-VIEW_UP)
+    
+    Layout:
+    ┌───────────┬───────────┐
+    │   FRONT   │   LEFT    │  (Left looks from left, placed right of Front)
+    ├───────────┼───────────┤
+    │    TOP    │    ISO    │  (Top looks from above, placed below Front)
+    └───────────┴───────────┘
+    
+    Alignment:
+    - Front ↔ Left: Same HEIGHT, top edges aligned
+    - Front ↔ Top: Same WIDTH, left edges aligned
+    """
+    bb = shape.BoundBox
+    dims = [
+        ("X", bb.XLength, App.Vector(1, 0, 0)),
+        ("Y", bb.YLength, App.Vector(0, 1, 0)),
+        ("Z", bb.ZLength, App.Vector(0, 0, 1)),
+    ]
+    dims_sorted = sorted(dims, key=lambda d: d[1], reverse=True)
+    
+    longest_name, longest_len, longest_axis = dims_sorted[0]
+    second_name, second_len, second_axis = dims_sorted[1]
+    third_name, third_len, third_axis = dims_sorted[2]
+    
+    log(f"[FirstAngle] BBox: {longest_name}={longest_len:.2f}, {second_name}={second_len:.2f}, {third_name}={third_len:.2f}")
+    
+    # === STEP 1: Choose FRONT direction ===
+    # Goal: Longest axis should appear HORIZONTAL in Front view
+    # Therefore: Look from a direction PERPENDICULAR to the longest axis
+    
+    # Detect flat parts
+    flatness_ratio = third_len / max(second_len, 1e-6)
+    is_flat_part = flatness_ratio < 0.3
+    
+    if is_flat_part:
+        # Flat part: look from thin side to show large face
+        log(f"[FirstAngle] FLAT part (ratio={flatness_ratio:.2f}) -> look from {third_name}")
+        front_dir = third_axis
+        # Check which direction shows more detail
+        svg_pos = TechDraw.projectToSVG(shape, third_axis)
+        svg_neg = TechDraw.projectToSVG(shape, third_axis.negative())
+        if svg_detail_score(svg_neg) > svg_detail_score(svg_pos):
+            front_dir = third_axis.negative()
+        # For flat parts, longest is horizontal
+        horizontal_axis = longest_axis
+    else:
+        # Normal part: look perpendicular to longest axis
+        # Choose between second and third axis based on detail score
+        candidates = [second_axis, second_axis.negative(), third_axis, third_axis.negative()]
+        best_dir = candidates[0]
+        best_score = 0
+        for d in candidates:
+            try:
+                svg = TechDraw.projectToSVG(shape, d)
+                score = svg_detail_score(svg)
+                if score > best_score:
+                    best_score = score
+                    best_dir = d
+            except:
+                pass
+        front_dir = best_dir
+        # Longest axis will be horizontal
+        horizontal_axis = longest_axis
+    
+    log(f"[FirstAngle] Front direction: ({front_dir.x:.2f}, {front_dir.y:.2f}, {front_dir.z:.2f})")
+    log(f"[FirstAngle] Horizontal axis (longest): {longest_name}")
+    
+    # === STEP 2: Build View Coordinate System ===
+    # FORWARD = direction camera looks INTO (opposite of front_dir)
+    # RIGHT = horizontal_axis (longest axis, horizontal in view)
+    # UP = perpendicular to both (vertical in view)
+    
+    forward = App.Vector(-front_dir.x, -front_dir.y, -front_dir.z)
+    
+    # Make sure horizontal_axis is perpendicular to forward
+    if abs(forward.dot(horizontal_axis)) > 0.9:
+        # Longest is parallel to view direction (shouldn't happen normally)
+        horizontal_axis = second_axis
+    
+    # Gram-Schmidt: make right perpendicular to forward
+    dot = horizontal_axis.dot(forward)
+    view_right = App.Vector(
+        horizontal_axis.x - dot * forward.x,
+        horizontal_axis.y - dot * forward.y,
+        horizontal_axis.z - dot * forward.z
+    )
+    view_right = normalize_vec(view_right)
+    if view_right is None:
+        view_right = App.Vector(1, 0, 0)
+    
+    # UP = FORWARD × RIGHT (cross product)
+    view_up = App.Vector(
+        forward.y * view_right.z - forward.z * view_right.y,
+        forward.z * view_right.x - forward.x * view_right.z,
+        forward.x * view_right.y - forward.y * view_right.x
+    )
+    view_up = normalize_vec(view_up)
+    if view_up is None:
+        view_up = App.Vector(0, 0, 1)
+    
+    # === Orientation normalization ===
+    # Goal: Make UP point in a "natural" direction (prefer +Z, +Y, +X)
+    # When we flip UP, we also need to flip RIGHT to maintain right-hand rule
+    # This keeps the view consistent
+    should_flip = False
+    if abs(view_up.z) > 0.5:
+        if view_up.z < 0:
+            should_flip = True
+    elif abs(view_up.y) > 0.5:
+        if view_up.y < 0:
+            should_flip = True
+    elif abs(view_up.x) > 0.5:
+        if view_up.x < 0:
+            should_flip = True
+    
+    if should_flip:
+        view_up = App.Vector(-view_up.x, -view_up.y, -view_up.z)
+        view_right = App.Vector(-view_right.x, -view_right.y, -view_right.z)
+    
+    # At this point:
+    # - view_up is positive (natural orientation)
+    # - view_right may be negative (to maintain right-hand rule)
+    # This is CORRECT for First-Angle Projection because LEFT = -view_right
+    # So if view_right is negative, LEFT will be positive (pointing in positive direction)
+    should_flip_up = False
+    if abs(view_up.z) > 0.5:
+        if view_up.z < 0:
+            should_flip_up = True
+    elif abs(view_up.y) > 0.5:
+        if view_up.y < 0:
+            should_flip_up = True
+    elif abs(view_up.x) > 0.5:
+        if view_up.x < 0:
+            should_flip_up = True
+    
+    if should_flip_up:
+        view_up = App.Vector(-view_up.x, -view_up.y, -view_up.z)
+        # When we flip UP, we must also flip RIGHT to maintain right-hand rule
+        # But this may cause RIGHT to be negative. That's OK for now.
+        view_right = App.Vector(-view_right.x, -view_right.y, -view_right.z)
+    
+    # Snap to world axes
+    front_dir = snap_axis(front_dir)
+    view_right = snap_axis(view_right)
+    view_up = snap_axis(view_up)
+    
+    log(f"[FirstAngle] View coords: RIGHT={vec_str(view_right)}, UP={vec_str(view_up)}, FWD={vec_str(forward)}")
+    
+    # === STEP 3: Derive other views (First-Angle Projection) ===
+    # LEFT view: Look from LEFT side = -view_right direction
+    left_dir = App.Vector(-view_right.x, -view_right.y, -view_right.z)
+    
+    # TOP view: Look from ABOVE = view_up direction (looking down from above)
+    top_dir = App.Vector(view_up.x, view_up.y, view_up.z)
+    
+    # ISO view: Diagonal from front-right-top
+    iso_dir = normalize_vec(App.Vector(
+        forward.x + view_right.x + view_up.x,
+        forward.y + view_right.y + view_up.y,
+        forward.z + view_right.z + view_up.z
+    ))
+    if iso_dir is None:
+        iso_dir = App.Vector(1, 1, 1)
+    
+    log(f"[FirstAngle] FRONT={vec_str(front_dir)}, LEFT={vec_str(left_dir)}, TOP={vec_str(top_dir)}")
+    
+    # Calculate confidence (how clear was the front selection)
+    confidence = 0.5  # Default medium confidence
+    
+    debug_info = {
+        "longest_axis": longest_name,
+        "is_flat": is_flat_part,
+        "flatness_ratio": round(flatness_ratio, 3),
+        "view_right": [round(view_right.x, 2), round(view_right.y, 2), round(view_right.z, 2)],
+        "view_up": [round(view_up.x, 2), round(view_up.y, 2), round(view_up.z, 2)],
+    }
+    
+    return {
+        "front": front_dir,
+        "left": left_dir,
+        "top": top_dir,
+        "iso": iso_dir,
+        "view_right": view_right,
+        "view_up": view_up,
+        "confidence": confidence,
+        "debug": debug_info,
+    }
+
+
+def vec_str(v):
+    """Format vector for logging."""
+    return f"({v.x:.2f},{v.y:.2f},{v.z:.2f})"
+
+
 def hybrid_view_selection(shape, points):
     """
     Hybrid algorithm for automatic view selection:
@@ -899,16 +1101,20 @@ def choose_front_direction(shape, points, axes):
 
 
 def compute_view_directions(shape, points=None):
-    """Use hybrid algorithm for view selection."""
+    """
+    Use First-Angle Projection (ISO/DIN) for view selection.
+    
+    Returns dictionary with front, left, top, iso directions and debug info.
+    """
     points = points or collect_points(shape)
     if len(points) < 3:
         return None
     
-    # Use new hybrid algorithm
-    front_dir, top_dir, right_dir, confidence, debug_info = hybrid_view_selection(shape, points)
+    # Use First-Angle Projection algorithm
+    result = first_angle_projection(shape, points)
     
-    if front_dir is None:
-        log("[Hybrid] Failed, falling back to legacy PCA method")
+    if result is None or result.get("front") is None:
+        log("[FirstAngle] Failed, falling back to legacy PCA method")
         # Fallback to legacy method
         axes, centered = pca_axes(points)
         if axes is None or centered is None:
@@ -936,41 +1142,13 @@ def compute_view_directions(shape, points=None):
             },
         }
     
-    # Snap to world axes for cleaner results
-    front_dir = snap_axis(front_dir) or front_dir
-    top_dir = snap_axis(top_dir) or top_dir
-    right_dir = snap_axis(right_dir) or right_dir
+    # Add method info to debug
+    result["debug"]["method"] = "first_angle_projection"
     
-    # Left view looks from the RIGHT side of the part (showing left face)
-    # In first-angle projection: Left view is placed to the right of Front view
-    # The left_dir should be the viewing direction (opposite of the face normal)
-    left_dir = right_dir  # View from right to see left side
+    # Also add view_right for alignment calculations
+    result["right"] = result.get("view_right", result["left"].negative())
     
-    # Iso direction: diagonal from front-right-top
-    # IMPORTANT: Use App.Vector() copies to avoid modifying originals
-    forward = App.Vector(front_dir.x, front_dir.y, front_dir.z).negative()
-    iso_basis = normalize_vec(App.Vector(1, 1, 1))
-    iso_dir = normalize_vec(
-        App.Vector(right_dir.x * iso_basis.x, right_dir.y * iso_basis.x, right_dir.z * iso_basis.x).add(
-        App.Vector(top_dir.x * iso_basis.y, top_dir.y * iso_basis.y, top_dir.z * iso_basis.y)).add(
-        App.Vector(forward.x * iso_basis.z, forward.y * iso_basis.z, forward.z * iso_basis.z))
-    )
-    if iso_dir is None:
-        iso_dir = normalize_vec(App.Vector(1, -1, 1))
-    
-    # Also return right_dir for extent calculations
-    return {
-        "front": front_dir,
-        "top": top_dir,
-        "left": left_dir,
-        "right": right_dir,
-        "iso": iso_dir,
-        "confidence": confidence,
-        "debug": {
-            "method": "hybrid",
-            **debug_info,
-        },
-    }
+    return result
 
 
 def derive_view_frame(front_dir):

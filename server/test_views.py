@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
 Automated test script for view selection and alignment.
 Generates PDFs and JSON reports, then validates the results.
@@ -6,7 +7,14 @@ Generates PDFs and JSON reports, then validates the results.
 import json
 import subprocess
 import sys
+import os
 from pathlib import Path
+
+# Force UTF-8 output on Windows
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 FREECAD_PYTHON = r"C:\Program Files\FreeCAD 1.0\bin\python.exe"
 SAMPLES_DIR = Path(__file__).parent / "_samples"
