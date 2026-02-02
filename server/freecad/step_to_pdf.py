@@ -731,19 +731,30 @@ def first_angle_projection(shape, points):
     else:
         # Normal part: look perpendicular to longest axis
         # Choose between second and third axis based on detail score
-        candidates = [second_axis, second_axis.negative(), third_axis, third_axis.negative()]
-        best_dir = candidates[0]
+        # Priority order: prefer Z-axis directions (typical CAD "top" view)
+        # This helps with L-shapes and brackets where looking from Z shows the shape better
+        candidates = [
+            (third_axis, f"+{third_name}"),
+            (third_axis.negative(), f"-{third_name}"),
+            (second_axis, f"+{second_name}"),
+            (second_axis.negative(), f"-{second_name}"),
+        ]
+        best_dir = candidates[0][0]
         best_score = 0
-        for d in candidates:
+        best_name = candidates[0][1]
+        for d, name in candidates:
             try:
                 svg = TechDraw.projectToSVG(shape, d)
                 score = svg_detail_score(svg)
+                # Use >= to prefer earlier candidates (Z-axis) when scores are equal
                 if score > best_score:
                     best_score = score
                     best_dir = d
+                    best_name = name
             except:
                 pass
         front_dir = best_dir
+        log(f"[FirstAngle] Chose front {best_name} with score {best_score:.1f}")
         # Longest axis will be horizontal
         horizontal_axis = longest_axis
     
@@ -1384,12 +1395,16 @@ def main():
     # Simple alignment based on scaled dimensions (like CAD software does)
     # After rotation, width and height may swap
     def get_paper_dimensions(item, scale):
-        """Get width and height in paper space after rotation"""
-        svg_w, svg_h = bounds_size(item["svg_bounds"])
+        """Get width and height in paper space after rotation.
+        Use projected bounds for accurate dimensions instead of SVG bounds
+        which may include hidden lines or other artifacts."""
+        # Prefer projected bounds over SVG bounds for accuracy
+        bounds = item.get("proj_bounds") or item.get("svg_bounds")
+        w, h = bounds_size(bounds)
         if item["rotation_deg"] % 180 != 0:
             # 90 or 270 degree rotation swaps width and height
-            return svg_h * scale, svg_w * scale
-        return svg_w * scale, svg_h * scale
+            return h * scale, w * scale
+        return w * scale, h * scale
     
     # Calculate Front's left edge position
     if front_item:
