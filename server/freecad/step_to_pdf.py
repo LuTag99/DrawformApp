@@ -50,17 +50,89 @@ def replace_text(svg, key, value):
 
 
 def extract_svg_bounds(svg_group):
+    """
+    Extract bounding box from SVG path data.
+    Correctly handles SVG path commands (M, L, A, etc.) to extract only coordinates.
+    Arc commands (A/a) have format: A rx ry x-rotation large-arc sweep x y
+    where only the last two numbers are coordinates.
+    """
     paths = re.findall(r'd="([^"]+)"', svg_group)
     coords = []
+    
     for path in paths:
-        numbers = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", path)
-        for index in range(0, len(numbers) - 1, 2):
-            coords.append((float(numbers[index]), float(numbers[index + 1])))
+        # Parse SVG path commands properly
+        # Split by command letters, keeping the letter
+        tokens = re.split(r'([MLHVCSQTAZmlhvcsqtaz])', path)
+        current_cmd = None
+        numbers = []
+        
+        for token in tokens:
+            token = token.strip()
+            if not token:
+                continue
+            if token in 'MLHVCSQTAZmlhvcsqtaz':
+                # Process previous command's numbers
+                if current_cmd and numbers:
+                    coords.extend(_extract_coords_from_command(current_cmd, numbers))
+                current_cmd = token
+                numbers = []
+            else:
+                # Extract numbers from this segment
+                nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", token)
+                numbers.extend([float(n) for n in nums])
+        
+        # Process last command
+        if current_cmd and numbers:
+            coords.extend(_extract_coords_from_command(current_cmd, numbers))
+    
     if not coords:
         return 0.0, 1.0, 0.0, 1.0
     xs = [point[0] for point in coords]
     ys = [point[1] for point in coords]
     return min(xs), max(xs), min(ys), max(ys)
+
+
+def _extract_coords_from_command(cmd, numbers):
+    """Extract coordinate pairs from SVG path command numbers."""
+    coords = []
+    cmd_upper = cmd.upper()
+    
+    if cmd_upper in ('M', 'L', 'T'):
+        # MoveTo, LineTo, SmoothQuadratic: pairs of (x, y)
+        for i in range(0, len(numbers) - 1, 2):
+            coords.append((numbers[i], numbers[i + 1]))
+    elif cmd_upper == 'H':
+        # Horizontal line: single x values
+        for x in numbers:
+            coords.append((x, 0))  # y doesn't change bounds significantly
+    elif cmd_upper == 'V':
+        # Vertical line: single y values
+        for y in numbers:
+            coords.append((0, y))  # x doesn't change bounds significantly
+    elif cmd_upper == 'C':
+        # Cubic Bezier: (x1,y1, x2,y2, x,y) - 6 numbers per segment
+        for i in range(0, len(numbers) - 5, 6):
+            coords.append((numbers[i], numbers[i + 1]))      # control point 1
+            coords.append((numbers[i + 2], numbers[i + 3]))  # control point 2
+            coords.append((numbers[i + 4], numbers[i + 5]))  # end point
+    elif cmd_upper == 'S':
+        # Smooth cubic: (x2,y2, x,y) - 4 numbers per segment
+        for i in range(0, len(numbers) - 3, 4):
+            coords.append((numbers[i], numbers[i + 1]))      # control point
+            coords.append((numbers[i + 2], numbers[i + 3]))  # end point
+    elif cmd_upper == 'Q':
+        # Quadratic Bezier: (x1,y1, x,y) - 4 numbers per segment
+        for i in range(0, len(numbers) - 3, 4):
+            coords.append((numbers[i], numbers[i + 1]))      # control point
+            coords.append((numbers[i + 2], numbers[i + 3]))  # end point
+    elif cmd_upper == 'A':
+        # Arc: (rx ry x-rotation large-arc sweep x y) - 7 numbers per arc
+        # Only the last two (x, y) are coordinates!
+        for i in range(0, len(numbers) - 6, 7):
+            coords.append((numbers[i + 5], numbers[i + 6]))  # end point only
+    # Z (closepath) has no coordinates
+    
+    return coords
 
 
 def svg_detail_score(svg_group):
