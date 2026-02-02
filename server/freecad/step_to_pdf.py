@@ -635,6 +635,25 @@ def rotation_for_view_with_expected(direction, desired_up, svg_bounds, expected_
     return min(candidates, key=lambda value: (distance(value, base), value))
 
 
+def rotation_to_make_horizontal(svg_bounds, target_horizontal_extent):
+    """
+    Calculate rotation needed to make the target dimension appear horizontal.
+    If the SVG height matches the target better than width, rotate 90°.
+    """
+    svg_w, svg_h = bounds_size(svg_bounds)
+    if target_horizontal_extent is None or target_horizontal_extent < 1e-6:
+        return 0
+    
+    # Check if SVG width or height better matches target_horizontal_extent
+    diff_w = abs(svg_w - target_horizontal_extent)
+    diff_h = abs(svg_h - target_horizontal_extent)
+    
+    # If height matches better, we need to rotate 90° to make it horizontal
+    if diff_h < diff_w - 1e-6:
+        return 90
+    return 0
+
+
 def projected_bounds(points, direction):
     basis = view_basis(direction)
     if basis is None:
@@ -656,7 +675,192 @@ def axis_extent(points, axis):
     return max(values) - min(values) if values else 0.0
 
 
+def hybrid_view_selection(shape, points):
+    """
+    Hybrid algorithm for automatic view selection:
+    
+    1. GEOMETRY ANALYSIS: Find the longest axis (Hauptachse) of the bounding box
+       - This axis should appear HORIZONTAL in the Front view
+    
+    2. FRONT SELECTION: From the 2 perpendicular directions, choose the best one
+       - Primary: Aspect ratio (prefer wider views)
+       - Tie-breaker: Feature/detail score
+    
+    3. DERIVE OTHER VIEWS: Top and Left are derived automatically
+    
+    4. CONFIDENCE: Calculate how clear the decision was
+    
+    Returns: (front_dir, top_dir, right_dir, confidence, debug_info)
+    """
+    bb = shape.BoundBox
+    dims = [
+        ("X", bb.XLength, App.Vector(1, 0, 0)),
+        ("Y", bb.YLength, App.Vector(0, 1, 0)),
+        ("Z", bb.ZLength, App.Vector(0, 0, 1)),
+    ]
+    dims_sorted = sorted(dims, key=lambda d: d[1], reverse=True)
+    
+    longest_name, longest_len, longest_axis = dims_sorted[0]
+    second_name, second_len, second_axis = dims_sorted[1]
+    third_name, third_len, third_axis = dims_sorted[2]
+    
+    log(f"[Hybrid] Bounding box: {longest_name}={longest_len:.2f}, {second_name}={second_len:.2f}, {third_name}={third_len:.2f}")
+    
+    # Detect flat parts: if one dimension is much smaller than the other two
+    flatness_ratio = third_len / max(second_len, 1e-6)
+    is_flat_part = flatness_ratio < 0.3  # Third dimension is less than 30% of second
+    
+    if is_flat_part:
+        # For flat parts (sheets, flanges): look from the THIN side to show the large face
+        log(f"[Hybrid] Detected FLAT part (ratio={flatness_ratio:.2f}) -> Front looks from thin side ({third_name})")
+        # Front should look from the thin axis direction
+        front_candidates = [
+            (f"+{third_name}", third_axis, third_len),
+            (f"-{third_name}", third_axis.negative(), third_len),
+        ]
+        # Longest axis still horizontal
+        log(f"[Hybrid] Longest axis: {longest_name} -> will be HORIZONTAL in Front")
+    else:
+        # Normal parts: longest axis horizontal, choose from perpendicular directions
+        log(f"[Hybrid] Longest axis: {longest_name} -> will be HORIZONTAL in Front")
+        front_candidates = [
+            (f"+{second_name}", second_axis, second_len),
+            (f"-{second_name}", second_axis.negative(), second_len),
+            (f"+{third_name}", third_axis, third_len),
+            (f"-{third_name}", third_axis.negative(), third_len),
+        ]
+    
+    scored_candidates = []
+    for name, direction, depth in front_candidates:
+        # Calculate projected dimensions when looking from this direction
+        basis = view_basis(direction)
+        if basis is None:
+            continue
+        right, up = basis
+        
+        # Project points to get actual view dimensions
+        proj = [(p.dot(right), p.dot(up)) for p in points]
+        if not proj:
+            continue
+        xs = [p[0] for p in proj]
+        ys = [p[1] for p in proj]
+        view_w = max(xs) - min(xs)
+        view_h = max(ys) - min(ys)
+        
+        # Aspect ratio: prefer wider views (width > height)
+        aspect = view_w / max(view_h, 1e-6)
+        
+        # Feature score as tie-breaker
+        try:
+            svg = TechDraw.projectToSVG(shape, direction)
+            detail = svg_detail_score(svg)
+        except Exception:
+            detail = 0.0
+        
+        scored_candidates.append({
+            "name": name,
+            "direction": direction,
+            "depth": depth,
+            "view_w": view_w,
+            "view_h": view_h,
+            "aspect": aspect,
+            "detail": detail,
+        })
+    
+    if not scored_candidates:
+        return None, None, None, 0.0, {"error": "No valid candidates"}
+    
+    # Normalize scores
+    max_detail = max(c["detail"] for c in scored_candidates)
+    for c in scored_candidates:
+        c["detail_norm"] = c["detail"] / max(max_detail, 1e-6)
+    
+    # Combined score: 70% aspect ratio preference + 30% detail score
+    # Aspect > 1 means wider than tall (good for most parts)
+    for c in scored_candidates:
+        aspect_score = min(c["aspect"], 2.0) / 2.0  # Cap at 2:1, normalize to 0-1
+        c["combined_score"] = 0.7 * aspect_score + 0.3 * c["detail_norm"]
+    
+    # Sort by combined score
+    scored_candidates.sort(key=lambda c: c["combined_score"], reverse=True)
+    
+    best = scored_candidates[0]
+    second_best = scored_candidates[1] if len(scored_candidates) > 1 else None
+    
+    # Confidence: how much better is best vs second best
+    if second_best:
+        score_diff = best["combined_score"] - second_best["combined_score"]
+        confidence = min(1.0, score_diff / 0.3)  # 0.3 diff = 100% confidence
+    else:
+        confidence = 1.0
+    
+    front_dir = best["direction"]
+    
+    # Derive Top and Right from Front
+    # The longest axis should be HORIZONTAL in both Front and Top view
+    # Forward = opposite of front_dir (camera looks into -front_dir)
+    forward = front_dir.negative()
+    
+    # Right direction = longest axis (horizontal in view)
+    # Check which direction of longest_axis aligns better with "screen right"
+    # For a standard view, we prefer X+ or the direction that gives consistent layout
+    right_dir = longest_axis
+    
+    # If longest_axis is parallel to forward, we need to use a different axis
+    dot_forward = abs(right_dir.dot(forward))
+    if dot_forward > 0.9:
+        # Longest axis is parallel to view direction, use second longest
+        right_dir = second_axis
+    
+    # Make right perpendicular to forward (Gram-Schmidt)
+    proj = forward.multiply(right_dir.dot(forward))
+    right_dir = right_dir.sub(proj)
+    right_dir = normalize_vec(right_dir)
+    if right_dir is None:
+        right_dir = longest_axis
+    
+    # Ensure right points in a consistent direction (prefer positive components)
+    if right_dir.x < -0.5 or (abs(right_dir.x) < 0.1 and right_dir.y < -0.5):
+        right_dir = right_dir.negative()
+    
+    # Up = forward x right (cross product)
+    up_dir = forward.cross(right_dir)
+    up_dir = normalize_vec(up_dir)
+    if up_dir is None:
+        up_dir = App.Vector(0, 0, 1)
+    
+    # Ensure up points "upward" (prefer Z+, then Y+)
+    if up_dir.z < -0.5 or (abs(up_dir.z) < 0.1 and up_dir.y < -0.5):
+        up_dir = up_dir.negative()
+        right_dir = right_dir.negative()  # Flip right too to maintain handedness
+    
+    # Top view looks from up_dir direction
+    top_dir = up_dir
+    
+    debug_info = {
+        "longest_axis": longest_name,
+        "candidates": [
+            {
+                "name": c["name"],
+                "aspect": round(c["aspect"], 2),
+                "detail": round(c["detail"], 1),
+                "combined": round(c["combined_score"], 3),
+            }
+            for c in scored_candidates
+        ],
+        "chosen_front": best["name"],
+        "confidence": round(confidence, 2),
+        "view_dimensions": f"{best['view_w']:.1f} x {best['view_h']:.1f}",
+    }
+    
+    log(f"[Hybrid] Front candidates: {[(c['name'], round(c['combined_score'], 3)) for c in scored_candidates]}")
+    log(f"[Hybrid] Selected Front: {best['name']} (confidence={confidence:.2f})")
+    
+    return front_dir, top_dir, right_dir, confidence, debug_info
+
+
 def choose_front_direction(shape, points, axes):
+    """Legacy function - now delegates to hybrid_view_selection for compatibility."""
     e1, e2, e3 = axes
     candidates = [
         ("+e1", e1),
@@ -695,34 +899,76 @@ def choose_front_direction(shape, points, axes):
 
 
 def compute_view_directions(shape, points=None):
+    """Use hybrid algorithm for view selection."""
     points = points or collect_points(shape)
     if len(points) < 3:
         return None
-    axes, centered = pca_axes(points)
-    if axes is None or centered is None:
-        return None
-    best, scored = choose_front_direction(shape, centered, axes)
-    if best is None:
-        return None
-    front_dir = normalize_vec(best[1])
+    
+    # Use new hybrid algorithm
+    front_dir, top_dir, right_dir, confidence, debug_info = hybrid_view_selection(shape, points)
+    
     if front_dir is None:
-        return None
-    front_dir = snap_axis(front_dir)
-    frame = derive_view_frame(front_dir)
-    if frame is None:
-        return None
-    right_dir, top_dir, iso_dir = frame
-    left_dir = choose_side_direction(shape, right_dir, points=points)
+        log("[Hybrid] Failed, falling back to legacy PCA method")
+        # Fallback to legacy method
+        axes, centered = pca_axes(points)
+        if axes is None or centered is None:
+            return None
+        best, scored = choose_front_direction(shape, centered, axes)
+        if best is None:
+            return None
+        front_dir = normalize_vec(best[1])
+        if front_dir is None:
+            return None
+        front_dir = snap_axis(front_dir)
+        frame = derive_view_frame(front_dir)
+        if frame is None:
+            return None
+        right_dir, top_dir, iso_dir = frame
+        left_dir = choose_side_direction(shape, right_dir, points=points)
+        return {
+            "front": front_dir,
+            "top": top_dir,
+            "left": left_dir,
+            "iso": iso_dir,
+            "debug": {
+                "method": "legacy_pca",
+                "chosen_front": best[0],
+            },
+        }
+    
+    # Snap to world axes for cleaner results
+    front_dir = snap_axis(front_dir) or front_dir
+    top_dir = snap_axis(top_dir) or top_dir
+    right_dir = snap_axis(right_dir) or right_dir
+    
+    # Left view looks from the RIGHT side of the part (showing left face)
+    # In first-angle projection: Left view is placed to the right of Front view
+    # The left_dir should be the viewing direction (opposite of the face normal)
+    left_dir = right_dir  # View from right to see left side
+    
+    # Iso direction: diagonal from front-right-top
+    # IMPORTANT: Use App.Vector() copies to avoid modifying originals
+    forward = App.Vector(front_dir.x, front_dir.y, front_dir.z).negative()
+    iso_basis = normalize_vec(App.Vector(1, 1, 1))
+    iso_dir = normalize_vec(
+        App.Vector(right_dir.x * iso_basis.x, right_dir.y * iso_basis.x, right_dir.z * iso_basis.x).add(
+        App.Vector(top_dir.x * iso_basis.y, top_dir.y * iso_basis.y, top_dir.z * iso_basis.y)).add(
+        App.Vector(forward.x * iso_basis.z, forward.y * iso_basis.z, forward.z * iso_basis.z))
+    )
+    if iso_dir is None:
+        iso_dir = normalize_vec(App.Vector(1, -1, 1))
+    
+    # Also return right_dir for extent calculations
     return {
         "front": front_dir,
         "top": top_dir,
         "left": left_dir,
+        "right": right_dir,
         "iso": iso_dir,
+        "confidence": confidence,
         "debug": {
-            "candidate_directions": [item[0] for item in scored],
-            "projected_areas": {item[0]: item[2] for item in scored},
-            "detail_scores": {item[0]: item[3] for item in scored},
-            "chosen_front": best[0],
+            "method": "hybrid",
+            **debug_info,
         },
     }
 
@@ -850,12 +1096,15 @@ def main():
         front_dir = view_dirs["front"]
         top_dir = view_dirs["top"]
         left_dir = view_dirs["left"]
-        right_dir = left_dir.negative()
+        right_dir = view_dirs.get("right", left_dir.negative())
         iso_dir = view_dirs["iso"]
         debug = view_dirs["debug"]
-        log(f"Front selection: {debug['chosen_front']}")
-        log(f"Projected areas: {debug['projected_areas']}")
-        log(f"Detail scores: {debug['detail_scores']}")
+        confidence = view_dirs.get("confidence", 0.0)
+        log(f"View selection method: {debug.get('method', 'unknown')}")
+        log(f"Front selection: {debug.get('chosen_front', 'N/A')}")
+        log(f"Confidence: {confidence:.2f}")
+        if "candidates" in debug:
+            log(f"Candidates: {debug['candidates']}")
 
     log(f"Front dir: {front_dir.x:.4f},{front_dir.y:.4f},{front_dir.z:.4f}")
     log(f"Top dir: {top_dir.x:.4f},{top_dir.y:.4f},{top_dir.z:.4f}")
@@ -895,10 +1144,13 @@ def main():
             expected_w = extent_forward
             expected_h = extent_top
         rotation_deg = 0
-        if name == "Top":
-            rotation_deg = rotation_for_view_with_expected(
-                direction, forward_dir, svg_bounds, expected_w, expected_h
-            )
+        if name == "Front":
+            # Front: Ensure longest axis (extent_right) appears horizontal
+            rotation_deg = rotation_to_make_horizontal(svg_bounds, extent_right)
+        elif name == "Top":
+            # Top: Also ensure longest axis (extent_right) appears horizontal
+            # to align with Front view
+            rotation_deg = rotation_to_make_horizontal(svg_bounds, extent_right)
         elif name == "Left":
             rotation_deg = rotation_for_view_with_expected(
                 direction, top_dir, svg_bounds, expected_w, expected_h
@@ -990,14 +1242,130 @@ def main():
         log(f"ALIGN Left: paper_h={left_paper_h:.2f}, old_cy={left_item['cy']:.2f}, new_cy={new_left_cy:.2f}")
         left_item["cy"] = new_left_cy
 
+    # === JSON REPORT FOR AUTOMATED TESTING ===
+    def build_report():
+        """Build a JSON report with all computed values for verification."""
+        report = {
+            "input_file": os.path.basename(input_path),
+            "bounding_box": {
+                "X": round(dim_x, 2),
+                "Y": round(dim_y, 2),
+                "Z": round(dim_z, 2),
+            },
+            "detection": {
+                "method": view_dirs.get("debug", {}).get("method", "unknown") if view_dirs else "fallback",
+                "longest_axis": view_dirs.get("debug", {}).get("longest_axis", "unknown") if view_dirs else "unknown",
+                "is_flat": view_dirs.get("debug", {}).get("longest_axis", "") != "" and "FLAT" in str(view_dirs.get("debug", {})),
+                "confidence": view_dirs.get("confidence", 0) if view_dirs else 0,
+            },
+            "directions": {
+                "front": [round(front_dir.x, 4), round(front_dir.y, 4), round(front_dir.z, 4)],
+                "top": [round(top_dir.x, 4), round(top_dir.y, 4), round(top_dir.z, 4)],
+                "right": [round(right_dir.x, 4), round(right_dir.y, 4), round(right_dir.z, 4)],
+            },
+            "scale": ortho_scale,
+            "views": {},
+        }
+        
+        for item in view_data:
+            paper_w, paper_h = get_paper_dimensions(item, ortho_scale if item["name"] != "Iso" else item.get("scale", ortho_scale))
+            left_edge = item["cx"] - paper_w / 2
+            top_edge = item["cy"] - paper_h / 2
+            
+            report["views"][item["name"]] = {
+                "rotation_deg": item["rotation_deg"],
+                "center": [round(item["cx"], 2), round(item["cy"], 2)],
+                "paper_size": [round(paper_w, 2), round(paper_h, 2)],
+                "left_edge": round(left_edge, 2),
+                "top_edge": round(top_edge, 2),
+                "svg_bounds": [round(b, 2) for b in item["svg_bounds"]],
+            }
+        
+        # Alignment checks
+        report["alignment"] = {
+            "front_top_left_match": False,
+            "front_left_top_match": False,
+            "front_left_edge": 0,
+            "top_left_edge": 0,
+            "left_top_edge": 0,
+            "front_top_edge": 0,
+        }
+        
+        if "Front" in report["views"] and "Top" in report["views"]:
+            front_left = report["views"]["Front"]["left_edge"]
+            top_left = report["views"]["Top"]["left_edge"]
+            report["alignment"]["front_left_edge"] = front_left
+            report["alignment"]["top_left_edge"] = top_left
+            report["alignment"]["front_top_left_match"] = abs(front_left - top_left) < 0.5
+        
+        if "Front" in report["views"] and "Left" in report["views"]:
+            front_top = report["views"]["Front"]["top_edge"]
+            left_top = report["views"]["Left"]["top_edge"]
+            report["alignment"]["front_top_edge"] = front_top
+            report["alignment"]["left_top_edge"] = left_top
+            report["alignment"]["front_left_top_match"] = abs(front_top - left_top) < 0.5
+        
+        return report
+    
+    report = build_report()
+    
+    # Write JSON report
+    debug_dir = os.getenv("DRAWFORM_DEBUG_DIR")
+    if debug_dir:
+        try:
+            debug_root = Path(debug_dir)
+            debug_root.mkdir(parents=True, exist_ok=True)
+            json_name = f"{Path(input_path).stem}_report.json"
+            json_path = debug_root / json_name
+            json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            log(f"Report JSON written: {json_path}")
+        except Exception as exc:
+            log(f"Failed to write report JSON: {exc}")
+
     view_groups = []
     for item in view_data:
         name = item["name"]
         svg_bounds = item["svg_bounds"]
         proj_bounds = item["proj_bounds"]
         proj_w, proj_h = bounds_size(proj_bounds)
-        label_w = proj_h if item["rotation_deg"] % 180 != 0 else proj_w
-        label_h = proj_w if item["rotation_deg"] % 180 != 0 else proj_h
+        svg_w, svg_h = bounds_size(svg_bounds)
+        
+        # The dimension lines are drawn in SVG coordinates:
+        # - Horizontal dimension line (above view) shows "label_width" 
+        # - Vertical dimension line (right of view) shows "label_height"
+        #
+        # After rotation, these lines swap positions:
+        # - 90° rotation: horizontal becomes right, vertical becomes top
+        # - So after 90°, the original "label_width" appears on the RIGHT, 
+        #   and original "label_height" appears on TOP
+        #
+        # We want:
+        # - TOP (horizontal after rotation) to show the longer 3D dimension
+        # - RIGHT (vertical after rotation) to show the shorter 3D dimension
+        #
+        # proj_w and proj_h are 3D projected bounds
+        # svg_w and svg_h tell us which dimension is horizontal/vertical in SVG
+        
+        # Determine which 3D dimension corresponds to which SVG axis
+        # If swap=True, SVG dimensions are swapped relative to proj dimensions
+        if item.get("proj_swap", False):
+            # SVG width corresponds to proj_h, SVG height corresponds to proj_w
+            svg_horizontal_3d = proj_h  # What 3D dimension is horizontal in SVG
+            svg_vertical_3d = proj_w    # What 3D dimension is vertical in SVG
+        else:
+            svg_horizontal_3d = proj_w
+            svg_vertical_3d = proj_h
+        
+        if item["rotation_deg"] % 180 != 0:
+            # After 90° rotation:
+            # - Original vertical (svg_vertical_3d) becomes horizontal dimension
+            # - Original horizontal (svg_horizontal_3d) becomes vertical dimension
+            label_w = svg_vertical_3d    # Now shown on horizontal dim line (top)
+            label_h = svg_horizontal_3d  # Now shown on vertical dim line (right)
+        else:
+            label_w = svg_horizontal_3d  # Shown on horizontal dim line (top)
+            label_h = svg_vertical_3d    # Shown on vertical dim line (right)
+        
         if name == "Iso":
             scale = item.get("scale", ortho_scale * 0.75)
             dimension_svg = ""
