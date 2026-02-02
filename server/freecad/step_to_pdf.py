@@ -795,29 +795,25 @@ def first_angle_projection(shape, points):
         view_up = App.Vector(0, 0, 1)
     
     # === Orientation normalization ===
-    # Goal: Make UP point in a "natural" direction (prefer +Z, +Y, +X)
-    # When we flip UP, we also need to flip RIGHT to maintain right-hand rule
-    # This keeps the view consistent
-    should_flip = False
-    if abs(view_up.z) > 0.5:
-        if view_up.z < 0:
-            should_flip = True
-    elif abs(view_up.y) > 0.5:
-        if view_up.y < 0:
-            should_flip = True
-    elif abs(view_up.x) > 0.5:
-        if view_up.x < 0:
-            should_flip = True
+    # Goal: Consistent "up" direction across all parts
+    # Convention: Z+ is world up, Y+ is secondary up
+    # We want view_up to point toward world up as much as possible
     
-    if should_flip:
+    # Score each direction by how well it aligns with world up (Z+) or secondary up (Y+)
+    # Higher score = better alignment with "up"
+    def up_score(v):
+        return v.z * 2.0 + v.y * 1.0  # Z gets double weight
+    
+    current_score = up_score(view_up)
+    flipped_score = up_score(App.Vector(-view_up.x, -view_up.y, -view_up.z))
+    
+    if flipped_score > current_score:
         view_up = App.Vector(-view_up.x, -view_up.y, -view_up.z)
         view_right = App.Vector(-view_right.x, -view_right.y, -view_right.z)
     
-    # At this point:
-    # - view_up is positive (natural orientation)
-    # - view_right may be negative (to maintain right-hand rule)
-    # This is CORRECT for First-Angle Projection because LEFT = -view_right
-    # So if view_right is negative, LEFT will be positive (pointing in positive direction)
+    log(f"[FirstAngle] Up score: current={current_score:.2f}, flipped={flipped_score:.2f}")
+    
+    # At this point view_up should point toward "world up" as much as possible
     should_flip_up = False
     if abs(view_up.z) > 0.5:
         if view_up.z < 0:
@@ -1438,6 +1434,7 @@ def main():
     # === JSON REPORT FOR AUTOMATED TESTING ===
     def build_report():
         """Build a JSON report with all computed values for verification."""
+        debug = view_dirs.get("debug", {}) if view_dirs else {}
         report = {
             "input_file": os.path.basename(input_path),
             "bounding_box": {
@@ -1446,9 +1443,10 @@ def main():
                 "Z": round(dim_z, 2),
             },
             "detection": {
-                "method": view_dirs.get("debug", {}).get("method", "unknown") if view_dirs else "fallback",
-                "longest_axis": view_dirs.get("debug", {}).get("longest_axis", "unknown") if view_dirs else "unknown",
-                "is_flat": view_dirs.get("debug", {}).get("longest_axis", "") != "" and "FLAT" in str(view_dirs.get("debug", {})),
+                "method": debug.get("method", "unknown"),
+                "longest_axis": debug.get("longest_axis", "unknown"),
+                "is_flat": debug.get("is_flat", False),
+                "flatness_ratio": debug.get("flatness_ratio", 0),
                 "confidence": view_dirs.get("confidence", 0) if view_dirs else 0,
             },
             "directions": {
