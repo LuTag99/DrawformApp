@@ -56,7 +56,8 @@ Alternativ kannst du den gesamten `dist/`-Ordner via SFTP oder den Plesk-Dateima
 
 - Öffne die Domain im Browser → du solltest die Glas-Oberfläche sehen.
 - Navigiere durch `/projects`, `/export`, `/profile`, um zu bestätigen, dass die `.htaccess`-Weiterleitung greift.
-- Wenn du `/api/export` auf denselben Server legst, teste einen Export-Request. Ohne Backend bekommst du weiterhin den simulierten Erfolgsstatus aus `exportService`.
+- Wenn du `/api/export` auf denselben Server legst, teste einen Export-Request (z. B. mit `sheet=auto`, `sheet=A3` oder `sheet=A2`).
+- Ohne Backend zeigt die Export-Seite einen echten Fehlerstatus.
 
 ## 7. Updates
 

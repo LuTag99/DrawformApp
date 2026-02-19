@@ -37,3 +37,7 @@ server/__pycache__
 server/.cache
 server/tmp
 server/_debug
+
+# Keep potentially sensitive reference drawings local only
+server/_samples/**/*.pdf
+server/_samples/**/*.PDF

@@ -2,25 +2,61 @@
   <defs>
     <style>
       .border { fill: none; stroke: #000; stroke-width: 0.5; }
-      .grid { fill: none; stroke: #000; stroke-width: 0.35; }
+      .grid { fill: none; stroke: #000; stroke-width: 0.25; }
       .label {
         font-family: ISOCP, "ISO 3098", "Hershey Simplex", "Simplex", monospace;
-        font-size: 3.5px;
+        font-size: 3.0px;
         fill: #000;
         font-style: normal;
         font-weight: normal;
       }
       .value {
         font-family: ISOCP, "ISO 3098", "Hershey Simplex", "Simplex", monospace;
-        font-size: 5px;
+        font-size: 4.6px;
         fill: #000;
         font-style: normal;
         font-weight: normal;
+      }
+      .zone {
+        font-family: ISOCP, "ISO 3098", "Hershey Simplex", "Simplex", monospace;
+        font-size: 3.6px;
+        fill: #000;
       }
     </style>
   </defs>
 
   <rect class="border" x="10" y="10" width="400" height="277" />
+
+  <line class="grid" x1="82" y1="10" x2="82" y2="287" />
+  <line class="grid" x1="154" y1="10" x2="154" y2="287" />
+  <line class="grid" x1="226" y1="10" x2="226" y2="287" />
+  <line class="grid" x1="298" y1="10" x2="298" y2="287" />
+  <line class="grid" x1="370" y1="10" x2="370" y2="287" />
+  <line class="grid" x1="10" y1="63" x2="410" y2="63" />
+  <line class="grid" x1="10" y1="116" x2="410" y2="116" />
+  <line class="grid" x1="10" y1="169" x2="410" y2="169" />
+  <line class="grid" x1="10" y1="222" x2="410" y2="222" />
+
+  <text class="zone" x="45" y="16">1</text>
+  <text class="zone" x="117" y="16">2</text>
+  <text class="zone" x="189" y="16">3</text>
+  <text class="zone" x="261" y="16">4</text>
+  <text class="zone" x="333" y="16">5</text>
+  <text class="zone" x="45" y="294">1</text>
+  <text class="zone" x="117" y="294">2</text>
+  <text class="zone" x="189" y="294">3</text>
+  <text class="zone" x="261" y="294">4</text>
+  <text class="zone" x="333" y="294">5</text>
+  <text class="zone" x="4" y="37">a</text>
+  <text class="zone" x="4" y="90">b</text>
+  <text class="zone" x="4" y="143">c</text>
+  <text class="zone" x="4" y="196">d</text>
+  <text class="zone" x="4" y="249">e</text>
+  <text class="zone" x="412" y="37">a</text>
+  <text class="zone" x="412" y="90">b</text>
+  <text class="zone" x="412" y="143">c</text>
+  <text class="zone" x="412" y="196">d</text>
+  <text class="zone" x="412" y="249">e</text>
 
   <rect class="grid" x="230" y="232" width="180" height="55" />
   <line class="grid" x1="230" y1="247" x2="410" y2="247" />
@@ -31,30 +67,30 @@
   <line class="grid" x1="310" y1="257" x2="310" y2="287" />
   <line class="grid" x1="370" y1="257" x2="370" y2="287" />
 
-  <text class="label" x="232" y="238">TITLE</text>
-  <text class="value" id="TITLE" x="232" y="244">Manufacturing Drawing</text>
+  <text class="label" x="232" y="238">BENENNUNG</text>
+  <text class="value" id="TITLE" x="232" y="244">Bauteilzeichnung</text>
 
-  <text class="label" x="332" y="238">COMPANY</text>
+  <text class="label" x="332" y="238">FIRMA</text>
   <text class="value" id="COMPANY" x="332" y="244">Drawform</text>
 
-  <text class="label" x="232" y="252">DRAWING NO</text>
+  <text class="label" x="232" y="252">ZEICHN.-NR</text>
   <text class="value" id="DRAWING_NO" x="232" y="256">DF-0001</text>
 
-  <text class="label" x="332" y="252">REV</text>
+  <text class="label" x="332" y="252">AEND.-NR</text>
   <text class="value" id="REV" x="332" y="256">A</text>
 
-  <text class="label" x="232" y="262">AUTHOR</text>
-  <text class="value" id="AUTHOR" x="232" y="270">Drawform AI</text>
+  <text class="label" x="232" y="262">GEZEICHNET</text>
+  <text class="value" id="AUTHOR" x="232" y="270">Drawform</text>
 
-  <text class="label" x="312" y="262">DATE</text>
-  <text class="value" id="DATE" x="312" y="270">2025-01-01</text>
+  <text class="label" x="312" y="262">DATUM</text>
+  <text class="value" id="DATE" x="312" y="270">15.02.2026</text>
 
-  <text class="label" x="372" y="262">SCALE</text>
+  <text class="label" x="372" y="262">MASSSTAB</text>
   <text class="value" id="SCALE" x="372" y="270">auto</text>
 
-  <text class="label" x="232" y="277">UNIT</text>
+  <text class="label" x="232" y="277">EINHEIT</text>
   <text class="value" id="UNIT" x="232" y="285">mm</text>
 
-  <text class="label" x="312" y="277">SHEET</text>
+  <text class="label" x="312" y="277">BLATT</text>
   <text class="value" id="SHEET" x="312" y="285">A3</text>
 </svg>

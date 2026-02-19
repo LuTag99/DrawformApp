@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="594mm" height="420mm" viewBox="0 0 594 420">
+  <defs>
+    <style>
+      .border { fill: none; stroke: #000; stroke-width: 0.5; }
+      .grid { fill: none; stroke: #000; stroke-width: 0.25; }
+      .label {
+        font-family: ISOCP, "ISO 3098", "Hershey Simplex", "Simplex", monospace;
+        font-size: 3.0px;
+        fill: #000;
+        font-style: normal;
+        font-weight: normal;
+      }
+      .value {
+        font-family: ISOCP, "ISO 3098", "Hershey Simplex", "Simplex", monospace;
+        font-size: 4.8px;
+        fill: #000;
+        font-style: normal;
+        font-weight: normal;
+      }
+      .zone {
+        font-family: ISOCP, "ISO 3098", "Hershey Simplex", "Simplex", monospace;
+        font-size: 3.6px;
+        fill: #000;
+      }
+    </style>
+  </defs>
+
+  <rect class="border" x="10" y="10" width="574" height="400" />
+
+  <line class="grid" x1="92" y1="10" x2="92" y2="410" />
+  <line class="grid" x1="174" y1="10" x2="174" y2="410" />
+  <line class="grid" x1="256" y1="10" x2="256" y2="410" />
+  <line class="grid" x1="338" y1="10" x2="338" y2="410" />
+  <line class="grid" x1="420" y1="10" x2="420" y2="410" />
+  <line class="grid" x1="502" y1="10" x2="502" y2="410" />
+
+  <line class="grid" x1="10" y1="67" x2="584" y2="67" />
+  <line class="grid" x1="10" y1="124" x2="584" y2="124" />
+  <line class="grid" x1="10" y1="181" x2="584" y2="181" />
+  <line class="grid" x1="10" y1="238" x2="584" y2="238" />
+  <line class="grid" x1="10" y1="295" x2="584" y2="295" />
+  <line class="grid" x1="10" y1="352" x2="584" y2="352" />
+
+  <text class="zone" x="50" y="16">1</text>
+  <text class="zone" x="132" y="16">2</text>
+  <text class="zone" x="214" y="16">3</text>
+  <text class="zone" x="296" y="16">4</text>
+  <text class="zone" x="378" y="16">5</text>
+  <text class="zone" x="460" y="16">6</text>
+  <text class="zone" x="542" y="16">7</text>
+  <text class="zone" x="50" y="417">1</text>
+  <text class="zone" x="132" y="417">2</text>
+  <text class="zone" x="214" y="417">3</text>
+  <text class="zone" x="296" y="417">4</text>
+  <text class="zone" x="378" y="417">5</text>
+  <text class="zone" x="460" y="417">6</text>
+  <text class="zone" x="542" y="417">7</text>
+
+  <text class="zone" x="4" y="39">a</text>
+  <text class="zone" x="4" y="96">b</text>
+  <text class="zone" x="4" y="153">c</text>
+  <text class="zone" x="4" y="210">d</text>
+  <text class="zone" x="4" y="267">e</text>
+  <text class="zone" x="4" y="324">f</text>
+  <text class="zone" x="4" y="381">g</text>
+  <text class="zone" x="586" y="39">a</text>
+  <text class="zone" x="586" y="96">b</text>
+  <text class="zone" x="586" y="153">c</text>
+  <text class="zone" x="586" y="210">d</text>
+  <text class="zone" x="586" y="267">e</text>
+  <text class="zone" x="586" y="324">f</text>
+  <text class="zone" x="586" y="381">g</text>
+
+  <rect class="grid" x="344" y="348" width="240" height="62" />
+  <line class="grid" x1="344" y1="365" x2="584" y2="365" />
+  <line class="grid" x1="344" y1="377" x2="584" y2="377" />
+  <line class="grid" x1="344" y1="393" x2="584" y2="393" />
+
+  <line class="grid" x1="474" y1="365" x2="474" y2="377" />
+  <line class="grid" x1="452" y1="377" x2="452" y2="410" />
+  <line class="grid" x1="524" y1="377" x2="524" y2="410" />
+
+  <text class="label" x="346" y="358">BENENNUNG</text>
+  <text class="value" id="TITLE" x="346" y="363">Bauteilzeichnung</text>
+
+  <text class="label" x="476" y="358">FIRMA</text>
+  <text class="value" id="COMPANY" x="476" y="363">Drawform</text>
+
+  <text class="label" x="346" y="370">ZEICHN.-NR</text>
+  <text class="value" id="DRAWING_NO" x="346" y="376">DF-0001</text>
+
+  <text class="label" x="476" y="370">AEND.-NR</text>
+  <text class="value" id="REV" x="476" y="376">A</text>
+
+  <text class="label" x="346" y="383">GEZEICHNET</text>
+  <text class="value" id="AUTHOR" x="346" y="391">Drawform</text>
+
+  <text class="label" x="454" y="383">DATUM</text>
+  <text class="value" id="DATE" x="454" y="391">15.02.2026</text>
+
+  <text class="label" x="526" y="383">MASSSTAB</text>
+  <text class="value" id="SCALE" x="526" y="391">auto</text>
+
+  <text class="label" x="346" y="399">EINHEIT</text>
+  <text class="value" id="UNIT" x="346" y="407">mm</text>
+
+  <text class="label" x="454" y="399">BLATT</text>
+  <text class="value" id="SHEET" x="454" y="407">A2</text>
+</svg>

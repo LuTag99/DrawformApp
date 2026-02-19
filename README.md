@@ -9,6 +9,7 @@ Das neue Frontend setzt den iOS 26 Glass Look konsequent um, fühlt sich wie e
 - Auth-Flow (Login, Registrierung, Passwort-Reset) ohne Backend – Status bleibt im LocalStorage.
 - Dashboard mit AI‑Insights (OpenAI) und animiertem Canvas-Chart.
 - Projektübersicht, Export-Center inkl. Server-Aufruf `/api/export`, Profilverwaltung mit Avatar + Passwortwechsel.
+- Bemaessungslabor mit Backend-Jobflow ueber `/api/analyze` (Status: pending/processing/completed) inkl. CAD-Feature-Probe (Bounding-Box, Bohrung, Biegeradius).
 - Komponentenbibliothek für Glass Cards, Gradient Buttons, Chips usw.
 
 ## Tech-Stack
@@ -28,7 +29,7 @@ npm run dev
 
 ## Lokales Backend (STEP -> PDF)
 
-Fuer den MVP-Export (STEP -> A3 PDF mit ISO7200-Schriftkopf) gibt es einen lokalen FastAPI-Service.
+Fuer den MVP-Export (STEP -> PDF mit ISO7200-Schriftkopf, `sheet=auto|A3|A2`) gibt es einen lokalen FastAPI-Service.
 Details und Setup findest du unter `server/README.md`.
 
 Optional kannst du das Backend auch per Docker starten (siehe `server/README.md`).
@@ -52,7 +53,7 @@ Optional kannst du das Backend auch per Docker starten (siehe `server/README.md`
 ## Export-Service & gemeinsamer Server
 
 - `src/services/exportService.ts` erwartet einen Endpoint `POST /api/export` auf **derselben Domain** wie die Website.  
-- Lokal simuliert der Service den Export, sobald kein Backend antwortet.  
+- Lokal ist ein laufendes Backend unter `/api/export` erforderlich; ohne Backend zeigt die Seite einen Fehlerstatus.  
 - Für eine gemeinsame Auslieferung mit [Drawform-Website](https://github.com/LuTag99/Drawform-Website):
   1. `npm run build`
   2. Den Inhalt aus `dist/` in das Webserver-Verzeichnis der bestehenden Seite kopieren (z. B. als Unterordner `/ai`).

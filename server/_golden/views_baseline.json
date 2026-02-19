@@ -1,0 +1,1526 @@
+{
+  "generated_at": "2026-02-19T20:56:42+00:00",
+  "parts": {
+    "10x10x10": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 10.0,
+        "Y": 10.0,
+        "Z": 10.0
+      },
+      "detection": {
+        "flatness_ratio": 1.0,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": null,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 0,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            57.43,
+            57.43
+          ],
+          "rotation_deg": 0
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            60.91,
+            70.33
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            57.43,
+            57.43
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            57.43,
+            57.43
+          ],
+          "rotation_deg": 0
+        }
+      }
+    },
+    "angle_profile": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 150.0,
+        "Y": 30.0,
+        "Z": 40.0
+      },
+      "detection": {
+        "flatness_ratio": 0.75,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": null,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 0,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            113.93,
+            30.38
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            76.53,
+            50.0
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            61.7
+          ],
+          "paper_size": [
+            30.38,
+            22.79
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            113.93,
+            22.79
+          ],
+          "rotation_deg": 0
+        }
+      }
+    },
+    "bracket": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 60.0,
+        "Y": 40.0,
+        "Z": 40.0
+      },
+      "detection": {
+        "flatness_ratio": 1.0,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 4.0,
+        "hole_count": 2,
+        "hole_diameter_mm": 8.0,
+        "hole_pitch_mm": 30.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 2,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            78.42,
+            52.28
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            69.32,
+            58.03
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            52.28,
+            52.28
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            78.42,
+            52.28
+          ],
+          "rotation_deg": 0
+        }
+      }
+    },
+    "complex_bracket": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 220.0,
+        "Y": 140.0,
+        "Z": 144.0
+      },
+      "detection": {
+        "flatness_ratio": 0.972,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 6.0,
+        "hole_count": 10,
+        "hole_diameter_mm": 14.0,
+        "hole_pitch_mm": 180.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 4,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            79.52,
+            52.05
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            69.78,
+            58.0
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            64.78
+          ],
+          "paper_size": [
+            52.05,
+            50.61
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            79.52,
+            50.61
+          ],
+          "rotation_deg": 0
+        }
+      }
+    },
+    "cylinder": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 50.0,
+        "Y": 49.98,
+        "Z": 80.0
+      },
+      "detection": {
+        "flatness_ratio": 1.0,
+        "is_flat": false,
+        "longest_axis": "Z",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 25.0,
+        "hole_count": 2,
+        "hole_diameter_mm": 50.0,
+        "hole_pitch_mm": 80.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 1,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            82.4,
+            51.5
+          ],
+          "rotation_deg": 0
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            105.63,
+            80.98
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            82.4,
+            51.5
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            94.55,
+            176.5
+          ],
+          "paper_size": [
+            51.5,
+            51.5
+          ],
+          "rotation_deg": 0
+        }
+      }
+    },
+    "feature_test_part": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 260.0,
+        "Y": 140.0,
+        "Z": 30.0
+      },
+      "detection": {
+        "flatness_ratio": 0.214,
+        "is_flat": true,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 5.1,
+        "hole_count": 5,
+        "hole_diameter_mm": 20.0,
+        "hole_pitch_mm": 180.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 5,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            86.12,
+            46.37
+          ],
+          "rotation_deg": 0
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            50.94,
+            57.81
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            9.94,
+            46.37
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            86.12,
+            9.94
+          ],
+          "rotation_deg": 270
+        }
+      }
+    },
+    "flange": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 100.0,
+        "Y": 99.97,
+        "Z": 10.0
+      },
+      "detection": {
+        "flatness_ratio": 0.1,
+        "is_flat": true,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 5.0,
+        "hole_count": 7,
+        "hole_diameter_mm": 10.0,
+        "hole_pitch_mm": 70.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 8,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            53.88,
+            53.88
+          ],
+          "rotation_deg": 0
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            67.66,
+            59.98
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            5.39,
+            53.88
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            53.88,
+            5.39
+          ],
+          "rotation_deg": 90
+        }
+      }
+    },
+    "flanged_manifold": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 210.0,
+        "Y": 110.0,
+        "Z": 110.0
+      },
+      "detection": {
+        "flatness_ratio": 1.0,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 55.0,
+        "hole_count": 15,
+        "hole_diameter_mm": 40.0,
+        "hole_pitch_mm": 210.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 9,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            94.29,
+            49.39
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            109.4,
+            82.48
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            49.39,
+            49.39
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            94.29,
+            49.39
+          ],
+          "rotation_deg": 0
+        }
+      }
+    },
+    "housing": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 80.0,
+        "Y": 60.0,
+        "Z": 40.0
+      },
+      "detection": {
+        "flatness_ratio": 0.667,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": null,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 0,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            71.82,
+            35.91
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            57.13,
+            65.97
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            74.48
+          ],
+          "paper_size": [
+            35.91,
+            53.87
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            71.82,
+            53.87
+          ],
+          "rotation_deg": 0
+        }
+      }
+    },
+    "l_shape": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 100.0,
+        "Y": 100.0,
+        "Z": 50.0
+      },
+      "detection": {
+        "flatness_ratio": 0.5,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": null,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 0,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            57.43,
+            28.71
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            45.68,
+            61.54
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            57.43,
+            28.71
+          ],
+          "rotation_deg": 270
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            57.43,
+            57.43
+          ],
+          "rotation_deg": 180
+        }
+      }
+    },
+    "mounting_panel_complex": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 320.0,
+        "Y": 180.0,
+        "Z": 12.0
+      },
+      "detection": {
+        "flatness_ratio": 0.067,
+        "is_flat": true,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 8.0,
+        "hole_count": 11,
+        "hole_diameter_mm": 10.0,
+        "hole_pitch_mm": 272.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 15,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            83.4,
+            46.91
+          ],
+          "rotation_deg": 0
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            45.89,
+            55.22
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            3.13,
+            46.91
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            83.4,
+            3.13
+          ],
+          "rotation_deg": 270
+        }
+      }
+    },
+    "rechteck": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 100.0,
+        "Y": 300.0,
+        "Z": 50.0
+      },
+      "detection": {
+        "flatness_ratio": 0.5,
+        "is_flat": false,
+        "longest_axis": "Y",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 16.155,
+        "hole_count": 2,
+        "hole_diameter_mm": 32.51,
+        "hole_pitch_mm": 148.622,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 2,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            113.93,
+            18.99
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            30.21,
+            86.05
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            37.98,
+            18.99
+          ],
+          "rotation_deg": 270
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            113.93,
+            37.98
+          ],
+          "rotation_deg": 270
+        }
+      }
+    },
+    "rect_part": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 50.0,
+        "Y": 30.0,
+        "Z": 10.0
+      },
+      "detection": {
+        "flatness_ratio": 0.333,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": null,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 0,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            84.99,
+            17.0
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            54.09,
+            62.46
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            82.5
+          ],
+          "paper_size": [
+            17.0,
+            51.0
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            84.99,
+            51.0
+          ],
+          "rotation_deg": 0
+        }
+      }
+    },
+    "shaft": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 30.0,
+        "Y": 29.99,
+        "Z": 100.0
+      },
+      "detection": {
+        "flatness_ratio": 1.0,
+        "is_flat": false,
+        "longest_axis": "Z",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 15.0,
+        "hole_count": 3,
+        "hole_diameter_mm": 25.0,
+        "hole_pitch_mm": 100.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 2,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            113.93,
+            34.18
+          ],
+          "rotation_deg": 0
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            95.12,
+            65.72
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            113.93,
+            34.18
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            70.12,
+            176.5
+          ],
+          "paper_size": [
+            34.18,
+            34.18
+          ],
+          "rotation_deg": 0
+        }
+      }
+    },
+    "sheet_metal": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 200.0,
+        "Y": 100.0,
+        "Z": 3.0
+      },
+      "detection": {
+        "flatness_ratio": 0.03,
+        "is_flat": true,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": null,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 0,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            91.0,
+            45.5
+          ],
+          "rotation_deg": 0
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            48.98,
+            56.14
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            1.36,
+            45.5
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            91.0,
+            1.36
+          ],
+          "rotation_deg": 90
+        }
+      }
+    },
+    "slot_plate": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 120.0,
+        "Y": 60.0,
+        "Z": 8.0
+      },
+      "detection": {
+        "flatness_ratio": 0.133,
+        "is_flat": true,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 8.0,
+        "hole_count": 2,
+        "hole_diameter_mm": 16.0,
+        "hole_pitch_mm": 60.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 1,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            91.0,
+            45.5
+          ],
+          "rotation_deg": 0
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            51.48,
+            57.58
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            6.07,
+            45.5
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            91.0,
+            6.07
+          ],
+          "rotation_deg": 90
+        }
+      }
+    },
+    "stepped_shaft": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 250.0,
+        "Y": 63.98,
+        "Z": 64.0
+      },
+      "detection": {
+        "flatness_ratio": 1.0,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 32.0,
+        "hole_count": 9,
+        "hole_diameter_mm": 32.0,
+        "hole_pitch_mm": 250.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 3,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            113.93,
+            29.17
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            82.63,
+            54.62
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            29.17,
+            29.17
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            113.93,
+            29.17
+          ],
+          "rotation_deg": 0
+        }
+      }
+    },
+    "t_profile": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 50.0,
+        "Y": 80.0,
+        "Z": 50.0
+      },
+      "detection": {
+        "flatness_ratio": 1.0,
+        "is_flat": false,
+        "longest_axis": "Y",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": null,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 0,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            82.4,
+            51.5
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            43.7,
+            75.69
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            51.5,
+            51.5
+          ],
+          "rotation_deg": 270
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            82.4,
+            51.5
+          ],
+          "rotation_deg": 270
+        }
+      }
+    },
+    "tall_thin": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 10.0,
+        "Y": 10.0,
+        "Z": 200.0
+      },
+      "detection": {
+        "flatness_ratio": 1.0,
+        "is_flat": false,
+        "longest_axis": "Z",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": null,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 0,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            113.93,
+            5.7
+          ],
+          "rotation_deg": 0
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            63.44,
+            40.12
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            113.93,
+            5.7
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            55.88,
+            176.5
+          ],
+          "paper_size": [
+            5.7,
+            5.7
+          ],
+          "rotation_deg": 0
+        }
+      }
+    },
+    "u_channel_assembly": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 260.0,
+        "Y": 120.0,
+        "Z": 76.0
+      },
+      "detection": {
+        "flatness_ratio": 0.633,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "features": {
+        "bend_radius_mm": 5.0,
+        "hole_count": 15,
+        "hole_diameter_mm": 10.0,
+        "hole_pitch_mm": 176.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 9,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            105.78,
+            30.92
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            72.49,
+            71.75
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            74.45
+          ],
+          "paper_size": [
+            30.92,
+            48.82
+          ],
+          "rotation_deg": 0
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            105.78,
+            48.82
+          ],
+          "rotation_deg": 0
+        }
+      }
+    }
+  },
+  "sample_count": 20
+}

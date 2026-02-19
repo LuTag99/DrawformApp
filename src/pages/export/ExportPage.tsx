@@ -190,7 +190,7 @@ export function ExportPage() {
     <div className="glass-panel shell-card">
       <SectionHeader
         title="Exportcenter"
-        subtitle="STEP zu 2D-Fertigungszeichnung: A3 Querformat, ISO 7200, mm."
+        subtitle="STEP zu 2D-Fertigungszeichnung: A3/A2 Auto, ISO 7200, mm."
       />
       <form onSubmit={handleExport} className="stack" style={{ marginTop: '1.5rem' }}>
         <div className="form-field">
@@ -221,9 +221,9 @@ export function ExportPage() {
           <label>Zielformat</label>
           <div className="format-selector">
             <button type="button" className="format-chip active" disabled>
-              PDF (A3)
+              PDF (A3/A2 Auto)
             </button>
-            <span className="chip chip--ghost">Top + Front + Right + Iso</span>
+            <span className="chip chip--ghost">Top + Front + Left + Iso</span>
           </div>
         </div>
         <GradientButton type="submit" label="PDF erzeugen" busy={busy} busyLabel="Erzeuge PDF..." />

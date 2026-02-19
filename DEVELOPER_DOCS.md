@@ -1,178 +1,152 @@
 ﻿# DrawformApp Developer Documentation
 
-This document explains how to set up, run, and extend the DrawformApp frontend and local export backend.
+Dieses Dokument ist die technische Uebergabe fuer Entwickler, die am Drawform-Export weiterarbeiten.
 
-## 1) Project overview
+## 1) Ziel und aktueller Scope
 
-DrawformApp is a React + TypeScript frontend with a local FastAPI service that converts STEP files into A3 landscape manufacturing drawings (SVG -> PDF) using FreeCAD.
+DrawformApp erzeugt automatisiert technische Zeichnungen aus STEP-Dateien.
 
-High level components:
-- Frontend (React/Vite): UI, export screen, preview, local auth (LocalStorage)
-- Backend (FastAPI): /api/export endpoint, calls FreeCAD Python to generate SVG/PDF
-- FreeCAD Python: geometry import, view projection, layout, dimension lines
+Aktueller Funktionsumfang:
+- Ansichten: Front, Top, Left, Iso
+- Grundbemaszung inkl. Feature-Callouts
+- Titelblock auf A3/A2 (auto-sheet)
+- Normnahe Darstellung (Linienhierarchie, Toleranzhinweise)
+- Pre-Export-Qualitaetscheck mit `OK/WARNUNG`
 
-## 2) Repository layout
+Nicht im aktuellen Scope:
+- Vollstaendiges GD&T
+- Komplexe Form- und Lagetoleranzen
+- Datumserkennung aus Quelldaten
+
+## 2) Architektur
+
+- Frontend: React/Vite (`src/`)
+- Backend: FastAPI (`server/main.py`)
+- CAD-Export: FreeCAD-Skript (`server/freecad/step_to_pdf.py`)
+
+Exportfluss:
+1. `/api/export` nimmt STEP + Metadaten an
+2. STEP wird durch FreeCAD geladen
+3. Projektionen und Blattlayout werden berechnet
+4. SVG wird aufgebaut (Geometrie, Masse, Titelblock)
+5. SVG wird nach PDF gerendert
+6. Debug-Artefakte + Report werden geschrieben
+
+## 3) Relevante Verzeichnisse
 
 ```
-.
-├─ src/                    # React app
-│  ├─ components/          # UI components (buttons, cards, inputs)
-│  ├─ layouts/             # Auth layout + app shell
-│  ├─ pages/               # Auth, dashboard, projects, export, profile
-│  ├─ providers/           # AuthContext (LocalStorage)
-│  ├─ services/            # API services (export, AI stub)
-│  └─ styles/              # Global styles
-├─ server/                 # FastAPI backend + FreeCAD pipeline
-│  ├─ freecad/             # STEP -> SVG -> PDF pipeline
-│  ├─ templates/           # ISO 7200 drawing frame
-│  ├─ _debug/              # Debug SVG output
-│  └─ README.md            # Backend setup
-├─ public/                 # Static assets
-├─ deploy/                 # Deployment notes
-├─ docker-compose.yml      # Optional local backend via Docker
-└─ README.md               # Project overview
+server/
+  freecad/                  # Kernlogik STEP -> SVG -> PDF
+  templates/                # Zeichenrahmen (ISO7200-aehnlich)
+  sample_catalog.py         # Baseline/Real/All Sample-Sets mit Deduplizierung
+  benchmark_real_parts.py   # Lokaler PDF-Benchmark gegen reale Referenzzeichnungen
+  _samples/                 # Referenzteile fuer Regression
+  _golden/                  # Golden-Baseline fuer Views/Qualitaet
+  _debug/                   # Debug SVG/PDF/Reports
+  knowledge/                # Wissensbasis + Datenqualitaetsregeln
+  rules/                    # Rule-Engine fuer Bemaszungsentscheidungen
+  test_views.py             # Haupt-Regression inkl. Norm-/Qualitaetschecks
+  run_quality_gate.py       # Lokaler Gate-Runner (Loops)
 ```
 
-## 3) Prerequisites
+## 4) Stand der Zeichenlogik (wichtig)
 
-Frontend:
-- Node.js 18+ (or 20+ recommended)
+Datei: `server/freecad/step_to_pdf.py`
 
-Backend:
-- Python 3.10+
-- FreeCAD installed (0.21+ recommended, 1.0.x works)
+Aktueller Stand:
+- First-angle Projektion mit deterministischem Tie-Break
+- Arc- und Circle-basierte Mittellinien
+- Feature-Callouts mit Kollisionsvermeidung
+- Linienstaerkenprofil (sichtbar/verdeckt/mittellinie/masz)
+- Auto-Sheet-Logik (`sheet=auto`) mit A3->A2 Umschaltung bei grossen Teilen
+- Layoutprofile `milling` vs `sheet_metal`
+- Sheet-metal Flat-Pattern Fallback-Bereich (wenn SheetMetal-Modul nicht verfuegbar)
+- Toleranznormalisierung (`ISO 2768-f/m/c`, Default `ISO 2768-m`)
+- Zusatzeintraege im Schriftfeldbereich:
+  - Material (optional)
+  - Entgrathinweis
+  - Projektion
+  - Allgemeintoleranz
+- Pre-Export-Pruefung im Report:
+  - fehlende Aussenmasse
+  - fehlende Durchmesserangabe
+  - doppelte Masse
+  - moegliche Ueberlagerung
+  - fehlende Mittellinien bei Bohrungen
 
-## 4) Frontend setup
+## 5) Wissensbasis / Rule-Engine
 
-Install dependencies:
+Ziel: reproduzierbare Entscheidungen, welche Masse gesetzt werden.
+
+- Daten: `server/knowledge/knowledge_base.json`
+- Qualitaetsleitfaden: `server/knowledge/QUALITY_GUIDE.md`
+- Validator: `server/knowledge/validate_knowledge_base.py`
+- Engine: `server/rules/rule_engine.py`
+
+Beispiele:
 
 ```powershell
-cd C:\Projects\DrawformApp
-npm install
+cd server
+python knowledge/validate_knowledge_base.py
+python rules/rule_engine.py --feature hole --ctx visible=true
 ```
 
-Run dev server:
+## 6) Tests und Qualitaetsgate
+
+Wichtigste Tests:
 
 ```powershell
-npm run dev
+cd server
+python test_views.py --sample-set baseline
+python test_views.py --sample-set baseline --stability-runs 3 --stability-sleep-ms 100
+python test_views.py --sample-set baseline --update-golden
+python test_views.py --sample-set real --update-golden
+python test_views.py --sample-set all --update-golden
+python benchmark_real_parts.py --sample-set real
+python -m unittest test_sample_catalog.py
+python run_quality_gate.py --stability-runs 2 --iterations 3
 ```
 
-Build:
+Was `test_views.py` aktuell prueft:
+- Ausrichtung/Orientierung
+- Feature-Erwartungen
+- Zeichnungsflaechen-Fit und Overflow
+- Normmarker im SVG
+- Unitless-Masztexte
+- Mittellinien bei Bohrungsfeatures
+- Stabilitaet ueber Mehrfachlaeufe
 
-```powershell
-npm run build
-```
-
-## 5) Backend setup (Windows)
-
-Create venv and install requirements:
+## 7) Lokales Setup (Kurzfassung)
 
 ```powershell
 cd C:\Projects\DrawformApp\server
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-Set FreeCAD Python path (adjust version/path if needed):
-
-```powershell
-setx FREECAD_PYTHON "C:\Program Files\FreeCAD 1.0\bin\python.exe"
-```
-
-Run backend:
-
-```powershell
-cd C:\Projects\DrawformApp\server
-.venv\Scripts\Activate.ps1
 $env:FREECAD_PYTHON="C:\Program Files\FreeCAD 1.0\bin\python.exe"
 uvicorn main:app --reload --port 8000
 ```
-
-Health check:
-
-```powershell
-Invoke-RestMethod http://localhost:8000/api/health
-```
-
-## 6) Docker (optional)
-
-```powershell
-# from repo root
-docker compose up --build
-```
-
-Backend will be at http://localhost:8000
-
-## 7) Export pipeline (backend)
-
-The export path is:
-
-1) POST /api/export with a STEP file
-2) FastAPI writes the file to a temp folder
-3) FreeCAD Python loads the STEP shape
-4) Projections are generated (Front, Top, Left/Side, Iso)
-5) Layout on A3 landscape SVG with ISO 7200 title block
-6) SVG is converted to PDF (ReportLab)
-
-Main file to inspect:
-- server/freecad/step_to_pdf.py
-
-Debug output:
-- server/_debug/*.svg (set DRAWFORM_DEBUG_DIR env var to enable)
-
-## 8) Environment variables
 
 Frontend:
-- VITE_OPENAI_API_KEY (optional, see README)
-
-Backend:
-- FREECAD_PYTHON (required, points to FreeCAD python.exe)
-- DRAWFORM_DEBUG_DIR (optional, path to dump debug SVG)
-
-## 9) Common tasks
-
-Run frontend + backend:
 
 ```powershell
-# Terminal 1
-cd C:\Projects\DrawformApp\server
-.venv\Scripts\Activate.ps1
-$env:FREECAD_PYTHON="C:\Program Files\FreeCAD 1.0\bin\python.exe"
-uvicorn main:app --reload --port 8000
-
-# Terminal 2
 cd C:\Projects\DrawformApp
+npm install
 npm run dev
 ```
 
-Quick export test:
+## 8) Bekannte Stolpersteine
 
-```powershell
-curl -F "file=@C:\path\model.step" -F "format=pdf" http://localhost:8000/api/export -o drawing.pdf
-```
+- `Permission denied` beim PDF-Export:
+  - PDF ist oft im Viewer gelockt; neuen Dateinamen verwenden oder Viewer schliessen.
+- Leere/fehlerhafte Ausgabe:
+  - `server/_debug/*_debug.svg` und `*_report.json` pruefen.
+- Abhaengigkeitsprobleme im Gate:
+  - `run_quality_gate.py` sollte `.venv` automatisch verwenden.
 
-## 10) Troubleshooting
+## 9) Nächste sinnvolle Schritte
 
-- Export shows empty PDF:
-  - Check server/_debug output SVG to verify views are present.
-  - Ensure FreeCAD is installed and FREECAD_PYTHON is correct.
-
-- Frontend cannot reach backend:
-  - Verify backend is running on port 8000.
-  - Check browser console and server logs.
-
-- Missing python package (reportlab, etc):
-  - Activate venv and run: pip install -r requirements.txt
-
-## 11) Local auth
-
-Auth is local only (LocalStorage). There is no real backend auth.
-The login page can be simplified for MVP and replaced later with a real auth provider.
-
-## 12) Release and deployment
-
-- Frontend builds to dist/
-- Backend can be deployed separately or run in Docker
-
-For more deployment notes see deploy/ and README.md.
+1. Echte Abwicklung fuer Blechteile aktivieren, sobald FreeCAD SheetMetal-Modul verfuegbar ist
+2. Redundanzlogik fuer Masse weiter schaerfen (noch weniger Doppelinfos)
+3. Regelwerk aus realen Fertigungsfaellen anreichern
+4. CI-Lauf auf GitHub fuer finale Absicherung nutzen
