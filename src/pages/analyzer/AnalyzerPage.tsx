@@ -115,7 +115,7 @@ export function AnalyzerPage() {
         URL.revokeObjectURL(filePreview);
         setFilePreview(null);
       }
-      setStatus({ type: 'success', message: 'Job an OpenAI-Worker gesendet.' });
+      setStatus({ type: 'success', message: 'Analyse-Job an Backend-Worker gesendet.' });
       setActiveJobId(job.id);
     } catch (error) {
       setStatus({
@@ -274,7 +274,7 @@ export function AnalyzerPage() {
       <div className="glass-panel shell-card">
         <SectionHeader
           title="Jobs & Dimensionen"
-          subtitle="REST-Aufrufe simulieren /analyze & /dimensions - Worker verarbeitet via OpenAI."
+          subtitle="Backend-Jobstatus via /api/analyze inklusive Polling und Ergebnisuebernahme."
           action={
             <GradientButton
               type="button"

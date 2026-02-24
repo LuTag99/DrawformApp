@@ -227,6 +227,7 @@ def build_metadata(
     general_tolerance: Optional[str] = None,
     unit: Optional[str] = None,
     sheet: Optional[str] = None,
+    k_factor: Optional[float] = None,
 ) -> Dict[str, Any]:
     today = dt.date.today().strftime("%d.%m.%Y")
     normalized_scale = _normalize_scale(scale)
@@ -246,6 +247,7 @@ def build_metadata(
         "standard": _normalize_standard(standard),
         "projection": _normalize_projection(projection),
         "general_tolerance": _normalize_general_tolerance(general_tolerance),
+        "k_factor": float(k_factor) if k_factor is not None and 0.1 <= float(k_factor) <= 0.8 else None,
     }
 
 
@@ -771,6 +773,7 @@ async def export_step_to_pdf(
     general_tolerance: Optional[str] = Form(None),
     unit: Optional[str] = Form(None),
     sheet: Optional[str] = Form(None),
+    k_factor: Optional[float] = Form(None),
 ) -> Response:
     if format.lower() != "pdf":
         raise HTTPException(status_code=400, detail="Only PDF is supported right now.")
@@ -795,6 +798,7 @@ async def export_step_to_pdf(
             general_tolerance=general_tolerance,
             unit=unit,
             sheet=sheet,
+            k_factor=k_factor,
         )
     except MetadataValidationError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -831,6 +835,8 @@ async def export_step_to_pdf(
         env = os.environ.copy()
         env["DRAWFORM_META"] = str(meta_path)
         env["DRAWFORM_DEBUG_DIR"] = str(debug_dir)
+        if export_meta.get("k_factor") is not None:
+            env["DRAWFORM_K_FACTOR"] = str(export_meta["k_factor"])
         log_path = debug_dir / "last_export.log"
         try:
             result = await asyncio.to_thread(
@@ -879,3 +885,246 @@ async def export_step_to_pdf(
     download_name = f"{Path(file.filename).stem}.pdf"
     headers = {"Content-Disposition": f'attachment; filename="{download_name}"'}
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+
+
+# =========================================================================== #
+# Foto → STL → STEP → Zeichnung  (/api/reconstruct)
+# =========================================================================== #
+
+RECONSTRUCT_JOBS: Dict[str, Dict[str, Any]] = {}
+RECONSTRUCT_LOCK = threading.Lock()
+RECONSTRUCT_PIPELINE_SCRIPT = ROOT / "freecad" / "reconstruct_pipeline.py"
+RECONSTRUCT_STL_TO_STEP_SCRIPT = ROOT / "freecad" / "stl_to_step.py"
+RECONSTRUCT_TIMEOUT_SECONDS = int(os.getenv("DRAWFORM_RECONSTRUCT_TIMEOUT_SECONDS", "300"))
+
+# Ausgabe-Verzeichnis für Rekonstruktions-Jobs
+RECONSTRUCT_OUTPUT_DIR = ROOT / "_debug" / "reconstruct"
+
+
+def _update_reconstruct_job(job_id: str, **changes: Any) -> Dict[str, Any]:
+    with RECONSTRUCT_LOCK:
+        current = RECONSTRUCT_JOBS.get(job_id)
+        if current is None:
+            raise KeyError(job_id)
+        updated = {**current, **changes}
+        RECONSTRUCT_JOBS[job_id] = updated
+        return dict(updated)
+
+
+def _run_reconstruct_pipeline(
+    job_id: str,
+    image_files: Dict[str, bytes],
+    dimensions_mm: tuple,
+) -> None:
+    """Background-Task: Voxel-Carving → STL → STEP → PDF Zeichnung."""
+    job_dir = RECONSTRUCT_OUTPUT_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _update_reconstruct_job(job_id, status="processing", progress="Silhouetten werden extrahiert...")
+
+        # 1. Bilder auf Disk schreiben
+        image_paths: Dict[str, str] = {}
+        for view, data in image_files.items():
+            img_path = job_dir / f"{view}.jpg"
+            img_path.write_bytes(data)
+            image_paths[view] = str(img_path)
+
+        stl_path = str(job_dir / "output.stl")
+        step_path = str(job_dir / "output.step")
+        pdf_path = str(job_dir / "output.pdf")
+
+        # 2. Voxel-Carving (standalone Python, kein FreeCAD)
+        _update_reconstruct_job(job_id, progress="3D-Rekonstruktion läuft (Voxel-Carving)...")
+
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "reconstruct_pipeline", str(RECONSTRUCT_PIPELINE_SCRIPT)
+        )
+        pipeline_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pipeline_mod)
+
+        recon_result = pipeline_mod.run_reconstruction(
+            image_paths=image_paths,
+            dimensions_mm=dimensions_mm,
+            output_stl=stl_path,
+            voxel_res=128,
+        )
+
+        if not recon_result.get("ok"):
+            _update_reconstruct_job(
+                job_id,
+                status="failed",
+                error=recon_result.get("error", "Rekonstruktion fehlgeschlagen"),
+            )
+            return
+
+        # 3. STL → STEP via FreeCAD
+        _update_reconstruct_job(job_id, progress="STL → STEP Konvertierung...")
+        freecad_cmd = resolve_freecad_cmd()
+        stl_ok = False
+        if freecad_cmd and freecad_cmd.exists():
+            stl2step_result = subprocess.run(
+                [str(freecad_cmd), str(RECONSTRUCT_STL_TO_STEP_SCRIPT), stl_path, step_path],
+                capture_output=True, text=True, timeout=120,
+            )
+            stl_ok = stl2step_result.returncode == 0 and Path(step_path).exists()
+
+        # 4. STEP → PDF Zeichnung via step_to_pdf.py
+        pdf_ok = False
+        if stl_ok and freecad_cmd:
+            _update_reconstruct_job(job_id, progress="Technische Zeichnung wird erstellt...")
+            meta = {
+                "format": "pdf",
+                "paper_size": "A3",
+                "title": RECONSTRUCT_JOBS.get(job_id, {}).get("partName", "Rekonstruiertes Bauteil"),
+                "input_path": step_path,
+            }
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, encoding="utf-8"
+            ) as mf:
+                json.dump(meta, mf)
+                meta_path = mf.name
+            env = os.environ.copy()
+            env["DRAWFORM_META"] = meta_path
+            env["DRAWFORM_DEBUG_DIR"] = str(job_dir)
+            pdf_result = subprocess.run(
+                [str(freecad_cmd), str(FREECAD_SCRIPT), step_path, pdf_path],
+                capture_output=True, text=True, timeout=RECONSTRUCT_TIMEOUT_SECONDS, env=env,
+            )
+            pdf_ok = pdf_result.returncode == 0 and Path(pdf_path).exists()
+            try:
+                os.unlink(meta_path)
+            except OSError:
+                pass
+
+        _update_reconstruct_job(
+            job_id,
+            status="completed",
+            progress=None,
+            error=None,
+            result={
+                "stl_available": Path(stl_path).exists(),
+                "step_available": stl_ok,
+                "pdf_available": pdf_ok,
+                "vertex_count": recon_result.get("vertex_count", 0),
+                "triangle_count": recon_result.get("triangle_count", 0),
+                "filled_voxel_ratio": recon_result.get("filled_voxel_ratio", 0),
+                "dimensions_mm": {
+                    "width": dimensions_mm[0],
+                    "height": dimensions_mm[1],
+                    "depth": dimensions_mm[2],
+                },
+                "completedAt": now_iso(),
+            },
+        )
+
+    except Exception as exc:
+        try:
+            _update_reconstruct_job(job_id, status="failed", error=str(exc), progress=None)
+        except KeyError:
+            pass
+
+
+@app.get("/api/reconstruct")
+def list_reconstruct_jobs() -> list[Dict[str, Any]]:
+    with RECONSTRUCT_LOCK:
+        jobs = [dict(job) for job in RECONSTRUCT_JOBS.values()]
+    jobs.sort(key=lambda item: item.get("createdAt", ""), reverse=True)
+    return jobs
+
+
+@app.get("/api/reconstruct/{job_id}")
+def get_reconstruct_job(job_id: str) -> Dict[str, Any]:
+    with RECONSTRUCT_LOCK:
+        job = RECONSTRUCT_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Reconstruct job not found.")
+    return dict(job)
+
+
+@app.get("/api/reconstruct/{job_id}/download")
+def download_reconstruct_file(job_id: str, type: str = "stl") -> Response:
+    """Lädt STL, STEP oder PDF eines abgeschlossenen Rekonstruktions-Jobs herunter."""
+    with RECONSTRUCT_LOCK:
+        job = RECONSTRUCT_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job nicht gefunden.")
+    if job.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="Job noch nicht abgeschlossen.")
+
+    allowed = {"stl", "step", "pdf"}
+    if type not in allowed:
+        raise HTTPException(status_code=400, detail=f"Ungültiger Typ. Erlaubt: {allowed}")
+
+    file_path = RECONSTRUCT_OUTPUT_DIR / job_id / f"output.{type}"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"{type.upper()}-Datei nicht verfügbar.")
+
+    mime_map = {"stl": "model/stl", "step": "application/step", "pdf": "application/pdf"}
+    part_name = job.get("partName", "rekonstruktion")
+    safe_name = re.sub(r"[^A-Za-z0-9_\-]", "_", part_name)
+    headers = {"Content-Disposition": f'attachment; filename="{safe_name}.{type}"'}
+    return Response(content=file_path.read_bytes(), media_type=mime_map[type], headers=headers)
+
+
+@app.post("/api/reconstruct")
+async def create_reconstruct_job(
+    background_tasks: BackgroundTasks,
+    front: UploadFile = File(...),
+    top: UploadFile = File(...),
+    left: UploadFile = File(...),
+    right: UploadFile = File(...),
+    back: UploadFile = File(...),
+    part_name: str = Form("Bauteil"),
+    width_mm: float = Form(100.0),
+    height_mm: float = Form(100.0),
+    depth_mm: float = Form(100.0),
+) -> Dict[str, Any]:
+    """
+    Startet einen Rekonstruktions-Job aus 5 orthogonalen Fotos.
+
+    Fotos: front (Vorne), top (Oben), left (Links), right (Rechts), back (Hinten).
+    Dimensionen: Reale Bauteil-Abmessungen in mm (optional, Standard 100×100×100).
+
+    Gibt sofort Job-Dict zurück. Status per GET /api/reconstruct/{id} pollen.
+    """
+    # Bilder einlesen
+    views = {"front": front, "top": top, "left": left, "right": right, "back": back}
+    image_files: Dict[str, bytes] = {}
+    total_size = 0
+    for view_name, upload in views.items():
+        data = await upload.read()
+        await upload.close()
+        if len(data) == 0:
+            raise HTTPException(status_code=400, detail=f"Leere Datei für Ansicht: {view_name}")
+        if len(data) > 20 * 1024 * 1024:  # 20 MB pro Bild
+            raise HTTPException(status_code=413, detail=f"Bild zu groß (max 20 MB): {view_name}")
+        image_files[view_name] = data
+        total_size += len(data)
+
+    # Dimensionen validieren
+    dims = (
+        max(1.0, min(float(width_mm), 10_000.0)),
+        max(1.0, min(float(height_mm), 10_000.0)),
+        max(1.0, min(float(depth_mm), 10_000.0)),
+    )
+
+    job_id = uuid4().hex
+    safe_part_name = (part_name or "Bauteil").strip()[:80] or "Bauteil"
+    job: Dict[str, Any] = {
+        "id": job_id,
+        "createdAt": now_iso(),
+        "status": "pending",
+        "partName": safe_part_name,
+        "totalSize": total_size,
+        "dimensionsMm": {"width": dims[0], "height": dims[1], "depth": dims[2]},
+        "progress": None,
+        "result": None,
+        "error": None,
+    }
+    with RECONSTRUCT_LOCK:
+        RECONSTRUCT_JOBS[job_id] = job
+
+    background_tasks.add_task(_run_reconstruct_pipeline, job_id, image_files, dims)
+    return dict(job)

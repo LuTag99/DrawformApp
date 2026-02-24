@@ -8,6 +8,7 @@ import { ProjectsPage } from './pages/projects/ProjectsPage';
 import { ExportPage } from './pages/export/ExportPage';
 import { ProfilePage } from './pages/profile/ProfilePage';
 import { AnalyzerPage } from './pages/analyzer/AnalyzerPage';
+import { ReconstructPage } from './pages/reconstruct/ReconstructPage';
 import { AiBackground } from './components/AiBackground';
 import { useAuth } from './hooks/useAuth';
 
@@ -45,6 +46,7 @@ export function App() {
         >
           <Route index element={<DashboardPage />} />
           <Route path="analyzer" element={<AnalyzerPage />} />
+          <Route path="reconstruct" element={<ReconstructPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="export" element={<ExportPage />} />
           <Route path="profile" element={<ProfilePage />} />

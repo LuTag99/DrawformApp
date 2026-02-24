@@ -37,10 +37,10 @@ ALLOWED_SCALE_LABELS = {
     "1:50",
     "1:100",
 }
-TOLERANCE_2768_RE = re.compile(r"^(?:din\s+iso|iso)\s*2768-([fmcv])(?:[hkl])?$", re.IGNORECASE)
+TOLERANCE_2768_RE = re.compile(r"^(?:din\s+iso|iso)\s*2768-([fmcv])([hkl])?$", re.IGNORECASE)
 DEFAULT_STANDARD = "DIN EN ISO 128/129-1"
 DEFAULT_PROJECTION = "1. Winkel (DIN EN ISO 5456-2)"
-DEFAULT_GENERAL_TOLERANCE = "ISO 2768-m"
+DEFAULT_GENERAL_TOLERANCE = "DIN ISO 2768-mK"
 SHEET_SPECS = {
     "A3": {"width": 420.0, "height": 297.0, "title_block_h": 55.0, "template": "iso7200_a3_landscape.svg"},
     "A2": {"width": 594.0, "height": 420.0, "title_block_h": 62.0, "template": "iso7200_a2_landscape.svg"},
@@ -56,6 +56,55 @@ def read_metadata(path):
         return {}
     with open(path, "r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _run_unfold_subprocess(input_path, feature_payload):
+    """Run step_unfold.py as a subprocess and return the result dict, or None."""
+    import subprocess as _sp
+    import tempfile
+    unfold_script = os.path.join(os.path.dirname(__file__), "step_unfold.py")
+    if not os.path.exists(unfold_script):
+        return None
+    freecad_py = sys.executable  # same Python that is running us
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+        out_json = tmp.name
+    try:
+        env = dict(os.environ)
+        # Pass K-factor from feature_payload if available
+        fp = feature_payload or {}
+        flat_pat = fp.get("flat_pattern") or {}
+        k = flat_pat.get("k_factor_used")
+        if k is not None:
+            env["DRAWFORM_K_FACTOR"] = str(k)
+        env["DRAWFORM_K_STANDARD"] = "din"
+        result = _sp.run(
+            [freecad_py, unfold_script, str(input_path), out_json],
+            capture_output=True, text=True, timeout=90, env=env,
+        )
+        if os.path.exists(out_json):
+            with open(out_json, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return None
+    except Exception as e:
+        log(f"Unfold subprocess error: {e}")
+        return None
+    finally:
+        try:
+            os.unlink(out_json)
+        except OSError:
+            pass
+
+
+def _extract_part_name(input_path: str) -> str:
+    """Extract human-readable part name from STEP filename.
+
+    '202500521_Halteblech Lackierpistole_V1.0' → 'Halteblech Lackierpistole'
+    'bracket.stp'                               → 'bracket'
+    """
+    stem = Path(input_path).stem
+    stem = re.sub(r"^\d+_", "", stem)                               # date prefix (any length)
+    stem = re.sub(r"_V\d+[\.\d]*$", "", stem, flags=re.IGNORECASE)  # _V1.0 suffix
+    return stem.strip()
 
 
 def normalize_export_metadata(meta):
@@ -109,19 +158,21 @@ def normalize_export_metadata(meta):
             return DEFAULT_GENERAL_TOLERANCE
         compact = " ".join(tolerance.split()).lower().replace("_", "-")
         if compact in {"f", "fein"}:
-            return "ISO 2768-f"
+            return "DIN ISO 2768-fK"
         if compact in {"m", "mittel"}:
-            return "ISO 2768-m"
+            return "DIN ISO 2768-mK"
         if compact in {"c", "grob"}:
-            return "ISO 2768-c"
-        match = re.search(r"2768-([fmc])", compact)
+            return "DIN ISO 2768-cK"
+        match = re.search(r"2768-([fmcv])([hkl])?", compact)
         if match:
-            return f"ISO 2768-{match.group(1)}"
+            cls = match.group(1)
+            form_cls = (match.group(2) or "K").upper()
+            return f"DIN ISO 2768-{cls}{form_cls}"
         match = TOLERANCE_2768_RE.fullmatch(compact)
         if match:
             cls = match.group(1).lower()
-            if cls in {"f", "m", "c"}:
-                return f"ISO 2768-{cls}"
+            form_cls = (match.group(2) or "K").upper()
+            return f"DIN ISO 2768-{cls}{form_cls}"
         return DEFAULT_GENERAL_TOLERANCE
 
     def normalize_sheet(value):
@@ -134,8 +185,9 @@ def normalize_export_metadata(meta):
             return sheet
         return "auto"
 
+    default_title = _extract_part_name(payload.get("input_path", "")) or "Bauteilzeichnung"
     normalized = {
-        "title": text_field("title", "Bauteilzeichnung", 80),
+        "title": text_field("title", default_title, 80),
         "drawing_no": text_field("drawing_no", "DF-0001", 32),
         "revision": text_field("revision", "A", 8),
         "author": text_field("author", "Drawform", 40),
@@ -1713,17 +1765,39 @@ def resolve_requested_sheet(meta):
 
 def select_layout_profile(input_path, feature_payload, dim_x, dim_y, dim_z):
     lower_input = str(input_path or "").lower()
+
+    # Tier 0: Explicit path-based override (backward compatible)
     if "sheetmetals" in lower_input or "sheetmetal" in lower_input:
         return "sheet_metal"
+
     if isinstance(feature_payload, dict):
-        if bool(feature_payload.get("is_flat")) and _optional_float(feature_payload.get("bend_radius_mm")):
+        measured_t = _optional_float(feature_payload.get("measured_thickness_mm"))
+
+        # Tier 1 (PRIMARY): Face-type geometry classification from feature probe.
+        # Sheet metal = predominantly Plane faces + at least one Cylinder (bend zone)
+        # + no complex machined surfaces (cones, tori indicate turning/milling).
+        # Thickness guard (≤5mm): thick milling parts with fillets also have many
+        # Plane faces, so we require a measurably thin wall before accepting Tier 1.
+        if (feature_payload.get("is_sheet_metal_by_faces") is True
+                and measured_t is not None and measured_t <= 5.0):
             return "sheet_metal"
+
+        # Tier 2: Measured wall thickness < 5mm (typical sheet metal range) combined
+        # with non-zero flat_ratio (bent parts are not perfectly flat in bbox terms).
+        if measured_t is not None and 0.3 <= measured_t <= 5.0:
+            flat_ratio = _optional_float(feature_payload.get("flat_ratio"))
+            if flat_ratio is not None and flat_ratio < 0.7:
+                return "sheet_metal"
+
+        # Tier 3 (FALLBACK): BBox ratio with tighter threshold (was 0.25, now 0.15).
+        # Prevents thick milling parts from being misclassified.
         thickness_axis = str(feature_payload.get("thickness_axis") or "").upper()
         dims = {"X": float(dim_x), "Y": float(dim_y), "Z": float(dim_z)}
         thickness = dims.get(thickness_axis, min(dims.values()))
         mid_dim = sorted(dims.values(), reverse=True)[1]
-        if mid_dim > 0 and thickness / mid_dim < 0.25:
+        if mid_dim > 0 and thickness / mid_dim < 0.15:
             return "sheet_metal"
+
     return "milling"
 
 
@@ -1765,6 +1839,10 @@ def should_promote_to_a2(report, dim_x, dim_y, dim_z, *, requested_sheet):
 
 
 def estimate_sheet_thickness(feature_payload, dim_x, dim_y, dim_z):
+    # Prefer geometry-derived measurement (face pair distance) over bbox heuristics.
+    measured = _optional_float((feature_payload or {}).get("measured_thickness_mm"))
+    if measured is not None and 0.3 <= measured <= 10.0:
+        return measured
     dims = {"X": float(dim_x), "Y": float(dim_y), "Z": float(dim_z)}
     axis = str((feature_payload or {}).get("thickness_axis") or "").upper()
     if axis in dims:
@@ -1772,38 +1850,24 @@ def estimate_sheet_thickness(feature_payload, dim_x, dim_y, dim_z):
     return min(dims.values())
 
 
-def build_feature_annotation_lines(feature_payload):
+def build_feature_annotation_lines(feature_payload, layout_profile="milling"):
+    """
+    Returns manufacturing notes for the annotation block (bottom-left of drawing).
+
+    - milling: empty list — all feature info appears as callout leaders in the drawing.
+    - sheet_metal: only K-factor and deburring note (thickness is in process_lines).
+    """
     if not isinstance(feature_payload, dict):
         return []
     if feature_payload.get("ok") is not True:
-        return ["Feature-Erkennung: nicht verfuegbar."]
+        return []  # suppress error messages from the annotation block
 
-    lines = []
-    longest_axis = str(feature_payload.get("longest_axis", "?"))
-    hole_count = int(_optional_float(feature_payload.get("hole_count")) or 0)
-    hole_diameter = _optional_float(feature_payload.get("hole_diameter_mm"))
-    hole_pitch = _optional_float(feature_payload.get("hole_pitch_mm"))
-    bend_radius = _optional_float(feature_payload.get("bend_radius_mm"))
-    is_flat = bool(feature_payload.get("is_flat"))
-    flat_ratio = _optional_float(feature_payload.get("flat_ratio"))
+    if layout_profile == "sheet_metal":
+        # K-Faktor is already listed in process_lines — only deburring note here.
+        return ["Scharfe Kanten entgraten"]
 
-    if hole_count > 0:
-        if hole_diameter and hole_diameter > 0:
-            lines.append(f"Bohrungen: n={hole_count}, D={format_de_number(hole_diameter)}")
-        else:
-            lines.append(f"Bohrungen: n={hole_count}")
-        if hole_pitch and hole_pitch > 0:
-            lines.append(f"Lochabstand: {format_de_number(hole_pitch)}")
-
-    if bend_radius and bend_radius > 0:
-        lines.append(f"Biegeradius: R{format_de_number(bend_radius)}")
-
-    if is_flat and flat_ratio is not None:
-        lines.append(f"Blechteil erkannt (Flachheitsfaktor={format_de_number(flat_ratio, 2)})")
-
-    if not lines:
-        lines.append(f"Features: Hauptachse {longest_axis}, keine Bohrung/Biegung erkannt.")
-    return lines[:3]
+    # milling: no free-text block — feature dimensions appear as callout annotations
+    return []
 
 
 def extract_svg_circles(svg_group):
@@ -2429,7 +2493,7 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                             anchor="middle",
                         )
                     )
-            pitch_text = f"LOCHABSTAND {format_de_number(hole_pitch)}"
+            pitch_text = format_de_number(hole_pitch)
             if pitch_text not in used_dimension_labels:
                 used_dimension_labels.add(pitch_text)
                 text_x = (lx + rx) * 0.5
@@ -2548,7 +2612,7 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
         )
         collision_boxes.append(_line_collision_box(sx, sy, kx, ky, line_pad))
         collision_boxes.append(_line_collision_box(kx, ky, ex, ey, line_pad))
-        dia_text = f"⌀ {format_de_number(hole_dia)}"
+        dia_text = f"\u00D8 {format_de_number(hole_dia)}"
         text_x = ex + (1.0 / scale)
         text_y = _reserve_feature_label_position(
             dia_text,
@@ -2713,60 +2777,391 @@ def build_flat_pattern_overlay(
     layout_profile,
     feature_payload,
     flat_pattern_mode,
+    unfold_result=None,
 ):
     if layout_profile != "sheet_metal":
         return ""
-    top_view = next((item for item in view_data if item.get("name") == "Top"), None)
-    front_view = next((item for item in view_data if item.get("name") == "Front"), None)
-    candidate = top_view or front_view
-    if not candidate:
-        return ""
 
+    # Flat pattern area: right half of the drawing, lower half (where ISO view was).
+    # For sheet_metal parts the ISO view is suppressed, so the Abwicklung gets
+    # the full bottom-right cell.  For A2 sheets the allocation is proportionally larger.
+    avail_draw_w = sheet_w - 2 * margin
+    avail_draw_h = draw_bottom - margin
     if sheet_name == "A2":
-        area_w = 245.0
-        area_h = 78.0
-    else:
-        area_w = 172.0
-        area_h = 56.0
-    area_w = min(area_w, max(120.0, (sheet_w - 2 * margin) * 0.46))
-    area_h = min(area_h, max(44.0, (draw_bottom - margin) * 0.24))
+        area_w = min(245.0, avail_draw_w * 0.48)
+        area_h = min(90.0, avail_draw_h * 0.46)
+    else:  # A3
+        area_w = min(172.0, avail_draw_w * 0.48)
+        area_h = min(72.0, avail_draw_h * 0.44)
+    area_w = max(120.0, area_w)
+    area_h = max(50.0, area_h)
     flat_cx = sheet_w - margin - area_w * 0.5
-    flat_cy = margin + (draw_bottom - margin) * (0.60 if sheet_name == "A2" else 0.58)
+    flat_cy = margin + avail_draw_h * (0.62 if sheet_name == "A2" else 0.60)
 
-    scale = compute_fit_scale(candidate.get("bounds_for_scale", candidate["svg_bounds"]), area_w, area_h, padding=0.84)
-    line_profile = iso128_line_profile(scale)
-    stroke_width = float(line_profile.get("visible", compute_stroke_width(scale)))
-    group = build_view_group(
-        candidate["svg"],
-        candidate["svg_bounds"],
-        candidate["proj_bounds"],
-        flat_cx,
-        flat_cy,
-        scale,
-        rotation_deg=candidate.get("rotation_deg", 0),
-        stroke_width=stroke_width,
-        line_profile=line_profile,
-        dimension_svg="",
-        view_name="Abwicklung",
-        show_coordinate_system=False,
-    )
     text_style = (
         "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-        "font-size: 3.2px; font-style: normal; font-weight: normal;"
+        "font-size: 3.0px; font-style: normal; font-weight: normal;"
+    )
+    dim_style = (
+        "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+        "font-size: 2.6px; font-style: normal; font-weight: normal;"
     )
     title_x = flat_cx - area_w / 2
-    title_y = flat_cy - area_h / 2 - 3.0
-    notes = ["Abwicklung"]
-    if flat_pattern_mode == "fallback_projected":
-        notes.append("Fallback (ohne automatische Entfaltung)")
-    bend_radius = _optional_float((feature_payload or {}).get("bend_radius_mm"))
-    if bend_radius and bend_radius > 0:
-        notes.append(f"NACH OBEN/UNTEN 90° R{format_de_number(bend_radius)}")
-    note_svg = "".join(
-        f'<text x="{title_x:.1f}" y="{(title_y + idx * 3.4):.1f}" style="{text_style}">{escape(text)}</text>'
-        for idx, text in enumerate(notes[:3])
-    )
-    return f"{group}\n{note_svg}"
+    title_y = flat_cy - area_h / 2 - 4.0
+
+    flat_pattern = (feature_payload or {}).get("flat_pattern")
+
+    # ---------- Priority 1: Real SheetMetal Unfold (SVG contour from addon) ----------
+    if unfold_result and unfold_result.get("ok") and unfold_result.get("outline_svg"):
+        fl = float(unfold_result["flat_length_mm"])
+        fw = float(unfold_result["flat_width_mm"])
+        k_used = float(((feature_payload or {}).get("flat_pattern") or {}).get("k_factor_used") or 0.40)
+
+        outline_svg = unfold_result["outline_svg"]
+
+        # Use extract_svg_bounds() to get the ACTUAL bounds of the outline SVG.
+        # The outline is projected by TechDraw in model coordinates; without
+        # normalization the origin may be at any offset and Y may be flipped.
+        # extract_svg_bounds handles all SVG element types and gives (minX,maxX,minY,maxY).
+        ob = extract_svg_bounds(outline_svg)
+        _min_size = max(fl * 0.05, fw * 0.05, 1.0)  # reasonable minimum: 5% of expected size
+        if ob and abs(ob[1] - ob[0]) > _min_size and abs(ob[3] - ob[2]) > _min_size:
+            ob_x1, ob_x2, ob_y1, ob_y2 = ob
+            ob_w = ob_x2 - ob_x1
+            ob_h = ob_y2 - ob_y1
+        else:
+            # Fallback: assume normalized shape (XMin=YMin=0) using unfold dimensions
+            ob_x1, ob_y1 = 0.0, 0.0
+            ob_w, ob_h = fl, fw
+
+        # Scale SVG contour to fit the allocated area
+        scale_x = (area_w * 0.80) / max(ob_w, 1e-6)
+        scale_y = (area_h * 0.65) / max(ob_h, 1e-6)
+        draw_scale = min(scale_x, scale_y)
+        svg_w = ob_w * draw_scale
+        svg_h = ob_h * draw_scale
+        svg_x = flat_cx - svg_w / 2
+        svg_y = flat_cy - svg_h / 2
+
+        # Transform: map SVG origin (ob_x1, ob_y1) → drawing (svg_x, svg_y).
+        # This correctly handles any offset and Y-flip from TechDraw projection.
+        tx = svg_x - ob_x1 * draw_scale
+        ty = svg_y - ob_y1 * draw_scale
+
+        parts: list[str] = []
+
+        # Render the real outline SVG (bend lines are already embedded in outline_svg
+        # as styled <g class="bend-lines"> elements from step_unfold.py)
+        parts.append(
+            f'<g transform="translate({tx:.3f},{ty:.3f}) scale({draw_scale:.6f})" '
+            f'fill="none" stroke="rgb(0,0,0)" stroke-width="{0.35 / draw_scale:.4f}">'
+            f'{outline_svg}'
+            f'</g>'
+        )
+
+        # Only draw separate bend lines if NOT already embedded in outline_svg
+        # (backward compat with unfold results generated before this fix)
+        bend_lines = unfold_result.get("bend_lines") or []
+        if bend_lines and 'class="bend-lines"' not in outline_svg:
+            for bl in bend_lines:
+                bx1 = tx + float(bl["x1"]) * draw_scale
+                by1 = ty + float(bl["y1"]) * draw_scale
+                bx2 = tx + float(bl["x2"]) * draw_scale
+                by2 = ty + float(bl["y2"]) * draw_scale
+                if abs(bx1 - bx2) > 0.1 or abs(by1 - by2) > 0.1:
+                    parts.append(
+                        f'<line x1="{bx1:.3f}" y1="{by1:.3f}" x2="{bx2:.3f}" y2="{by2:.3f}" '
+                        f'stroke="rgb(40,40,160)" stroke-width="0.18" stroke-dasharray="2.5,1.0" />'
+                    )
+
+        # Arrow helper for dimension lines
+        aw, ah = 2.5, 0.4
+
+        def _arrow(ax, ay, direction):
+            if direction == "left":
+                pts = f"{ax:.3f},{ay:.3f} {ax+aw:.3f},{ay-ah:.3f} {ax+aw:.3f},{ay+ah:.3f}"
+            elif direction == "right":
+                pts = f"{ax:.3f},{ay:.3f} {ax-aw:.3f},{ay-ah:.3f} {ax-aw:.3f},{ay+ah:.3f}"
+            elif direction == "up":
+                pts = f"{ax:.3f},{ay:.3f} {ax-ah:.3f},{ay+aw:.3f} {ax+ah:.3f},{ay+aw:.3f}"
+            else:
+                pts = f"{ax:.3f},{ay:.3f} {ax-ah:.3f},{ay-aw:.3f} {ax+ah:.3f},{ay-aw:.3f}"
+            return f'<polygon points="{pts}" fill="rgb(0,0,0)" />'
+
+        # Horizontal dimension (flat length) below the SVG
+        dim_y_h = svg_y + svg_h + 5.0
+        ext_y0 = svg_y + svg_h + 1.2
+        parts.append(f'<line x1="{svg_x:.3f}" y1="{ext_y0:.3f}" x2="{svg_x:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(f'<line x1="{svg_x + svg_w:.3f}" y1="{ext_y0:.3f}" x2="{svg_x + svg_w:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(f'<line x1="{svg_x:.3f}" y1="{dim_y_h:.3f}" x2="{svg_x + svg_w:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(_arrow(svg_x, dim_y_h, "left"))
+        parts.append(_arrow(svg_x + svg_w, dim_y_h, "right"))
+        parts.append(f'<text x="{flat_cx:.3f}" y="{dim_y_h - 1.0:.3f}" style="{dim_style}" text-anchor="middle">{format_de_number(fl)}</text>')
+
+        # Vertical dimension (flat width) to the left
+        dim_x_v = svg_x - 5.0
+        ext_x0 = svg_x - 1.2
+        mid_y = svg_y + svg_h / 2
+        parts.append(f'<line x1="{ext_x0:.3f}" y1="{svg_y:.3f}" x2="{dim_x_v:.3f}" y2="{svg_y:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(f'<line x1="{ext_x0:.3f}" y1="{svg_y + svg_h:.3f}" x2="{dim_x_v:.3f}" y2="{svg_y + svg_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(f'<line x1="{dim_x_v:.3f}" y1="{svg_y:.3f}" x2="{dim_x_v:.3f}" y2="{svg_y + svg_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(_arrow(dim_x_v, svg_y, "up"))
+        parts.append(_arrow(dim_x_v, svg_y + svg_h, "down"))
+        parts.append(
+            f'<text x="{dim_x_v - 1.0:.3f}" y="{mid_y:.3f}" style="{dim_style}" text-anchor="middle" '
+            f'transform="rotate(-90,{dim_x_v - 1.0:.3f},{mid_y:.3f})">{format_de_number(fw)}</text>'
+        )
+
+        # Title
+        title_bold_style = (
+            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+            "font-size: 4.0px; font-style: normal; font-weight: bold; fill: #000;"
+        )
+        subtitle_style = (
+            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+            "font-size: 2.8px; font-style: normal; font-weight: normal; fill: #555;"
+        )
+        bend_count = unfold_result.get("bend_count", 0)
+        k_subtitle = f"K={format_de_number(k_used, 2)} \u2014 {bend_count} Biegung{'en' if bend_count != 1 else ''}"
+        note_parts = [
+            f'<text x="{title_x:.1f}" y="{title_y:.1f}" style="{title_bold_style}">ABWICKLUNG</text>',
+            f'<text x="{title_x:.1f}" y="{title_y + 5.0:.1f}" style="{subtitle_style}">{escape(k_subtitle)}</text>',
+        ]
+        return "\n".join(parts) + "\n" + "\n".join(note_parts)
+
+    # ---------- Priority 2: Mathematical fallback (simple geometry only) ----------
+    if (flat_pattern and flat_pattern.get("flat_length_mm") and flat_pattern.get("flat_width_mm")
+            and not flat_pattern.get("complex_geometry")):
+        fl = float(flat_pattern["flat_length_mm"])
+        fw = float(flat_pattern["flat_width_mm"])
+        complex_geom = bool(flat_pattern.get("complex_geometry"))
+        k_used = flat_pattern.get("k_factor_used")
+
+        # Scale the blank rectangle to fit the allocated area (with padding)
+        scale_x = (area_w * 0.80) / max(fl, 1e-6)
+        scale_y = (area_h * 0.65) / max(fw, 1e-6)
+        draw_scale = min(scale_x, scale_y)
+        rect_w = fl * draw_scale
+        rect_h = fw * draw_scale
+        rect_x = flat_cx - rect_w / 2
+        rect_y = flat_cy - rect_h / 2
+        sw = max(0.18, 0.35)  # stroke width for the blank outline
+
+        parts: list[str] = []
+
+        # Outer blank rectangle (ISO 128 visible line weight)
+        parts.append(
+            f'<rect x="{rect_x:.3f}" y="{rect_y:.3f}" '
+            f'width="{rect_w:.3f}" height="{rect_h:.3f}" '
+            f'fill="none" stroke="rgb(0,0,0)" stroke-width="{sw:.3f}" />'
+        )
+
+        # Bend lines: vertical dashed lines at calculated positions.
+        # Use flat_extents (per-flange lengths) when available for better accuracy.
+        segments = flat_pattern.get("bend_segments") or []
+        total_segs_mm = float(flat_pattern.get("total_segments_mm") or 0)
+        flat_extents = flat_pattern.get("flat_extents") or []
+        bend_notes: list[str] = []
+
+        if flat_extents and len(flat_extents) >= len(segments):
+            # We have per-flange extent data: accumulate positions using actual extents.
+            # flat_extents are sorted largest-first; treat first as the base flange.
+            # For n bends: flanges = [e0, e1, ..., en] with bends between them.
+            x_pos_mm = flat_extents[0] if flat_extents else 0.0
+            for i, seg in enumerate(segments):
+                allowance = float(seg.get("allowance_mm") or 0)
+                bend_x = rect_x + x_pos_mm * draw_scale
+                if rect_x < bend_x < rect_x + rect_w:
+                    parts.append(
+                        f'<line x1="{bend_x:.3f}" y1="{rect_y:.3f}" '
+                        f'x2="{bend_x:.3f}" y2="{rect_y + rect_h:.3f}" '
+                        f'stroke="rgb(40,40,160)" stroke-width="0.18" '
+                        f'stroke-dasharray="2.5,1.0" />'
+                    )
+                direction = seg.get("direction", "OBEN")
+                r_str = format_de_number(seg.get("radius_mm") or 0)
+                angle_str = format_de_number(seg.get("angle_deg") or 90, decimals=0)
+                dir_arrow = "\u2191" if direction in ("OBEN", "UP") else "\u2193" if direction in ("UNTEN", "DOWN") else "\u2194"
+                bend_notes.append(f"{dir_arrow} {angle_str}\u00B0 R{r_str}")
+                next_extent = flat_extents[i + 1] if i + 1 < len(flat_extents) else 0.0
+                x_pos_mm += allowance + next_extent
+        else:
+            # Fallback: distribute segment lengths evenly
+            seg_len_each = total_segs_mm / max(len(segments) + 1, 2) if segments else 0
+            x_pos_mm = seg_len_each
+            for seg in segments:
+                allowance = float(seg.get("allowance_mm") or 0)
+                bend_x = rect_x + x_pos_mm * draw_scale
+                if rect_x < bend_x < rect_x + rect_w:
+                    parts.append(
+                        f'<line x1="{bend_x:.3f}" y1="{rect_y:.3f}" '
+                        f'x2="{bend_x:.3f}" y2="{rect_y + rect_h:.3f}" '
+                        f'stroke="rgb(40,40,160)" stroke-width="0.18" '
+                        f'stroke-dasharray="2.5,1.0" />'
+                    )
+                direction = seg.get("direction", "OBEN")
+                r_str = format_de_number(seg.get("radius_mm") or 0)
+                angle_str = format_de_number(seg.get("angle_deg") or 90, decimals=0)
+                dir_arrow = "\u2191" if direction in ("OBEN", "UP") else "\u2193" if direction in ("UNTEN", "DOWN") else "\u2194"
+                bend_notes.append(f"{dir_arrow} {angle_str}\u00B0 R{r_str}")
+                x_pos_mm += allowance + seg_len_each
+
+        # Arrow helper: filled polygon arrowhead (ISO 129-1)
+        aw, ah = 2.5, 0.4  # arrow length and half-width in drawing units
+
+        def _arrow(ax, ay, direction):
+            if direction == "left":
+                pts = f"{ax:.3f},{ay:.3f} {ax+aw:.3f},{ay-ah:.3f} {ax+aw:.3f},{ay+ah:.3f}"
+            elif direction == "right":
+                pts = f"{ax:.3f},{ay:.3f} {ax-aw:.3f},{ay-ah:.3f} {ax-aw:.3f},{ay+ah:.3f}"
+            elif direction == "up":
+                pts = f"{ax:.3f},{ay:.3f} {ax-ah:.3f},{ay+aw:.3f} {ax+ah:.3f},{ay+aw:.3f}"
+            else:  # down
+                pts = f"{ax:.3f},{ay:.3f} {ax-ah:.3f},{ay-aw:.3f} {ax+ah:.3f},{ay-aw:.3f}"
+            return f'<polygon points="{pts}" fill="rgb(0,0,0)" />'
+
+        # Horizontal dimension below the rect (flat length)
+        dim_y_h = rect_y + rect_h + 5.0
+        ext_y0 = rect_y + rect_h + 1.2
+        parts.append(  # extension line left
+            f'<line x1="{rect_x:.3f}" y1="{ext_y0:.3f}" '
+            f'x2="{rect_x:.3f}" y2="{dim_y_h:.3f}" '
+            f'stroke="rgb(0,0,0)" stroke-width="0.18" />'
+        )
+        parts.append(  # extension line right
+            f'<line x1="{rect_x + rect_w:.3f}" y1="{ext_y0:.3f}" '
+            f'x2="{rect_x + rect_w:.3f}" y2="{dim_y_h:.3f}" '
+            f'stroke="rgb(0,0,0)" stroke-width="0.18" />'
+        )
+        parts.append(  # dimension line
+            f'<line x1="{rect_x:.3f}" y1="{dim_y_h:.3f}" '
+            f'x2="{rect_x + rect_w:.3f}" y2="{dim_y_h:.3f}" '
+            f'stroke="rgb(0,0,0)" stroke-width="0.18" />'
+        )
+        parts.append(_arrow(rect_x, dim_y_h, "left"))
+        parts.append(_arrow(rect_x + rect_w, dim_y_h, "right"))
+        parts.append(  # label
+            f'<text x="{flat_cx:.3f}" y="{dim_y_h - 1.0:.3f}" '
+            f'style="{dim_style}" text-anchor="middle">'
+            f'{format_de_number(fl)}'
+            f'</text>'
+        )
+
+        # Vertical dimension to the left of the rect (flat width)
+        dim_x_v = rect_x - 5.0
+        ext_x0 = rect_x - 1.2
+        rect_mid_y = rect_y + rect_h / 2
+        parts.append(  # extension line top
+            f'<line x1="{ext_x0:.3f}" y1="{rect_y:.3f}" '
+            f'x2="{dim_x_v:.3f}" y2="{rect_y:.3f}" '
+            f'stroke="rgb(0,0,0)" stroke-width="0.18" />'
+        )
+        parts.append(  # extension line bottom
+            f'<line x1="{ext_x0:.3f}" y1="{rect_y + rect_h:.3f}" '
+            f'x2="{dim_x_v:.3f}" y2="{rect_y + rect_h:.3f}" '
+            f'stroke="rgb(0,0,0)" stroke-width="0.18" />'
+        )
+        parts.append(  # dimension line
+            f'<line x1="{dim_x_v:.3f}" y1="{rect_y:.3f}" '
+            f'x2="{dim_x_v:.3f}" y2="{rect_y + rect_h:.3f}" '
+            f'stroke="rgb(0,0,0)" stroke-width="0.18" />'
+        )
+        parts.append(_arrow(dim_x_v, rect_y, "up"))
+        parts.append(_arrow(dim_x_v, rect_y + rect_h, "down"))
+        parts.append(  # rotated label
+            f'<text x="{dim_x_v - 1.0:.3f}" y="{rect_mid_y:.3f}" '
+            f'style="{dim_style}" text-anchor="middle" '
+            f'transform="rotate(-90,{dim_x_v - 1.0:.3f},{rect_mid_y:.3f})">'
+            f'{format_de_number(fw)}'
+            f'</text>'
+        )
+
+        # Title: bold "ABWICKLUNG" + subtitle + compact bend notes
+        title_bold_style = (
+            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+            "font-size: 4.0px; font-style: normal; font-weight: bold; fill: #000;"
+        )
+        subtitle_style = (
+            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+            "font-size: 2.8px; font-style: normal; font-weight: normal; fill: #555;"
+        )
+        note_item_style = (
+            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+            "font-size: 2.8px; font-style: normal; font-weight: normal; fill: #000;"
+        )
+        k_subtitle = f"berechnet \u2014 K={format_de_number(k_used, 2)}" if k_used is not None else "berechnet"
+        if complex_geom:
+            k_subtitle += " \u2014 bitte pr\u00fcfen"
+        note_parts = [
+            f'<text x="{title_x:.1f}" y="{title_y:.1f}" style="{title_bold_style}">ABWICKLUNG</text>',
+            f'<text x="{title_x:.1f}" y="{title_y + 5.0:.1f}" style="{subtitle_style}">{escape(k_subtitle)}</text>',
+        ]
+        for i, bn in enumerate(bend_notes[:4]):
+            note_parts.append(
+                f'<text x="{title_x:.1f}" y="{title_y + 9.5 + i * 3.5:.1f}" '
+                f'style="{note_item_style}">{escape(bn)}</text>'
+            )
+        return "\n".join(parts) + "\n" + "\n".join(note_parts)
+
+    else:
+        # Fallback: show projected top/front view with unavailability note
+        top_view = next((item for item in view_data if item.get("name") == "Top"), None)
+        front_view = next((item for item in view_data if item.get("name") == "Front"), None)
+        candidate = top_view or front_view
+        if candidate:
+            scale = compute_fit_scale(candidate.get("bounds_for_scale", candidate["svg_bounds"]), area_w, area_h, padding=0.84)
+            line_profile = iso128_line_profile(scale)
+            stroke_width = float(line_profile.get("visible", compute_stroke_width(scale)))
+            group = build_view_group(
+                candidate["svg"],
+                candidate["svg_bounds"],
+                candidate["proj_bounds"],
+                flat_cx,
+                flat_cy,
+                scale,
+                rotation_deg=candidate.get("rotation_deg", 0),
+                stroke_width=stroke_width,
+                line_profile=line_profile,
+                dimension_svg="",
+                view_name="Abwicklung",
+                show_coordinate_system=False,
+            )
+        else:
+            group = ""
+
+        title_bold_style = (
+            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+            "font-size: 4.0px; font-style: normal; font-weight: bold; fill: #000;"
+        )
+        subtitle_style = (
+            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+            "font-size: 2.8px; font-style: normal; font-weight: normal; fill: #555;"
+        )
+        note_item_style = (
+            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+            "font-size: 2.8px; font-style: normal; font-weight: normal; fill: #000;"
+        )
+        fb_note_parts = [
+            f'<text x="{title_x:.1f}" y="{title_y:.1f}" style="{title_bold_style}">ABWICKLUNG</text>',
+            f'<text x="{title_x:.1f}" y="{title_y + 5.0:.1f}" style="{subtitle_style}">Kontur: manuelle Entfaltung</text>',
+        ]
+        if flat_pattern:
+            k_fb = flat_pattern.get("k_factor_used")
+            t_fb = _optional_float(flat_pattern.get("thickness_mm"))
+            bend_count = len(flat_pattern.get("bend_segments") or [])
+            extra_lines = []
+            if t_fb:
+                extra_lines.append(f"Blechst\u00e4rke = {format_de_number(t_fb)}")
+            if k_fb is not None:
+                extra_lines.append(f"K-Faktor = {format_de_number(k_fb, 2)}")
+            if bend_count:
+                extra_lines.append(f"Biegungen: {bend_count}\u00d7")
+            for i, line in enumerate(extra_lines[:3]):
+                fb_note_parts.append(
+                    f'<text x="{title_x:.1f}" y="{title_y + 9.5 + i * 3.5:.1f}" '
+                    f'style="{note_item_style}">{escape(line)}</text>'
+                )
+        return f"{group}\n" + "\n".join(fb_note_parts)
 
 
 def _collect_svg_text_entries(svg_text):
@@ -2830,9 +3225,9 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z):
     feature_block = report.get("features", {})
     hole_count = int(_optional_float(feature_block.get("hole_count")) or 0)
     if hole_count > 0:
-        has_diameter_callout = any(item["text"].startswith("⌀") for item in dim_texts)
+        has_diameter_callout = any(item["text"].startswith("\u00D8") for item in dim_texts)
         if not has_diameter_callout:
-            issues.append("Fehlende Lochdurchmesserangabe (⌀).")
+            issues.append("Fehlende Lochdurchmesserangabe (\u00D8).")
         centerline_total = int(_optional_float((report.get("quality", {}) or {}).get("centerline_total")) or 0)
         if centerline_total <= 0:
             issues.append("Keine Mittellinien bei vorhandenen Bohrungen erkannt.")
@@ -2888,7 +3283,9 @@ def main():
     input_path = sys.argv[1]
     output_path = sys.argv[2]
     meta_path = os.getenv("DRAWFORM_META")
-    meta = normalize_export_metadata(read_metadata(meta_path))
+    raw_meta = read_metadata(meta_path)
+    raw_meta.setdefault("input_path", input_path)  # used for part name extraction
+    meta = normalize_export_metadata(raw_meta)
 
     log(f"FreeCAD version: {App.Version()[0]}.{App.Version()[1]}.{App.Version()[2]}")
     doc = App.newDocument("DrawformDrawing")
@@ -2920,6 +3317,19 @@ def main():
         requested_sheet = "auto"
     layout_profile = select_layout_profile(input_path, feature_payload, dim_x, dim_y, dim_z)
     flat_pattern_mode = detect_flat_pattern_mode(layout_profile)
+
+    # ---------- Run SheetMetal Unfold (subprocess) for sheet_metal parts ----------
+    unfold_result = None
+    if layout_profile == "sheet_metal":
+        unfold_result = _run_unfold_subprocess(input_path, feature_payload)
+        if unfold_result and unfold_result.get("ok"):
+            log(f"SheetMetal unfold: {unfold_result['flat_length_mm']}x"
+                f"{unfold_result['flat_width_mm']}mm, {unfold_result['bend_count']} bends")
+            flat_pattern_mode = "sheetmetal_module"
+        else:
+            err = (unfold_result or {}).get("error", "unknown")
+            log(f"SheetMetal unfold failed: {err} — using fallback")
+
     normalized_sheet = str(meta.get("sheet") or "").strip().upper()
     if normalized_sheet in {"A2", "A3"}:
         sheet_resolved = normalized_sheet
@@ -3087,14 +3497,15 @@ def main():
         item["scale_fit"] for item in view_data if item["name"] in ("Top", "Front", "Left")
     )
     log(f"ALIGN ortho_scale={ortho_scale:.4f}")
-    iso_item = next(item for item in view_data if item["name"] == "Iso")
-    iso_bounds = iso_item["layout_bounds"]
-    iso_scale = compute_scale_for_area(iso_bounds, cell_w, cell_h, padding=iso_padding)
-    iso_scale = min(iso_scale, ortho_scale * 0.75)
-    iso_cx, iso_cy = center_right_x, center_bottom_y
-    iso_item["cx"] = iso_cx
-    iso_item["cy"] = iso_cy
-    iso_item["scale"] = iso_scale
+    iso_item = next((item for item in view_data if item["name"] == "Iso"), None)
+    if iso_item is not None:
+        iso_bounds = iso_item["layout_bounds"]
+        iso_scale = compute_scale_for_area(iso_bounds, cell_w, cell_h, padding=iso_padding)
+        iso_scale = min(iso_scale, ortho_scale * 0.75)
+        iso_cx, iso_cy = center_right_x, center_bottom_y
+        iso_item["cx"] = iso_cx
+        iso_item["cy"] = iso_cy
+        iso_item["scale"] = iso_scale
     if not meta.get("scale") or str(meta.get("scale")).lower() == "auto":
         meta["scale"] = format_scale(ortho_scale)
 
@@ -3159,18 +3570,21 @@ def main():
         }
     
     def compute_all_views_bbox():
-        """Compute the bounding box enclosing all views."""
+        """Compute the bounding box enclosing all rendered views.
+        For sheet_metal layout the ISO view is not rendered, so exclude it."""
         all_left, all_top = float('inf'), float('inf')
         all_right, all_bottom = float('-inf'), float('-inf')
-        
+
         for item in view_data:
+            if layout_profile == "sheet_metal" and item["name"] == "Iso":
+                continue  # Iso is skipped in the rendering loop for sheet_metal
             scale = item.get("scale", ortho_scale)
             vb = compute_view_bounds(item, scale)
             all_left = min(all_left, vb["left"])
             all_top = min(all_top, vb["top"])
             all_right = max(all_right, vb["right"])
             all_bottom = max(all_bottom, vb["bottom"])
-        
+
         return all_left, all_top, all_right, all_bottom
     
     # Check if all views fit within drawing area
@@ -3382,11 +3796,17 @@ def main():
 
     for item in view_data:
         name = item["name"]
+
+        # For sheet_metal parts, skip the ISO view — the Abwicklung (flat pattern)
+        # occupies that quadrant. Showing both would cause visual overlap.
+        if layout_profile == "sheet_metal" and name == "Iso":
+            continue
+
         svg_bounds = item["svg_bounds"]
         proj_bounds = item["proj_bounds"]
         proj_w, proj_h = bounds_size(proj_bounds)
         svg_w, svg_h = bounds_size(svg_bounds)
-        
+
         # The dimension lines are drawn in SVG coordinates, then rotated with the view.
         # We want the labels to show the TRUE 3D dimensions as they appear on paper.
         #
@@ -3481,6 +3901,24 @@ def main():
                 show_coordinate_system=False,  # Disabled - enable for debugging
             )
         )
+        # View label below each view (ISO 128 style)
+        _view_label_map = {
+            "Front": "VORDERANSICHT",
+            "Left": "SEITENANSICHT",
+            "Top": "DRAUFSICHT",
+            "Iso": "ISO",
+        }
+        _label_text = _view_label_map.get(name, name.upper())
+        _label_style = (
+            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+            "font-size: 2.5px; font-style: normal; font-weight: normal; fill: #444;"
+        )
+        # Bottom of view in paper coords: cy + half view height (proj_h * scale / 2) + gap
+        _view_bottom = item["cy"] + max(proj_w, proj_h) * scale / 2.0 + 3.5
+        view_groups.append(
+            f'<text x="{item["cx"]:.2f}" y="{_view_bottom:.2f}" '
+            f'style="{_label_style}" text-anchor="middle">{escape(_label_text)}</text>'
+        )
 
     flat_pattern_overlay = build_flat_pattern_overlay(
         view_data,
@@ -3491,6 +3929,7 @@ def main():
         layout_profile=layout_profile,
         feature_payload=feature_payload,
         flat_pattern_mode=flat_pattern_mode,
+        unfold_result=unfold_result,
     )
     if flat_pattern_overlay:
         view_groups.append(flat_pattern_overlay)
@@ -3528,15 +3967,17 @@ def main():
     tolerance_line = str(meta.get("general_tolerance", DEFAULT_GENERAL_TOLERANCE))
     tolerance_note = f"Allgemeintoleranzen nach {tolerance_line}"
     unit_line = f"Alle Masse in {meta.get('unit', 'mm')} sofern nicht anders angegeben."
-    feature_lines = build_feature_annotation_lines(feature_payload)
+    feature_lines = build_feature_annotation_lines(feature_payload, layout_profile)
     process_lines = []
     if layout_profile == "sheet_metal":
         thickness = estimate_sheet_thickness(feature_payload, dim_x, dim_y, dim_z)
+        flat_pattern = (feature_payload or {}).get("flat_pattern") or {}
+        k_used = flat_pattern.get("k_factor_used") or 0.33
         process_lines = [
-            f"Blechstaerke = {format_de_number(thickness)}",
-            "K-Faktor = 1",
-            "Grat entfernen, scharfe Kanten brechen!",
+            f"Blechst\u00e4rke = {format_de_number(thickness)}",
+            f"K-Faktor = {format_de_number(k_used, 2)}",
         ]
+        # "Scharfe Kanten entgraten" comes from build_feature_annotation_lines — no duplicate
     annotation_lines = [
         dimensions_text,
         f"Norm: {standard_line}",

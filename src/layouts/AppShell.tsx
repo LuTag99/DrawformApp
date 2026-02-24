@@ -5,6 +5,7 @@ import {
   HiOutlineChartPie,
   HiOutlineArrowUpTray,
   HiOutlineUserCircle,
+  HiOutlineCube,
 } from 'react-icons/hi2';
 import './AppShell.css';
 import { GradientButton } from '../components/GradientButton';
@@ -13,6 +14,7 @@ import { useAuth } from '../hooks/useAuth';
 const navLinks = [
   { to: '/', label: 'Dashboard', icon: HiSparkles },
   { to: '/analyzer', label: 'Bemaßung', icon: HiOutlineCubeTransparent },
+  { to: '/reconstruct', label: 'Rekonstruktion', icon: HiOutlineCube },
   { to: '/projects', label: 'Projekte', icon: HiOutlineChartPie },
   { to: '/export', label: 'Export', icon: HiOutlineArrowUpTray },
   { to: '/profile', label: 'Profil', icon: HiOutlineUserCircle },
