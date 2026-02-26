@@ -230,6 +230,259 @@ def replace_text(svg, key, value):
     return re.sub(pattern, replacer, svg, flags=re.DOTALL)
 
 
+def extract_edge_segments(svg_group, min_length=0.5):
+    """Extract horizontal and vertical line segments from SVG path data.
+
+    Returns a list of dicts:
+        {x1, y1, x2, y2, length, orientation: 'h'|'v'|'d'}
+    Only segments longer than *min_length* SVG units are included.
+    """
+    segments: list[dict] = []
+    paths = re.findall(r'd="([^"]+)"', svg_group)
+    for path_data in paths:
+        tokens = SVG_PATH_TOKEN_RE.findall(path_data)
+        if not tokens:
+            continue
+        index = 0
+        cmd = None
+        cx, cy = 0.0, 0.0
+
+        def _is_cmd(t):
+            return t in SVG_PATH_COMMANDS
+
+        def _add_seg(x1, y1, x2, y2):
+            dx = abs(x2 - x1)
+            dy = abs(y2 - y1)
+            length = (dx ** 2 + dy ** 2) ** 0.5
+            if length < min_length:
+                return
+            if dy < 0.3 and dx >= min_length:
+                orient = "h"
+            elif dx < 0.3 and dy >= min_length:
+                orient = "v"
+            else:
+                orient = "d"  # diagonal — skip for step dims
+            if orient != "d":
+                segments.append({"x1": min(x1, x2), "y1": min(y1, y2),
+                                 "x2": max(x1, x2), "y2": max(y1, y2),
+                                 "length": length, "orientation": orient})
+
+        while index < len(tokens):
+            token = tokens[index]
+            if _is_cmd(token):
+                cmd = token
+                index += 1
+            elif cmd is None:
+                index += 1
+                continue
+
+            prev_x, prev_y = cx, cy
+
+            if cmd in ("M", "m"):
+                while index + 1 < len(tokens) and not _is_cmd(tokens[index]):
+                    x, y = float(tokens[index]), float(tokens[index + 1])
+                    index += 2
+                    if cmd == "m":
+                        x += cx; y += cy
+                    cx, cy = x, y
+                continue
+
+            if cmd in ("L", "l"):
+                while index + 1 < len(tokens) and not _is_cmd(tokens[index]):
+                    x, y = float(tokens[index]), float(tokens[index + 1])
+                    index += 2
+                    if cmd == "l":
+                        x += cx; y += cy
+                    _add_seg(cx, cy, x, y)
+                    cx, cy = x, y
+                continue
+
+            if cmd in ("H", "h"):
+                while index < len(tokens) and not _is_cmd(tokens[index]):
+                    x = float(tokens[index]); index += 1
+                    if cmd == "h":
+                        x += cx
+                    _add_seg(cx, cy, x, cy)
+                    cx = x
+                continue
+
+            if cmd in ("V", "v"):
+                while index < len(tokens) and not _is_cmd(tokens[index]):
+                    y = float(tokens[index]); index += 1
+                    if cmd == "v":
+                        y += cy
+                    _add_seg(cx, cy, cx, y)
+                    cy = y
+                continue
+
+            if cmd == "Z" or cmd == "z":
+                continue
+
+            # Skip curves (C, S, Q, T, A) — consume their parameters
+            param_count = {"C": 6, "c": 6, "S": 4, "s": 4,
+                           "Q": 4, "q": 4, "T": 2, "t": 2,
+                           "A": 7, "a": 7}.get(cmd, 0)
+            if param_count:
+                while index + param_count - 1 < len(tokens) and not _is_cmd(tokens[index]):
+                    for _ in range(param_count):
+                        if index < len(tokens) and not _is_cmd(tokens[index]):
+                            index += 1
+                    # Update current position to last 2 params
+                    if param_count >= 2:
+                        try:
+                            cx = float(tokens[index - 2])
+                            cy = float(tokens[index - 1])
+                            if cmd.islower():
+                                cx += prev_x; cy += prev_y
+                        except (ValueError, IndexError):
+                            pass
+                continue
+
+            index += 1  # fallback: skip unknown
+
+    return segments
+
+
+def _unique_positions(values, tolerance=0.5):
+    """Return sorted unique position values, merging those within tolerance."""
+    if not values:
+        return []
+    vals = sorted(set(values))
+    unique = [vals[0]]
+    for v in vals[1:]:
+        if v - unique[-1] > tolerance:
+            unique.append(v)
+    return unique
+
+
+def build_step_dimensions(svg_group, bounds, scale, stroke_width, line_profile=None,
+                          label_width=None, label_height=None, max_steps=5):
+    """Build ISO 129-1 step dimensions from edge segments.
+
+    Identifies horizontal and vertical steps in the part outline and adds
+    cumulative dimension lines from a reference edge (left/bottom).
+    Returns an SVG fragment string.
+    """
+    min_x, max_x, min_y, max_y = bounds
+    width = max_x - min_x
+    height = max_y - min_y
+    if width < 1 or height < 1:
+        return ""
+
+    segments = extract_edge_segments(svg_group, min_length=max(1.0, width * 0.03))
+    if not segments:
+        return ""
+
+    dim_sw = float((line_profile or {}).get("dimension", stroke_width * 0.6))
+    text_size = 3.6 / scale
+    arrow_len = max(0.6, min(2.2, max(width, height) * scale * 0.01)) / scale
+    arrow_half = arrow_len * 0.35
+    gap = 1.0 / scale         # gap between geometry and extension line
+    ext_over = 1.5 / scale    # extension line overshoot past dimension line
+    step_spacing = 6.0 / scale  # spacing between stacked dimension lines
+
+    parts: list[str] = []
+
+    def _arrow_h(ax, ay, pointing_left):
+        if pointing_left:
+            pts = f"{ax:.3f},{ay:.3f} {ax+arrow_len:.3f},{ay-arrow_half:.3f} {ax+arrow_len:.3f},{ay+arrow_half:.3f}"
+        else:
+            pts = f"{ax:.3f},{ay:.3f} {ax-arrow_len:.3f},{ay-arrow_half:.3f} {ax-arrow_len:.3f},{ay+arrow_half:.3f}"
+        return f'<polygon points="{pts}" fill="rgb(0,0,0)" />'
+
+    def _arrow_v(ax, ay, pointing_up):
+        if pointing_up:
+            pts = f"{ax:.3f},{ay:.3f} {ax-arrow_half:.3f},{ay+arrow_len:.3f} {ax+arrow_half:.3f},{ay+arrow_len:.3f}"
+        else:
+            pts = f"{ax:.3f},{ay:.3f} {ax-arrow_half:.3f},{ay-arrow_len:.3f} {ax+arrow_half:.3f},{ay-arrow_len:.3f}"
+        return f'<polygon points="{pts}" fill="rgb(0,0,0)" />'
+
+    # Collect unique X and Y positions from horizontal/vertical segments
+    h_segs = [s for s in segments if s["orientation"] == "h"]
+    v_segs = [s for s in segments if s["orientation"] == "v"]
+
+    # Horizontal step dimensions (below geometry):
+    # Unique X positions along horizontal segments → step widths from left edge
+    x_positions = set()
+    for s in h_segs:
+        x_positions.add(s["x1"])
+        x_positions.add(s["x2"])
+    for s in v_segs:
+        x_positions.add(s["x1"])  # x1==x2 for vertical
+    unique_x = _unique_positions(list(x_positions), tolerance=1.0 / scale)
+
+    # Filter: only positions between min_x and max_x, exclude the reference edge (min_x) and the far edge (max_x)
+    step_x = [x for x in unique_x if x > min_x + width * 0.05 and x < max_x - width * 0.05]
+    step_x = step_x[:max_steps]
+
+    # Draw horizontal step dimensions below geometry
+    if step_x:
+        for i, x_pos in enumerate(step_x):
+            dim_y = max_y + gap + step_spacing * (i + 2)  # offset below overall dim
+            step_val = (x_pos - min_x) / scale if scale > 0 else 0
+            if label_width is not None:
+                step_val = (x_pos - min_x) / (max_x - min_x) * label_width
+            # Extension lines
+            parts.append(f'<line x1="{x_pos:.3f}" y1="{max_y + gap:.3f}" x2="{x_pos:.3f}" y2="{dim_y + ext_over:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+            # Left reference extension (only first time)
+            if i == 0:
+                parts.append(f'<line x1="{min_x:.3f}" y1="{max_y + gap:.3f}" x2="{min_x:.3f}" y2="{dim_y + ext_over + step_spacing * (len(step_x) - 1):.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+            # Dimension line
+            parts.append(f'<line x1="{min_x:.3f}" y1="{dim_y:.3f}" x2="{x_pos:.3f}" y2="{dim_y:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+            # Arrows
+            parts.append(_arrow_h(min_x, dim_y, True))
+            parts.append(_arrow_h(x_pos, dim_y, False))
+            # Text
+            mid_x = (min_x + x_pos) / 2
+            parts.append(
+                f'<g fill="rgb(0,0,0)" stroke="none" font-size="{text_size:.3f}" '
+                f'font-family="ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace" '
+                f'font-style="normal" font-weight="normal" transform="scale(1,-1)">'
+                f'<text x="{mid_x:.3f}" y="{-dim_y + text_size * 0.3:.3f}" text-anchor="middle">'
+                f'{format_de_number(step_val)}</text></g>'
+            )
+
+    # Vertical step dimensions (right of geometry):
+    y_positions = set()
+    for s in v_segs:
+        y_positions.add(s["y1"])
+        y_positions.add(s["y2"])
+    for s in h_segs:
+        y_positions.add(s["y1"])
+    unique_y = _unique_positions(list(y_positions), tolerance=1.0 / scale)
+
+    step_y = [y for y in unique_y if y > min_y + height * 0.05 and y < max_y - height * 0.05]
+    step_y = step_y[:max_steps]
+
+    if step_y:
+        for i, y_pos in enumerate(step_y):
+            dim_x = max_x + gap + step_spacing * (i + 2)
+            step_val = (y_pos - min_y) / scale if scale > 0 else 0
+            if label_height is not None:
+                step_val = (y_pos - min_y) / (max_y - min_y) * label_height
+            # Extension lines
+            parts.append(f'<line x1="{max_x + gap:.3f}" y1="{y_pos:.3f}" x2="{dim_x + ext_over:.3f}" y2="{y_pos:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+            if i == 0:
+                parts.append(f'<line x1="{max_x + gap:.3f}" y1="{min_y:.3f}" x2="{dim_x + ext_over + step_spacing * (len(step_y) - 1):.3f}" y2="{min_y:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+            # Dimension line
+            parts.append(f'<line x1="{dim_x:.3f}" y1="{min_y:.3f}" x2="{dim_x:.3f}" y2="{y_pos:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+            # Arrows
+            parts.append(_arrow_v(dim_x, min_y, True))
+            parts.append(_arrow_v(dim_x, y_pos, False))
+            # Text (rotated)
+            mid_y = (min_y + y_pos) / 2
+            parts.append(
+                f'<g fill="rgb(0,0,0)" stroke="none" font-size="{text_size:.3f}" '
+                f'font-family="ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace" '
+                f'font-style="normal" font-weight="normal" transform="scale(1,-1)">'
+                f'<text x="{dim_x - text_size * 0.3:.3f}" y="{-mid_y:.3f}" text-anchor="middle" '
+                f'transform="rotate(90,{dim_x - text_size * 0.3:.3f},{-mid_y:.3f})">'
+                f'{format_de_number(step_val)}</text></g>'
+            )
+
+    return "\n".join(parts)
+
+
 def extract_svg_bounds(svg_group):
     """
     Extract bounding box from SVG elements including paths and circles.
@@ -2350,10 +2603,25 @@ def infer_metric_thread_label(core_diameter_mm):
 
 
 def _feature_text_svg(text, x, y, text_size, anchor="middle"):
+    # White background rectangle behind text for readability
+    char_w = text_size * 0.6
+    text_w = max(len(text), 1) * char_w
+    rect_pad = text_size * 0.15
+    if anchor == "middle":
+        rect_x = x - text_w * 0.5 - rect_pad
+    elif anchor == "start":
+        rect_x = x - rect_pad
+    else:
+        rect_x = x - text_w - rect_pad
+    rect_y = -y - text_size * 0.7
+    rect_w = text_w + rect_pad * 2
+    rect_h = text_size * 1.3
     return (
         f'<g fill="rgb(0, 0, 0)" stroke="none" font-size="{text_size:.3f}" '
         f'font-family="ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace" '
         f'font-style="normal" font-weight="normal" transform="scale(1,-1)">'
+        f'<rect x="{rect_x:.3f}" y="{rect_y:.3f}" '
+        f'width="{rect_w:.3f}" height="{rect_h:.3f}" fill="white" />'
         f'<text x="{x:.3f}" y="{-y:.3f}" text-anchor="{anchor}">{escape(text)}</text>'
         "</g>"
     )
@@ -2380,9 +2648,11 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
     dim_stroke = max(0.0008, stroke_width * 0.55)
     if isinstance(line_profile, dict):
         dim_stroke = max(0.0008, float(line_profile.get("dimension", dim_stroke)))
-    arrow_len = max(0.8, 2.0 / scale)
-    arrow_half = max(0.3, 0.8 / scale)
-    text_size = max(0.2, 2.2 / scale)
+    # Use dimension_metrics for consistent sizing with overall dimensions
+    _metrics = dimension_metrics(svg_bounds, scale)
+    arrow_len = _metrics["arrow_len"]
+    arrow_half = _metrics["arrow_half"]
+    text_size = max(0.2, 2.8 / scale)  # slightly smaller than overall (3.6) but readable
     label_gap = max(1.8, 4.0 / max(scale, 0.05))
     used_label_y = []
     parts = []
@@ -2468,7 +2738,7 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                     f'<polygon points="{ex1:.3f},{edge_y:.3f} {ex1 - arrow_len:.3f},{edge_y - arrow_half:.3f} {ex1 - arrow_len:.3f},{edge_y + arrow_half:.3f}" />'
                     "</g>"
                 )
-                edge_text = f"ABSTAND {format_de_number(edge_span)}"
+                edge_text = format_de_number(edge_span)
                 if edge_text not in used_dimension_labels:
                     used_dimension_labels.add(edge_text)
                     edge_tx = (ex0 + ex1) * 0.5
@@ -2492,6 +2762,45 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                             text_size,
                             anchor="middle",
                         )
+                    )
+            # Vertical hole-to-edge: distance from bottom edge to bottom-most hole
+            by_y = sorted(main_holes, key=lambda item: item["cy"], reverse=True)
+            bottom_hole = by_y[0]
+            vert_edge_span = abs(max_y - bottom_hole["cy"])
+            if vert_edge_span > max(1.0, 4.0 / scale):
+                edge_x = max_x + max(2.5 / scale, label_gap * 0.55)
+                ey0 = max_y
+                ey1 = bottom_hole["cy"]
+                parts.append(
+                    f'<g fill="none" stroke="rgb(0, 0, 0)" stroke-width="{dim_stroke:.4f}" '
+                    f'stroke-linecap="butt" stroke-linejoin="miter">'
+                    f'<line x1="{edge_x:.3f}" y1="{ey0:.3f}" x2="{edge_x:.3f}" y2="{ey1:.3f}" />'
+                    f'<line x1="{bottom_hole["cx"]:.3f}" y1="{ey0:.3f}" x2="{edge_x:.3f}" y2="{ey0:.3f}" />'
+                    f'<line x1="{bottom_hole["cx"]:.3f}" y1="{ey1:.3f}" x2="{edge_x:.3f}" y2="{ey1:.3f}" />'
+                    "</g>"
+                )
+                collision_boxes.append(_line_collision_box(edge_x, ey0, edge_x, ey1, line_pad))
+                collision_boxes.append(_line_collision_box(bottom_hole["cx"], ey0, edge_x, ey0, line_pad))
+                collision_boxes.append(_line_collision_box(bottom_hole["cx"], ey1, edge_x, ey1, line_pad))
+                # Vertical arrows
+                parts.append(
+                    f'<g fill="rgb(0, 0, 0)" stroke="none">'
+                    f'<polygon points="{edge_x:.3f},{ey0:.3f} {edge_x - arrow_half:.3f},{ey0 - arrow_len:.3f} {edge_x + arrow_half:.3f},{ey0 - arrow_len:.3f}" />'
+                    f'<polygon points="{edge_x:.3f},{ey1:.3f} {edge_x - arrow_half:.3f},{ey1 + arrow_len:.3f} {edge_x + arrow_half:.3f},{ey1 + arrow_len:.3f}" />'
+                    "</g>"
+                )
+                vert_text = format_de_number(vert_edge_span)
+                if vert_text not in used_dimension_labels:
+                    used_dimension_labels.add(vert_text)
+                    vert_tx = edge_x + (1.5 / scale)
+                    vert_ty = (ey0 + ey1) * 0.5
+                    parts.append(
+                        f'<g fill="rgb(0,0,0)" stroke="none" font-size="{text_size:.3f}" '
+                        f'font-family="ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace" '
+                        f'font-style="normal" font-weight="normal" transform="scale(1,-1)">'
+                        f'<text x="{vert_tx:.3f}" y="{-vert_ty:.3f}" text-anchor="middle" '
+                        f'transform="rotate(90,{vert_tx:.3f},{-vert_ty:.3f})">'
+                        f'{vert_text}</text></g>'
                     )
             pitch_text = format_de_number(hole_pitch)
             if pitch_text not in used_dimension_labels:
@@ -2696,6 +3005,51 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                     anchor="start",
                 )
             )
+    # Bend radius annotation (sheet metal only)
+    bend_r = _optional_float(feature_payload.get("bend_radius_mm"))
+    if bend_r and bend_r > 0:
+        bend_text = f"R{format_de_number(bend_r)}"
+        if bend_text not in used_dimension_labels:
+            used_dimension_labels.add(bend_text)
+            # Place near a bend area — approximate as the center-left of the view
+            bx = min_x + (max_x - min_x) * 0.15
+            by = min_y + (max_y - min_y) * 0.5
+            # Leader line from bend region to text
+            kx = bx - (8.0 / scale)
+            ky = by - (6.0 / scale)
+            ex = min_x - (2.0 / scale)
+            ey = ky
+            parts.append(
+                f'<g fill="none" stroke="rgb(0, 0, 0)" stroke-width="{dim_stroke:.4f}" stroke-linecap="butt">'
+                f'<line x1="{bx:.3f}" y1="{by:.3f}" x2="{kx:.3f}" y2="{ky:.3f}" />'
+                f'<line x1="{kx:.3f}" y1="{ky:.3f}" x2="{ex:.3f}" y2="{ey:.3f}" />'
+                "</g>"
+            )
+            collision_boxes.append(_line_collision_box(bx, by, kx, ky, line_pad))
+            collision_boxes.append(_line_collision_box(kx, ky, ex, ey, line_pad))
+            text_x = ex - (1.0 / scale)
+            text_y = _reserve_feature_label_position(
+                bend_text,
+                text_x,
+                ey - (1.2 / scale),
+                text_size,
+                "end",
+                used_label_y,
+                label_gap,
+                min_y,
+                max_y,
+                collision_boxes,
+            )
+            parts.append(
+                _feature_text_svg(
+                    bend_text,
+                    text_x,
+                    text_y,
+                    text_size,
+                    anchor="end",
+                )
+            )
+
     return "".join(parts)
 
 
@@ -2780,23 +3134,24 @@ def build_flat_pattern_overlay(
     unfold_result=None,
 ):
     if layout_profile != "sheet_metal":
-        return ""
+        return "", None
 
-    # Flat pattern area: right half of the drawing, lower half (where ISO view was).
-    # For sheet_metal parts the ISO view is suppressed, so the Abwicklung gets
-    # the full bottom-right cell.  For A2 sheets the allocation is proportionally larger.
+    # Flat pattern area: dedicated 3rd column on the right side of the drawing.
+    # The 4 orthographic views use 72% of the width; the Abwicklung column gets 28%.
     avail_draw_w = sheet_w - 2 * margin
     avail_draw_h = draw_bottom - margin
-    if sheet_name == "A2":
-        area_w = min(245.0, avail_draw_w * 0.48)
-        area_h = min(90.0, avail_draw_h * 0.46)
-    else:  # A3
-        area_w = min(172.0, avail_draw_w * 0.48)
-        area_h = min(72.0, avail_draw_h * 0.44)
-    area_w = max(120.0, area_w)
-    area_h = max(50.0, area_h)
-    flat_cx = sheet_w - margin - area_w * 0.5
-    flat_cy = margin + avail_draw_h * (0.62 if sheet_name == "A2" else 0.60)
+
+    # The 3rd column for sheet_metal layout
+    views_col_w = avail_draw_w * 0.60
+    abwicklung_col_w = avail_draw_w - views_col_w  # ~40%
+    area_w = abwicklung_col_w - 4.0   # 4mm internal padding
+    area_h = avail_draw_h * 0.85      # 85% of drawing height
+
+    area_w = max(80.0, area_w)
+    area_h = max(80.0, area_h)
+    # Position: centered in the 3rd column, vertically centered
+    flat_cx = margin + views_col_w + abwicklung_col_w * 0.5
+    flat_cy = margin + avail_draw_h * 0.50
 
     text_style = (
         "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
@@ -2834,9 +3189,20 @@ def build_flat_pattern_overlay(
             ob_x1, ob_y1 = 0.0, 0.0
             ob_w, ob_h = fl, fw
 
-        # Scale SVG contour to fit the allocated area
-        scale_x = (area_w * 0.80) / max(ob_w, 1e-6)
-        scale_y = (area_h * 0.65) / max(ob_h, 1e-6)
+        # Extract outline-only bounds (without bend line overhangs) for dimension placement.
+        # Bend lines in <g class="bend-lines"> may extend beyond the part outline,
+        # causing the total SVG bounds to be larger/shifted vs. the actual part.
+        outline_only_svg = re.sub(r'<g[^>]*class="bend-lines"[^>]*>.*?</g>', '', outline_svg, flags=re.DOTALL)
+        part_bounds = extract_svg_bounds(outline_only_svg)
+        if part_bounds and abs(part_bounds[1] - part_bounds[0]) > _min_size and abs(part_bounds[3] - part_bounds[2]) > _min_size:
+            pb_x1, pb_x2, pb_y1, pb_y2 = part_bounds
+        else:
+            # Fallback: use full SVG bounds
+            pb_x1, pb_x2, pb_y1, pb_y2 = ob_x1, ob_x1 + ob_w, ob_y1, ob_y1 + ob_h
+
+        # Scale SVG contour to fit the allocated area (leave room for dim lines)
+        scale_x = (area_w * 0.70) / max(ob_w, 1e-6)
+        scale_y = (area_h * 0.55) / max(ob_h, 1e-6)
         draw_scale = min(scale_x, scale_y)
         svg_w = ob_w * draw_scale
         svg_h = ob_h * draw_scale
@@ -2847,6 +3213,38 @@ def build_flat_pattern_overlay(
         # This correctly handles any offset and Y-flip from TechDraw projection.
         tx = svg_x - ob_x1 * draw_scale
         ty = svg_y - ob_y1 * draw_scale
+
+        # Actual outline corner positions in drawing coordinates.
+        # Use the outline-only SVG bounds CENTER for accurate positioning (handles
+        # asymmetric bend line overhangs), but use fl/fw for dimensions (the SVG bounds
+        # may be slightly larger than the true part due to TechDraw projection artifacts).
+        pb_cx_svg = (pb_x1 + pb_x2) / 2
+        pb_cy_svg = (pb_y1 + pb_y2) / 2
+        outline_cx = tx + pb_cx_svg * draw_scale
+        outline_cy = ty + pb_cy_svg * draw_scale
+
+        # Determine which model dimension maps to SVG X and which to SVG Y.
+        # The SVG outline extent tells us the orientation.
+        pb_w = pb_x2 - pb_x1
+        pb_h = pb_y2 - pb_y1
+        if pb_w >= pb_h:
+            # SVG X is the longer dimension (fl), SVG Y is shorter (fw)
+            dim_h_mm = fl
+            dim_v_mm = fw
+        else:
+            # SVG Y is the longer dimension (fl), SVG X is shorter (fw)
+            dim_h_mm = fw
+            dim_v_mm = fl
+
+        outline_w = dim_h_mm * draw_scale
+        outline_h = dim_v_mm * draw_scale
+        outline_x1 = outline_cx - outline_w / 2
+        outline_y1 = outline_cy - outline_h / 2
+        outline_x2 = outline_cx + outline_w / 2
+        outline_y2 = outline_cy + outline_h / 2
+
+        if os.environ.get("DRAWFORM_DEBUG_DIR"):
+            print(f"[drawform] ABWICKLUNG: fl={fl:.1f} fw={fw:.1f} ob=({ob_x1:.1f},{ob_y1:.1f},{ob_w:.1f},{ob_h:.1f}) part=({pb_x1:.1f},{pb_y1:.1f},{pb_x2:.1f},{pb_y2:.1f}) outline=({outline_x1:.1f},{outline_y1:.1f},{outline_w:.1f},{outline_h:.1f})")
 
         parts: list[str] = []
 
@@ -2874,6 +3272,136 @@ def build_flat_pattern_overlay(
                         f'stroke="rgb(40,40,160)" stroke-width="0.18" stroke-dasharray="2.5,1.0" />'
                     )
 
+        # Bend annotations: place text directly at each bend line
+        bend_lines_data = unfold_result.get("bend_lines") or []
+        bend_segments = (flat_pattern or {}).get("bend_segments") or []
+        bend_ann_style = (
+            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+            "font-size: 2.5px; font-style: normal; font-weight: normal; fill: #000;"
+        )
+        for bi, bl in enumerate(bend_lines_data):
+            bl_x1 = tx + float(bl["x1"]) * draw_scale
+            bl_y1 = ty + float(bl["y1"]) * draw_scale
+            bl_x2 = tx + float(bl["x2"]) * draw_scale
+            bl_y2 = ty + float(bl["y2"]) * draw_scale
+            bmid_x = (bl_x1 + bl_x2) / 2
+            bmid_y = (bl_y1 + bl_y2) / 2
+            # Build annotation text from matching bend segment
+            if bi < len(bend_segments):
+                bseg = bend_segments[bi]
+                b_dir = bseg.get("direction", "OBEN")
+                b_angle = format_de_number(bseg.get("angle_deg", 90), decimals=0)
+                b_radius = format_de_number(bseg.get("radius_mm", 0))
+                ann_text = f"NACH {b_dir} {b_angle}\u00B0 R {b_radius}"
+            else:
+                ann_text = f"Biegung {bi + 1}"
+            # Determine bend line orientation and place text accordingly
+            bl_dx = bl_x2 - bl_x1
+            bl_dy = bl_y2 - bl_y1
+            bl_angle = math.degrees(math.atan2(bl_dy, bl_dx))
+            # Offset text ~3mm perpendicular to the bend line
+            text_offset = 3.0
+            text_x = bmid_x - text_offset  # offset to the left for mostly-vertical lines
+            text_y = bmid_y
+            # For mostly-vertical lines, rotate -90; for mostly-horizontal, keep 0
+            if abs(bl_dx) < abs(bl_dy):
+                # Vertical bend line: place text to the left, rotated -90
+                rot = -90
+                parts.append(
+                    f'<text x="{text_x:.3f}" y="{text_y:.3f}" style="{bend_ann_style}" '
+                    f'text-anchor="middle" '
+                    f'transform="rotate({rot},{text_x:.3f},{text_y:.3f})">'
+                    f'{escape(ann_text)}</text>'
+                )
+            else:
+                # Horizontal bend line: place text above
+                parts.append(
+                    f'<text x="{bmid_x:.3f}" y="{bmid_y - text_offset:.3f}" style="{bend_ann_style}" '
+                    f'text-anchor="middle">'
+                    f'{escape(ann_text)}</text>'
+                )
+
+        # --- Flange dimensions between bend lines ---
+        # Collect bend line positions in drawing coordinates.
+        # For mostly-vertical bend lines, use X position; for horizontal, use Y.
+        bend_positions_x = []  # (x_pos, bend_index) for vertical bend lines
+        bend_positions_y = []  # (y_pos, bend_index) for horizontal bend lines
+        for bi, bl in enumerate(bend_lines_data):
+            bx1 = tx + float(bl["x1"]) * draw_scale
+            by1 = ty + float(bl["y1"]) * draw_scale
+            bx2 = tx + float(bl["x2"]) * draw_scale
+            by2 = ty + float(bl["y2"]) * draw_scale
+            bdx = bx2 - bx1
+            bdy = by2 - by1
+            if abs(bdx) < abs(bdy):
+                # Mostly vertical bend line → position along X axis
+                bend_positions_x.append(((bx1 + bx2) / 2, bi))
+            else:
+                # Mostly horizontal bend line → position along Y axis
+                bend_positions_y.append(((by1 + by2) / 2, bi))
+
+        # Boundaries: stay within the available drawing area
+        max_x_bound = margin + avail_draw_w - 2.0   # right edge of drawing
+        max_y_bound = draw_bottom - 2.0              # bottom edge of drawing
+
+        # Flange dimension lines along X axis (below outline, stacked below overall dim)
+        if bend_positions_x:
+            bend_positions_x.sort(key=lambda item: item[0])
+            # Build segment edges: outline_x1, bend1, bend2, ..., outline_x2
+            seg_edges_x = [outline_x1] + [bp[0] for bp in bend_positions_x] + [outline_x2]
+            flange_dim_y = min(outline_y2 + 18.0, max_y_bound - 4.0)
+            flange_ext_y0 = outline_y2 + 2.0
+            flange_dim_style = (
+                "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+                "font-size: 2.2px; font-style: normal; font-weight: normal; fill: #000;"
+            )
+            for si in range(len(seg_edges_x) - 1):
+                sx1 = seg_edges_x[si]
+                sx2 = seg_edges_x[si + 1]
+                seg_w_mm = abs(sx2 - sx1) / draw_scale
+                if seg_w_mm < 1.0:
+                    continue
+                # Extension lines from outline bottom to flange dim line
+                parts.append(f'<line x1="{sx1:.3f}" y1="{flange_ext_y0:.3f}" x2="{sx1:.3f}" y2="{flange_dim_y:.3f}" stroke="rgb(0,0,0)" stroke-width="0.12" />')
+                parts.append(f'<line x1="{sx2:.3f}" y1="{flange_ext_y0:.3f}" x2="{sx2:.3f}" y2="{flange_dim_y:.3f}" stroke="rgb(0,0,0)" stroke-width="0.12" />')
+                # Dimension line
+                parts.append(f'<line x1="{sx1:.3f}" y1="{flange_dim_y:.3f}" x2="{sx2:.3f}" y2="{flange_dim_y:.3f}" stroke="rgb(0,0,0)" stroke-width="0.12" />')
+                # Arrows (small for flange dims)
+                faw, fah = 1.8, 0.3
+                parts.append(f'<polygon points="{sx1:.3f},{flange_dim_y:.3f} {sx1+faw:.3f},{flange_dim_y-fah:.3f} {sx1+faw:.3f},{flange_dim_y+fah:.3f}" fill="rgb(0,0,0)" />')
+                parts.append(f'<polygon points="{sx2:.3f},{flange_dim_y:.3f} {sx2-faw:.3f},{flange_dim_y-fah:.3f} {sx2-faw:.3f},{flange_dim_y+fah:.3f}" fill="rgb(0,0,0)" />')
+                # Label
+                label_x = (sx1 + sx2) / 2
+                parts.append(f'<text x="{label_x:.3f}" y="{flange_dim_y - 0.8:.3f}" style="{flange_dim_style}" text-anchor="middle">{format_de_number(seg_w_mm)}</text>')
+
+        # Flange dimension lines along Y axis (right of outline, stacked right of overall dim)
+        if bend_positions_y:
+            bend_positions_y.sort(key=lambda item: item[0])
+            seg_edges_y = [outline_y1] + [bp[0] for bp in bend_positions_y] + [outline_y2]
+            flange_dim_x = min(outline_x2 + 18.0, max_x_bound - 4.0)
+            flange_ext_x0 = outline_x2 + 2.0
+            flange_dim_style = (
+                "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+                "font-size: 2.2px; font-style: normal; font-weight: normal; fill: #000;"
+            )
+            for si in range(len(seg_edges_y) - 1):
+                sy1 = seg_edges_y[si]
+                sy2 = seg_edges_y[si + 1]
+                seg_h_mm = abs(sy2 - sy1) / draw_scale
+                if seg_h_mm < 1.0:
+                    continue
+                parts.append(f'<line x1="{flange_ext_x0:.3f}" y1="{sy1:.3f}" x2="{flange_dim_x:.3f}" y2="{sy1:.3f}" stroke="rgb(0,0,0)" stroke-width="0.12" />')
+                parts.append(f'<line x1="{flange_ext_x0:.3f}" y1="{sy2:.3f}" x2="{flange_dim_x:.3f}" y2="{sy2:.3f}" stroke="rgb(0,0,0)" stroke-width="0.12" />')
+                parts.append(f'<line x1="{flange_dim_x:.3f}" y1="{sy1:.3f}" x2="{flange_dim_x:.3f}" y2="{sy2:.3f}" stroke="rgb(0,0,0)" stroke-width="0.12" />')
+                faw, fah = 1.8, 0.3
+                parts.append(f'<polygon points="{flange_dim_x:.3f},{sy1:.3f} {flange_dim_x-fah:.3f},{sy1+faw:.3f} {flange_dim_x+fah:.3f},{sy1+faw:.3f}" fill="rgb(0,0,0)" />')
+                parts.append(f'<polygon points="{flange_dim_x:.3f},{sy2:.3f} {flange_dim_x-fah:.3f},{sy2-faw:.3f} {flange_dim_x+fah:.3f},{sy2-faw:.3f}" fill="rgb(0,0,0)" />')
+                label_y = (sy1 + sy2) / 2
+                parts.append(
+                    f'<text x="{flange_dim_x + 1.0:.3f}" y="{label_y:.3f}" style="{flange_dim_style}" text-anchor="middle" '
+                    f'transform="rotate(-90,{flange_dim_x + 1.0:.3f},{label_y:.3f})">{format_de_number(seg_h_mm)}</text>'
+                )
+
         # Arrow helper for dimension lines
         aw, ah = 2.5, 0.4
 
@@ -2888,28 +3416,28 @@ def build_flat_pattern_overlay(
                 pts = f"{ax:.3f},{ay:.3f} {ax-ah:.3f},{ay-aw:.3f} {ax+ah:.3f},{ay-aw:.3f}"
             return f'<polygon points="{pts}" fill="rgb(0,0,0)" />'
 
-        # Horizontal dimension (flat length) below the SVG
-        dim_y_h = svg_y + svg_h + 5.0
-        ext_y0 = svg_y + svg_h + 1.2
-        parts.append(f'<line x1="{svg_x:.3f}" y1="{ext_y0:.3f}" x2="{svg_x:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
-        parts.append(f'<line x1="{svg_x + svg_w:.3f}" y1="{ext_y0:.3f}" x2="{svg_x + svg_w:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
-        parts.append(f'<line x1="{svg_x:.3f}" y1="{dim_y_h:.3f}" x2="{svg_x + svg_w:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
-        parts.append(_arrow(svg_x, dim_y_h, "left"))
-        parts.append(_arrow(svg_x + svg_w, dim_y_h, "right"))
-        parts.append(f'<text x="{flat_cx:.3f}" y="{dim_y_h - 1.0:.3f}" style="{dim_style}" text-anchor="middle">{format_de_number(fl)}</text>')
+        # Horizontal dimension (flat length) below the outline
+        dim_y_h = outline_y2 + 8.0
+        ext_y0 = outline_y2 + 2.0
+        parts.append(f'<line x1="{outline_x1:.3f}" y1="{ext_y0:.3f}" x2="{outline_x1:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(f'<line x1="{outline_x2:.3f}" y1="{ext_y0:.3f}" x2="{outline_x2:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(f'<line x1="{outline_x1:.3f}" y1="{dim_y_h:.3f}" x2="{outline_x2:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(_arrow(outline_x1, dim_y_h, "left"))
+        parts.append(_arrow(outline_x2, dim_y_h, "right"))
+        parts.append(f'<text x="{outline_cx:.3f}" y="{dim_y_h - 1.0:.3f}" style="{dim_style}" text-anchor="middle">{format_de_number(dim_h_mm)}</text>')
 
-        # Vertical dimension (flat width) to the left
-        dim_x_v = svg_x - 5.0
-        ext_x0 = svg_x - 1.2
-        mid_y = svg_y + svg_h / 2
-        parts.append(f'<line x1="{ext_x0:.3f}" y1="{svg_y:.3f}" x2="{dim_x_v:.3f}" y2="{svg_y:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
-        parts.append(f'<line x1="{ext_x0:.3f}" y1="{svg_y + svg_h:.3f}" x2="{dim_x_v:.3f}" y2="{svg_y + svg_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
-        parts.append(f'<line x1="{dim_x_v:.3f}" y1="{svg_y:.3f}" x2="{dim_x_v:.3f}" y2="{svg_y + svg_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
-        parts.append(_arrow(dim_x_v, svg_y, "up"))
-        parts.append(_arrow(dim_x_v, svg_y + svg_h, "down"))
+        # Vertical dimension (flat width) to the right of outline
+        dim_x_v = outline_x2 + 8.0
+        ext_x0 = outline_x2 + 2.0
+        mid_y = outline_cy
+        parts.append(f'<line x1="{ext_x0:.3f}" y1="{outline_y1:.3f}" x2="{dim_x_v:.3f}" y2="{outline_y1:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(f'<line x1="{ext_x0:.3f}" y1="{outline_y2:.3f}" x2="{dim_x_v:.3f}" y2="{outline_y2:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(f'<line x1="{dim_x_v:.3f}" y1="{outline_y1:.3f}" x2="{dim_x_v:.3f}" y2="{outline_y2:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
+        parts.append(_arrow(dim_x_v, outline_y1, "up"))
+        parts.append(_arrow(dim_x_v, outline_y2, "down"))
         parts.append(
-            f'<text x="{dim_x_v - 1.0:.3f}" y="{mid_y:.3f}" style="{dim_style}" text-anchor="middle" '
-            f'transform="rotate(-90,{dim_x_v - 1.0:.3f},{mid_y:.3f})">{format_de_number(fw)}</text>'
+            f'<text x="{dim_x_v + 1.0:.3f}" y="{mid_y:.3f}" style="{dim_style}" text-anchor="middle" '
+            f'transform="rotate(-90,{dim_x_v + 1.0:.3f},{mid_y:.3f})">{format_de_number(dim_v_mm)}</text>'
         )
 
         # Title
@@ -2927,7 +3455,47 @@ def build_flat_pattern_overlay(
             f'<text x="{title_x:.1f}" y="{title_y:.1f}" style="{title_bold_style}">ABWICKLUNG</text>',
             f'<text x="{title_x:.1f}" y="{title_y + 5.0:.1f}" style="{subtitle_style}">{escape(k_subtitle)}</text>',
         ]
-        return "\n".join(parts) + "\n" + "\n".join(note_parts)
+
+        # Collect validation metadata for automated quality checks
+        abwicklung_meta = {
+            "source": "sheetmetal_unfold",
+            "outline_bounds": [round(outline_x1, 2), round(outline_y1, 2),
+                               round(outline_x2, 2), round(outline_y2, 2)],
+            "dim_h_line_y": round(dim_y_h, 2),
+            "dim_h_endpoints": [round(outline_x1, 2), round(outline_x2, 2)],
+            "dim_v_line_x": round(dim_x_v, 2),
+            "dim_v_endpoints": [round(outline_y1, 2), round(outline_y2, 2)],
+            "dim_h_label_mm": round(dim_h_mm, 2),
+            "dim_v_label_mm": round(dim_v_mm, 2),
+            "model_fl_mm": round(fl, 2),
+            "model_fw_mm": round(fw, 2),
+            "bend_count": bend_count,
+            "bend_annotations": len(bend_lines_data),
+            "drawing_area": [round(margin, 2), round(margin, 2),
+                             round(margin + avail_draw_w, 2), round(draw_bottom, 2)],
+        }
+
+        # Flange dimension metadata
+        flange_dims = []
+        if bend_positions_x:
+            seg_edges = [outline_x1] + [bp[0] for bp in sorted(bend_positions_x, key=lambda item: item[0])] + [outline_x2]
+            for si in range(len(seg_edges) - 1):
+                seg_w_mm = abs(seg_edges[si + 1] - seg_edges[si]) / draw_scale
+                if seg_w_mm >= 1.0:
+                    flange_dims.append({"axis": "x", "start": round(seg_edges[si], 2),
+                                        "end": round(seg_edges[si + 1], 2),
+                                        "label_mm": round(seg_w_mm, 2)})
+        if bend_positions_y:
+            seg_edges = [outline_y1] + [bp[0] for bp in sorted(bend_positions_y, key=lambda item: item[0])] + [outline_y2]
+            for si in range(len(seg_edges) - 1):
+                seg_h_mm = abs(seg_edges[si + 1] - seg_edges[si]) / draw_scale
+                if seg_h_mm >= 1.0:
+                    flange_dims.append({"axis": "y", "start": round(seg_edges[si], 2),
+                                        "end": round(seg_edges[si + 1], 2),
+                                        "label_mm": round(seg_h_mm, 2)})
+        abwicklung_meta["flange_dims"] = flange_dims
+
+        return "\n".join(parts) + "\n" + "\n".join(note_parts), abwicklung_meta
 
     # ---------- Priority 2: Mathematical fallback (simple geometry only) ----------
     if (flat_pattern and flat_pattern.get("flat_length_mm") and flat_pattern.get("flat_width_mm")
@@ -2937,9 +3505,9 @@ def build_flat_pattern_overlay(
         complex_geom = bool(flat_pattern.get("complex_geometry"))
         k_used = flat_pattern.get("k_factor_used")
 
-        # Scale the blank rectangle to fit the allocated area (with padding)
-        scale_x = (area_w * 0.80) / max(fl, 1e-6)
-        scale_y = (area_h * 0.65) / max(fw, 1e-6)
+        # Scale the blank rectangle to fit the allocated area (leave room for dim lines)
+        scale_x = (area_w * 0.70) / max(fl, 1e-6)
+        scale_y = (area_h * 0.55) / max(fw, 1e-6)
         draw_scale = min(scale_x, scale_y)
         rect_w = fl * draw_scale
         rect_h = fw * draw_scale
@@ -2961,7 +3529,33 @@ def build_flat_pattern_overlay(
         segments = flat_pattern.get("bend_segments") or []
         total_segs_mm = float(flat_pattern.get("total_segments_mm") or 0)
         flat_extents = flat_pattern.get("flat_extents") or []
-        bend_notes: list[str] = []
+        bend_ann_style = (
+            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
+            "font-size: 2.5px; font-style: normal; font-weight: normal; fill: #000;"
+        )
+
+        def _add_bend_line_and_annotation(bend_x, seg):
+            """Draw dashed bend line and rotated annotation text at bend_x."""
+            if rect_x < bend_x < rect_x + rect_w:
+                parts.append(
+                    f'<line x1="{bend_x:.3f}" y1="{rect_y:.3f}" '
+                    f'x2="{bend_x:.3f}" y2="{rect_y + rect_h:.3f}" '
+                    f'stroke="rgb(40,40,160)" stroke-width="0.18" '
+                    f'stroke-dasharray="2.5,1.0" />'
+                )
+            direction = seg.get("direction", "OBEN")
+            r_str = format_de_number(seg.get("radius_mm") or 0)
+            angle_str = format_de_number(seg.get("angle_deg") or 90, decimals=0)
+            ann_text = f"NACH {direction} {angle_str}\u00B0 R {r_str}"
+            # Place rotated text above the bend line, offset 3mm to the left
+            ann_x = bend_x - 3.0
+            ann_y = rect_y + rect_h / 2
+            parts.append(
+                f'<text x="{ann_x:.3f}" y="{ann_y:.3f}" style="{bend_ann_style}" '
+                f'text-anchor="middle" '
+                f'transform="rotate(-90,{ann_x:.3f},{ann_y:.3f})">'
+                f'{escape(ann_text)}</text>'
+            )
 
         if flat_extents and len(flat_extents) >= len(segments):
             # We have per-flange extent data: accumulate positions using actual extents.
@@ -2971,18 +3565,7 @@ def build_flat_pattern_overlay(
             for i, seg in enumerate(segments):
                 allowance = float(seg.get("allowance_mm") or 0)
                 bend_x = rect_x + x_pos_mm * draw_scale
-                if rect_x < bend_x < rect_x + rect_w:
-                    parts.append(
-                        f'<line x1="{bend_x:.3f}" y1="{rect_y:.3f}" '
-                        f'x2="{bend_x:.3f}" y2="{rect_y + rect_h:.3f}" '
-                        f'stroke="rgb(40,40,160)" stroke-width="0.18" '
-                        f'stroke-dasharray="2.5,1.0" />'
-                    )
-                direction = seg.get("direction", "OBEN")
-                r_str = format_de_number(seg.get("radius_mm") or 0)
-                angle_str = format_de_number(seg.get("angle_deg") or 90, decimals=0)
-                dir_arrow = "\u2191" if direction in ("OBEN", "UP") else "\u2193" if direction in ("UNTEN", "DOWN") else "\u2194"
-                bend_notes.append(f"{dir_arrow} {angle_str}\u00B0 R{r_str}")
+                _add_bend_line_and_annotation(bend_x, seg)
                 next_extent = flat_extents[i + 1] if i + 1 < len(flat_extents) else 0.0
                 x_pos_mm += allowance + next_extent
         else:
@@ -2992,18 +3575,7 @@ def build_flat_pattern_overlay(
             for seg in segments:
                 allowance = float(seg.get("allowance_mm") or 0)
                 bend_x = rect_x + x_pos_mm * draw_scale
-                if rect_x < bend_x < rect_x + rect_w:
-                    parts.append(
-                        f'<line x1="{bend_x:.3f}" y1="{rect_y:.3f}" '
-                        f'x2="{bend_x:.3f}" y2="{rect_y + rect_h:.3f}" '
-                        f'stroke="rgb(40,40,160)" stroke-width="0.18" '
-                        f'stroke-dasharray="2.5,1.0" />'
-                    )
-                direction = seg.get("direction", "OBEN")
-                r_str = format_de_number(seg.get("radius_mm") or 0)
-                angle_str = format_de_number(seg.get("angle_deg") or 90, decimals=0)
-                dir_arrow = "\u2191" if direction in ("OBEN", "UP") else "\u2193" if direction in ("UNTEN", "DOWN") else "\u2194"
-                bend_notes.append(f"{dir_arrow} {angle_str}\u00B0 R{r_str}")
+                _add_bend_line_and_annotation(bend_x, seg)
                 x_pos_mm += allowance + seg_len_each
 
         # Arrow helper: filled polygon arrowhead (ISO 129-1)
@@ -3021,8 +3593,8 @@ def build_flat_pattern_overlay(
             return f'<polygon points="{pts}" fill="rgb(0,0,0)" />'
 
         # Horizontal dimension below the rect (flat length)
-        dim_y_h = rect_y + rect_h + 5.0
-        ext_y0 = rect_y + rect_h + 1.2
+        dim_y_h = rect_y + rect_h + 8.0
+        ext_y0 = rect_y + rect_h + 2.0
         parts.append(  # extension line left
             f'<line x1="{rect_x:.3f}" y1="{ext_y0:.3f}" '
             f'x2="{rect_x:.3f}" y2="{dim_y_h:.3f}" '
@@ -3048,8 +3620,8 @@ def build_flat_pattern_overlay(
         )
 
         # Vertical dimension to the left of the rect (flat width)
-        dim_x_v = rect_x - 5.0
-        ext_x0 = rect_x - 1.2
+        dim_x_v = rect_x - 8.0
+        ext_x0 = rect_x - 2.0
         rect_mid_y = rect_y + rect_h / 2
         parts.append(  # extension line top
             f'<line x1="{ext_x0:.3f}" y1="{rect_y:.3f}" '
@@ -3076,7 +3648,7 @@ def build_flat_pattern_overlay(
             f'</text>'
         )
 
-        # Title: bold "ABWICKLUNG" + subtitle + compact bend notes
+        # Title: bold "ABWICKLUNG" + subtitle
         title_bold_style = (
             "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
             "font-size: 4.0px; font-style: normal; font-weight: bold; fill: #000;"
@@ -3085,23 +3657,28 @@ def build_flat_pattern_overlay(
             "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
             "font-size: 2.8px; font-style: normal; font-weight: normal; fill: #555;"
         )
-        note_item_style = (
-            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-            "font-size: 2.8px; font-style: normal; font-weight: normal; fill: #000;"
-        )
         k_subtitle = f"berechnet \u2014 K={format_de_number(k_used, 2)}" if k_used is not None else "berechnet"
         if complex_geom:
             k_subtitle += " \u2014 bitte pr\u00fcfen"
+        bend_count = len(segments)
+        k_subtitle += f" \u2014 {bend_count} Biegung{'en' if bend_count != 1 else ''}" if bend_count else ""
         note_parts = [
             f'<text x="{title_x:.1f}" y="{title_y:.1f}" style="{title_bold_style}">ABWICKLUNG</text>',
             f'<text x="{title_x:.1f}" y="{title_y + 5.0:.1f}" style="{subtitle_style}">{escape(k_subtitle)}</text>',
         ]
-        for i, bn in enumerate(bend_notes[:4]):
-            note_parts.append(
-                f'<text x="{title_x:.1f}" y="{title_y + 9.5 + i * 3.5:.1f}" '
-                f'style="{note_item_style}">{escape(bn)}</text>'
-            )
-        return "\n".join(parts) + "\n" + "\n".join(note_parts)
+        abwicklung_meta = {
+            "source": "mathematical_fallback",
+            "outline_bounds": [round(rect_x, 2), round(rect_y, 2),
+                               round(rect_x + rect_w, 2), round(rect_y + rect_h, 2)],
+            "dim_h_label_mm": round(fl, 2),
+            "dim_v_label_mm": round(fw, 2),
+            "model_fl_mm": round(fl, 2),
+            "model_fw_mm": round(fw, 2),
+            "bend_count": bend_count,
+            "bend_annotations": bend_count,
+            "flange_dims": [],
+        }
+        return "\n".join(parts) + "\n" + "\n".join(note_parts), abwicklung_meta
 
     else:
         # Fallback: show projected top/front view with unavailability note
@@ -3161,7 +3738,7 @@ def build_flat_pattern_overlay(
                     f'<text x="{title_x:.1f}" y="{title_y + 9.5 + i * 3.5:.1f}" '
                     f'style="{note_item_style}">{escape(line)}</text>'
                 )
-        return f"{group}\n" + "\n".join(fb_note_parts)
+        return f"{group}\n" + "\n".join(fb_note_parts), {"source": "fallback_projection"}
 
 
 def _collect_svg_text_entries(svg_text):
@@ -3183,7 +3760,7 @@ def _collect_svg_text_entries(svg_text):
     return entries
 
 
-def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z):
+def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_tracking=None):
     issues = []
     text_entries = _collect_svg_text_entries(page_svg)
     dim_texts = []
@@ -3209,10 +3786,18 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z):
         "A3",
         "A2",
         "mm",
+        "NACH ",       # Bend annotations ("NACH OBEN 90° R 4,2") — duplicates are intentional
+        "Biegung",     # Bend count annotations
+        "K=",          # K-factor subtitle
+        "K-Faktor",    # K-factor process note
+        "ABWICKLUNG",  # Flat pattern title
     )
     for entry in text_entries:
         text = entry["text"]
         if any(marker in text for marker in skip_markers):
+            continue
+        # Skip single-character zone labels (1-9, a-e) at sheet borders
+        if len(text.strip()) <= 1:
             continue
         if re.search(r"\d", text):
             dim_texts.append(entry)
@@ -3233,11 +3818,28 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z):
             issues.append("Keine Mittellinien bei vorhandenen Bohrungen erkannt.")
 
     # Duplicate dimension texts (exact duplicates) indicate redundant dimensioning.
+    # Only flag as duplicate if the same text appears at NEARBY positions (same view).
+    # The same dimension legitimately appears in different views (e.g., height in Front + Top).
     duplicate_values = {}
     for item in dim_texts:
         key = item["text"]
         duplicate_values[key] = duplicate_values.get(key, 0) + 1
-    redundant = [text for text, count in duplicate_values.items() if count > 1 and text not in overall_tokens]
+    redundant = []
+    for text, count in duplicate_values.items():
+        if count <= 1 or text in overall_tokens:
+            continue
+        # Check if duplicates are spatially close (within same view, ~30mm)
+        positions = [(it["x"], it["y"]) for it in dim_texts if it["text"] == text]
+        has_nearby_pair = False
+        for i, (x1, y1) in enumerate(positions):
+            for x2, y2 in positions[i + 1:]:
+                if abs(x1 - x2) < 30 and abs(y1 - y2) < 30:
+                    has_nearby_pair = True
+                    break
+            if has_nearby_pair:
+                break
+        if has_nearby_pair:
+            redundant.append(text)
     if redundant:
         issues.append(f"Doppelte Masse erkannt: {', '.join(sorted(redundant)[:4])}")
 
@@ -3255,7 +3857,17 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z):
         issues.append("Moegliche Ueberlagerung von Masszahlen erkannt.")
 
     status = "OK" if not issues else "WARNUNG"
-    return {"status": status, "issues": issues}
+    dt = dim_tracking or {}
+    return {
+        "status": status,
+        "issues": issues,
+        "dim_metrics": {
+            "dim_text_count": int(dt.get("dim_text_count", 0)),
+            "step_dim_count": int(dt.get("step_dim_count", 0)),
+            "feature_dim_present": bool(dt.get("feature_dim_present", False)),
+            "labels_in_bounds": bool(dt.get("labels_in_bounds", True)),
+        },
+    }
 
 
 def format_scale(scale_value):
@@ -3353,7 +3965,15 @@ def main():
     title_block_h = spec["title_block_h"]
     avail_w = sheet_w - 2 * margin
     avail_h = sheet_h - title_block_h - 2 * margin
-    cell_w = avail_w / 2
+
+    # Sheet metal: 3-column layout (views + Abwicklung column on the right)
+    # Milling: standard 2×2 grid
+    if layout_profile == "sheet_metal":
+        views_w = avail_w * 0.60          # 60% for 4 orthographic views
+        cell_w = views_w / 2
+        abwicklung_col_w = avail_w - views_w  # 28% for Abwicklung
+    else:
+        cell_w = avail_w / 2
     cell_h = avail_h / 2
 
     center_left_x = margin + cell_w * 0.5
@@ -3410,8 +4030,8 @@ def main():
         ("Iso", iso_dir, center_right_x, center_bottom_y),
     ]
 
-    ortho_padding = 0.74 if layout_profile == "milling" else 0.70
-    iso_padding = 0.82 if layout_profile == "milling" else 0.78
+    ortho_padding = 0.85 if layout_profile == "milling" else 0.82
+    iso_padding = 0.90 if layout_profile == "milling" else 0.88
     view_data = []
     for name, direction, cx, cy in views:
         svg_group = TechDraw.projectToSVG(shape, direction)
@@ -3463,7 +4083,7 @@ def main():
         bounds_for_layout = rotate_bounds_90(svg_bounds) if rotation_deg % 180 != 0 else svg_bounds
         if name != "Iso":
             bounds_for_scale, scale_fit = compute_dimension_padded_bounds(
-                bounds_for_layout, cell_w, cell_h, padding=ortho_padding, iterations=3
+                bounds_for_layout, cell_w, cell_h, padding=ortho_padding, iterations=2
             )
         else:
             bounds_for_scale = bounds_for_layout
@@ -3501,7 +4121,8 @@ def main():
     if iso_item is not None:
         iso_bounds = iso_item["layout_bounds"]
         iso_scale = compute_scale_for_area(iso_bounds, cell_w, cell_h, padding=iso_padding)
-        iso_scale = min(iso_scale, ortho_scale * 0.75)
+        iso_max_ratio = 0.65 if layout_profile == "sheet_metal" else 0.75
+        iso_scale = min(iso_scale, ortho_scale * iso_max_ratio)
         iso_cx, iso_cy = center_right_x, center_bottom_y
         iso_item["cx"] = iso_cx
         iso_item["cy"] = iso_cy
@@ -3570,14 +4191,11 @@ def main():
         }
     
     def compute_all_views_bbox():
-        """Compute the bounding box enclosing all rendered views.
-        For sheet_metal layout the ISO view is not rendered, so exclude it."""
+        """Compute the bounding box enclosing all rendered views."""
         all_left, all_top = float('inf'), float('inf')
         all_right, all_bottom = float('-inf'), float('-inf')
 
         for item in view_data:
-            if layout_profile == "sheet_metal" and item["name"] == "Iso":
-                continue  # Iso is skipped in the rendering loop for sheet_metal
             scale = item.get("scale", ortho_scale)
             vb = compute_view_bounds(item, scale)
             all_left = min(all_left, vb["left"])
@@ -3781,6 +4399,12 @@ def main():
         return report
     
     view_groups = []
+    dim_tracking = {
+        "dim_text_count": 0,
+        "step_dim_count": 0,
+        "feature_dim_present": False,
+        "labels_in_bounds": True,
+    }
     feature_view_name = None
     feature_view_circle_count = 0
     if isinstance(feature_payload, dict) and feature_payload.get("ok") is True:
@@ -3797,10 +4421,7 @@ def main():
     for item in view_data:
         name = item["name"]
 
-        # For sheet_metal parts, skip the ISO view — the Abwicklung (flat pattern)
-        # occupies that quadrant. Showing both would cause visual overlap.
-        if layout_profile == "sheet_metal" and name == "Iso":
-            continue
+        # ISO view is always rendered (sheet_metal included — at reduced scale).
 
         svg_bounds = item["svg_bounds"]
         proj_bounds = item["proj_bounds"]
@@ -3862,6 +4483,7 @@ def main():
                 show_horizontal=show_horizontal,
                 show_vertical=show_vertical,
             )
+            dim_tracking["dim_text_count"] += (1 if show_horizontal else 0) + (1 if show_vertical else 0)
             centerline_svg, centerline_count = build_centerline_svg(
                 item["svg"],
                 scale,
@@ -3882,6 +4504,24 @@ def main():
                 )
                 if feature_dimension_svg:
                     dimension_svg = f"{dimension_svg}{feature_dimension_svg}"
+                    dim_tracking["feature_dim_present"] = True
+            # Step dimensions disabled: produces irrelevant edge-position values
+            # that don't correspond to intentional design dimensions.
+            # TODO: Replace with intelligent feature-based dimensioning.
+            # if name == "Front" and show_horizontal and show_vertical:
+            #     step_dim_svg = build_step_dimensions(
+            #         item["svg"],
+            #         svg_bounds,
+            #         scale,
+            #         stroke_width,
+            #         line_profile=line_profile,
+            #         label_width=label_w,
+            #         label_height=label_h,
+            #         max_steps=5,
+            #     )
+            #     if step_dim_svg:
+            #         dimension_svg = f"{dimension_svg}{step_dim_svg}"
+            #         dim_tracking["step_dim_count"] += step_dim_svg.count("<text")
         item["centerline_count"] = int(centerline_count)
         item["line_profile"] = dict(line_profile or {})
         stroke_width = float(line_profile.get("visible", compute_stroke_width(scale)))
@@ -3901,26 +4541,10 @@ def main():
                 show_coordinate_system=False,  # Disabled - enable for debugging
             )
         )
-        # View label below each view (ISO 128 style)
-        _view_label_map = {
-            "Front": "VORDERANSICHT",
-            "Left": "SEITENANSICHT",
-            "Top": "DRAUFSICHT",
-            "Iso": "ISO",
-        }
-        _label_text = _view_label_map.get(name, name.upper())
-        _label_style = (
-            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-            "font-size: 2.5px; font-style: normal; font-weight: normal; fill: #444;"
-        )
-        # Bottom of view in paper coords: cy + half view height (proj_h * scale / 2) + gap
-        _view_bottom = item["cy"] + max(proj_w, proj_h) * scale / 2.0 + 3.5
-        view_groups.append(
-            f'<text x="{item["cx"]:.2f}" y="{_view_bottom:.2f}" '
-            f'style="{_label_style}" text-anchor="middle">{escape(_label_text)}</text>'
-        )
+        # DIN-konform: Standardansichten werden NICHT beschriftet.
+        # Nur Sonderansichten (Schnitte, Details, Abwicklung) erhalten Labels.
 
-    flat_pattern_overlay = build_flat_pattern_overlay(
+    flat_pattern_overlay, abwicklung_meta = build_flat_pattern_overlay(
         view_data,
         sheet_name=sheet_resolved,
         sheet_w=sheet_w,
@@ -3935,6 +4559,8 @@ def main():
         view_groups.append(flat_pattern_overlay)
 
     report = build_report()
+    if abwicklung_meta:
+        report["abwicklung"] = abwicklung_meta
     if (
         should_promote_to_a2(report, dim_x, dim_y, dim_z, requested_sheet=requested_sheet)
         and sheet_resolved != "A2"
@@ -3994,7 +4620,7 @@ def main():
     views_svg = "\n".join(view_groups)
     annotation_y = origin_y + avail_h - 4
     page_svg = build_page_svg(template_path, meta, views_svg, annotation_lines, annotation_y)
-    pre_export_check = evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z)
+    pre_export_check = evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_tracking=dim_tracking)
     report["pre_export_check"] = pre_export_check
     if pre_export_check.get("status") != "OK":
         log(f"Pre-export quality: {pre_export_check.get('status')} -> {pre_export_check.get('issues')}")

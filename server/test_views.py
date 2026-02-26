@@ -26,6 +26,41 @@ if sys.platform == "win32":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 FREECAD_DEFAULT_PYTHON = r"C:\Program Files\FreeCAD 1.0\bin\python.exe"
+
+
+def render_preview_png(svg_path: Path, png_path: Path, width_px: int = 1600) -> bool:
+    """Render a debug SVG to PNG so the agent can inspect it with the Read tool.
+
+    Uses a small inline script run via FreeCAD's python.exe (which has svglib).
+    """
+    freecad_python = resolve_freecad_python()
+    script = (
+        "import sys\n"
+        "from svglib.svglib import svg2rlg\n"
+        "from reportlab.graphics import renderPM\n"
+        "from reportlab.graphics.shapes import Group\n"
+        f"svg = {str(svg_path)!r}\n"
+        f"png = {str(png_path)!r}\n"
+        f"w = {width_px}\n"
+        "d = svg2rlg(svg)\n"
+        "if not d or d.width < 1: sys.exit(1)\n"
+        "scale = w / d.width\n"
+        "root = Group(*d.contents, transform=(scale,0,0,scale,0,0))\n"
+        "d.contents = [root]\n"
+        "d.width = int(d.width * scale)\n"
+        "d.height = int(d.height * scale)\n"
+        "renderPM.drawToFile(d, png, fmt='PNG')\n"
+    )
+    try:
+        result = subprocess.run(
+            [freecad_python, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.returncode == 0 and png_path.exists()
+    except Exception:
+        return False
 DEBUG_DIR = Path(__file__).parent / "_debug"
 SCRIPT_PATH = Path(__file__).parent / "freecad" / "step_to_pdf.py"
 BASELINE_GOLDEN_PATH = Path(__file__).parent / "_golden" / "views_baseline.json"
@@ -76,12 +111,17 @@ EXPECTED = {
         "alignment_ok": True,
         "front_aspect_near_1": True,  # Circle should be ~square
         "min_hole_count": 6,
+        "min_dim_text_count": 2,
+        "feature_dims_required": True,
     },
     "sheet_metal": {
         "longest_axis": "X",  # 200mm
         "is_flat": True,  # 3mm thick
         "alignment_ok": True,
         "front_width_gt_height": True,  # 200x100 rectangle
+        "min_dim_text_count": 2,
+        "has_abwicklung": True,
+        "abwicklung_min_bend_count": 0,
     },
     "l_shape": {
         "longest_axis": "X",  # 100mm (tied with Y)
@@ -140,6 +180,8 @@ EXPECTED = {
         "min_hole_pitch_mm": 100.0,
         "min_bend_radius_mm": 4.0,
         "min_centerline_count": 2,
+        "has_abwicklung": True,
+        "abwicklung_min_bend_count": 0,  # flat plate with holes, no actual bends
     },
     "complex_bracket": {
         "longest_axis": "X",
@@ -151,6 +193,8 @@ EXPECTED = {
         "min_hole_pitch_mm": 120.0,
         "min_centerline_count": 3,
         "stability_check": True,
+        "min_dim_text_count": 3,
+        "feature_dims_required": True,
     },
     "flanged_manifold": {
         "longest_axis": "X",
@@ -196,6 +240,8 @@ EXPECTED = {
         "min_hole_pitch_mm": 150.0,
         "min_centerline_count": 6,
         "stability_check": True,
+        "min_dim_text_count": 3,
+        "feature_dims_required": True,
     },
 }
 
@@ -263,7 +309,17 @@ def run_conversion(step_file: Path, sample_name: str | None = None) -> dict:
     if not json_path.exists():
         return {"error": f"No report generated. stderr: {result.stderr}"}
 
-    return json.loads(json_path.read_text(encoding="utf-8"))
+    report = json.loads(json_path.read_text(encoding="utf-8"))
+
+    # Render debug SVG → PNG for agent visual inspection
+    svg_path = DEBUG_DIR / f"{base_name}_debug.svg"
+    png_path = DEBUG_DIR / f"{base_name}_preview.png"
+    if svg_path.exists():
+        ok = render_preview_png(svg_path, png_path)
+        if ok:
+            print(f"  [preview] {png_path}", flush=True)
+
+    return report
 
 
 def check_alignment(report: dict) -> tuple[bool, list[str]]:
@@ -462,6 +518,202 @@ def check_norm_conformity(sample_name: str, report: dict, expected: dict) -> tup
     else:
         if quality.get("centerline_total") is None:
             issues.append("Missing quality.centerline_total metric.")
+
+    return len(issues) == 0, issues
+
+
+def check_dim_quality(report: dict, expected: dict) -> tuple[bool, list[str]]:
+    """Check dimension quality metrics tracked during rendering."""
+    issues = []
+    dm = (report.get("pre_export_check") or {}).get("dim_metrics") or {}
+    if not dm:
+        return True, []  # Old report without dim_metrics — skip silently
+
+    min_dims = int(expected.get("min_dim_text_count", 0) or 0)
+    if min_dims > 0:
+        actual = int(dm.get("dim_text_count", 0))
+        if actual < min_dims:
+            issues.append(f"dim_text_count: expected >={min_dims}, got {actual}")
+
+    if expected.get("feature_dims_required") and not dm.get("feature_dim_present"):
+        issues.append("feature_dim_present: expected True, got False")
+
+    if not dm.get("labels_in_bounds", True):
+        issues.append("labels_in_bounds: some dimension labels outside drawing area")
+
+    return len(issues) == 0, issues
+
+
+# ---------------------------------------------------------------------------
+# Abwicklung (flat pattern) quality checks
+# ---------------------------------------------------------------------------
+ABWICKLUNG_ALIGNMENT_TOL_MM = 0.5  # Extension lines must start within this of outline edges
+
+
+def check_abwicklung(report: dict, expected: dict) -> tuple[bool, list[str]]:
+    """Validate flat pattern (Abwicklung) dimension placement and completeness."""
+    issues = []
+    abw = report.get("abwicklung")
+
+    # If part is expected to have Abwicklung but doesn't
+    if expected.get("has_abwicklung") and not abw:
+        issues.append("Abwicklung expected but not present in report.")
+        return False, issues
+
+    # If no Abwicklung data, skip checks (non-sheet-metal part)
+    if not abw:
+        return True, []
+
+    source = abw.get("source", "")
+    if source == "fallback_projection":
+        # Fallback projection has no dimensioning metadata to validate
+        return True, []
+
+    # 1. Outline bounds must have positive dimensions
+    bounds = abw.get("outline_bounds", [])
+    if len(bounds) == 4:
+        x1, y1, x2, y2 = bounds
+        ow = x2 - x1
+        oh = y2 - y1
+        if ow <= 0 or oh <= 0:
+            issues.append(f"Abwicklung outline has non-positive dimensions: {ow:.2f} x {oh:.2f}")
+    else:
+        issues.append("Abwicklung outline_bounds missing or malformed.")
+
+    # 2. Dimension-to-outline alignment (extension lines start at outline edges)
+    dim_h_eps = abw.get("dim_h_endpoints", [])
+    if len(dim_h_eps) == 2 and len(bounds) == 4:
+        if abs(dim_h_eps[0] - bounds[0]) > ABWICKLUNG_ALIGNMENT_TOL_MM:
+            issues.append(
+                f"H-dim left endpoint misaligned: dim={dim_h_eps[0]:.2f} vs outline={bounds[0]:.2f} "
+                f"(delta={abs(dim_h_eps[0] - bounds[0]):.2f}mm)"
+            )
+        if abs(dim_h_eps[1] - bounds[2]) > ABWICKLUNG_ALIGNMENT_TOL_MM:
+            issues.append(
+                f"H-dim right endpoint misaligned: dim={dim_h_eps[1]:.2f} vs outline={bounds[2]:.2f} "
+                f"(delta={abs(dim_h_eps[1] - bounds[2]):.2f}mm)"
+            )
+
+    dim_v_eps = abw.get("dim_v_endpoints", [])
+    if len(dim_v_eps) == 2 and len(bounds) == 4:
+        if abs(dim_v_eps[0] - bounds[1]) > ABWICKLUNG_ALIGNMENT_TOL_MM:
+            issues.append(
+                f"V-dim top endpoint misaligned: dim={dim_v_eps[0]:.2f} vs outline={bounds[1]:.2f} "
+                f"(delta={abs(dim_v_eps[0] - bounds[1]):.2f}mm)"
+            )
+        if abs(dim_v_eps[1] - bounds[3]) > ABWICKLUNG_ALIGNMENT_TOL_MM:
+            issues.append(
+                f"V-dim bottom endpoint misaligned: dim={dim_v_eps[1]:.2f} vs outline={bounds[3]:.2f} "
+                f"(delta={abs(dim_v_eps[1] - bounds[3]):.2f}mm)"
+            )
+
+    # 3. Dimension values must be positive and plausible
+    dim_h = abw.get("dim_h_label_mm", 0)
+    dim_v = abw.get("dim_v_label_mm", 0)
+    if dim_h <= 0:
+        issues.append(f"Abwicklung horizontal dimension <= 0: {dim_h}")
+    if dim_v <= 0:
+        issues.append(f"Abwicklung vertical dimension <= 0: {dim_v}")
+
+    # 4. Dimension values should approximate fl + fw (model dimensions)
+    fl = abw.get("model_fl_mm", 0)
+    fw = abw.get("model_fw_mm", 0)
+    if fl > 0 and fw > 0 and dim_h > 0 and dim_v > 0:
+        # dim_h and dim_v should together match fl and fw (possibly swapped)
+        actual_set = sorted([dim_h, dim_v])
+        expected_set = sorted([fl, fw])
+        for actual_val, expected_val in zip(actual_set, expected_set):
+            if abs(actual_val - expected_val) > max(expected_val * 0.05, 1.0):
+                issues.append(
+                    f"Abwicklung dimension mismatch: displayed {actual_val:.1f} vs model {expected_val:.1f}"
+                )
+
+    # 5. Flange dimensions should sum to total dimension (within tolerance)
+    flange_dims = abw.get("flange_dims", [])
+    if flange_dims:
+        x_flanges = [f for f in flange_dims if f.get("axis") == "x"]
+        y_flanges = [f for f in flange_dims if f.get("axis") == "y"]
+        if x_flanges and dim_h > 0:
+            flange_sum = sum(f.get("label_mm", 0) for f in x_flanges)
+            if abs(flange_sum - dim_h) > max(dim_h * 0.05, 1.0):
+                issues.append(
+                    f"X-flange sum ({flange_sum:.1f}) != horizontal dim ({dim_h:.1f})"
+                )
+        if y_flanges and dim_v > 0:
+            flange_sum = sum(f.get("label_mm", 0) for f in y_flanges)
+            if abs(flange_sum - dim_v) > max(dim_v * 0.05, 1.0):
+                issues.append(
+                    f"Y-flange sum ({flange_sum:.1f}) != vertical dim ({dim_v:.1f})"
+                )
+
+    # 6. Bend annotations count should match bend count
+    bend_count = abw.get("bend_count", 0)
+    bend_annotations = abw.get("bend_annotations", 0)
+    if bend_count > 0 and bend_annotations != bend_count:
+        issues.append(
+            f"Bend annotation mismatch: {bend_annotations} annotations for {bend_count} bends"
+        )
+
+    # 7. Outline should be within drawing area
+    drawing_area = abw.get("drawing_area", [])
+    if len(drawing_area) == 4 and len(bounds) == 4:
+        da_x1, da_y1, da_x2, da_y2 = drawing_area
+        if bounds[0] < da_x1 - 1.0 or bounds[2] > da_x2 + 1.0:
+            issues.append("Abwicklung outline extends beyond drawing area (horizontal)")
+        if bounds[1] < da_y1 - 1.0 or bounds[3] > da_y2 + 1.0:
+            issues.append("Abwicklung outline extends beyond drawing area (vertical)")
+
+    # 8. Min bend count expectation
+    min_bends = expected.get("abwicklung_min_bend_count")
+    if min_bends is not None and bend_count < int(min_bends):
+        issues.append(
+            f"Bend count too low: expected >= {min_bends}, got {bend_count}"
+        )
+
+    return len(issues) == 0, issues
+
+
+# ---------------------------------------------------------------------------
+# Title block quality checks
+# ---------------------------------------------------------------------------
+
+def check_title_block(sample_name: str, report: dict) -> tuple[bool, list[str]]:
+    """Validate title block completeness and format via debug SVG."""
+    issues = []
+    svg_path = DEBUG_DIR / f"{sample_name}_debug.svg"
+    if not svg_path.exists():
+        issues.append(f"Missing debug SVG for title block checks: {svg_path}")
+        return False, issues
+
+    svg_text = svg_path.read_text(encoding="utf-8", errors="replace")
+
+    # Required title block field labels (ISO 7200)
+    required_fields = {
+        "BENENNUNG": "Title (Benennung)",
+        "FIRMA": "Company (Firma)",
+        "ZEICHN": "Drawing number (Zeichnungsnummer)",
+        "DATUM": "Date (Datum)",
+        "MASSSTAB": "Scale (Massstab)",
+        "EINHEIT": "Unit (Einheit)",
+        "BLATT": "Sheet size (Blatt)",
+    }
+    for marker, label in required_fields.items():
+        if marker not in svg_text:
+            issues.append(f"Title block missing field: {label}")
+
+    # Scale format check: should be "1:N" not a decimal
+    scale_matches = re.findall(r'>(\d+\s*:\s*\d+)<', svg_text)
+    if not scale_matches:
+        issues.append("No scale value in 'N:M' format found in title block")
+
+    # Date format check: DD.MM.YYYY
+    date_matches = re.findall(r'>(\d{2}\.\d{2}\.\d{4})<', svg_text)
+    if not date_matches:
+        issues.append("No date in DD.MM.YYYY format found in title block")
+
+    # DIN norm reference
+    if "DIN" not in svg_text:
+        issues.append("No DIN norm reference found in drawing")
 
     return len(issues) == 0, issues
 
@@ -790,6 +1042,12 @@ def parse_args(argv=None):
         default=0,
         help="Optional delay between stability runs in milliseconds.",
     )
+    parser.add_argument(
+        "--single",
+        metavar="PART",
+        default=None,
+        help="Run only one part by name (e.g. --single complex_bracket).",
+    )
     return parser.parse_args(argv)
 
 
@@ -823,6 +1081,13 @@ def main(argv=None):
     golden_parts = (golden_payload or {}).get("parts", {})
 
     samples = resolve_sample_set(args.sample_set)
+    if args.single:
+        needle = args.single.lower().replace("-", "_").replace(" ", "_")
+        samples = [s for s in samples if s.name.lower().replace("-", "_") == needle]
+        if not samples:
+            print(f"Part '{args.single}' not found in sample set '{args.sample_set}'.")
+            print(f"Available: {[s.name for s in resolve_sample_set(args.sample_set)]}")
+            return 1
     results = []
     all_passed = True
     baseline_snapshots = {}
@@ -860,7 +1125,11 @@ def main(argv=None):
         feature_ok, feature_issues = check_feature_expectations(report, expected)
         quality_ok, quality_issues = check_layout_quality(report)
         norm_ok, norm_issues = check_norm_conformity(name, report, expected)
-        all_issues = align_issues + orient_issues + feature_issues + quality_issues + norm_issues
+        dim_ok, dim_issues = check_dim_quality(report, expected)
+        abw_ok, abw_issues = check_abwicklung(report, expected)
+        title_ok, title_issues = check_title_block(name, report)
+        all_issues = (align_issues + orient_issues + feature_issues + quality_issues
+                      + norm_issues + dim_issues + abw_issues + title_issues)
 
         snapshot = build_baseline_snapshot(report)
         baseline_snapshots[name] = snapshot
@@ -901,6 +1170,7 @@ def main(argv=None):
                 "feature_ok": feature_ok,
                 "quality_ok": quality_ok,
                 "norm_ok": norm_ok,
+                "dim_ok": dim_ok,
             }
         )
 
