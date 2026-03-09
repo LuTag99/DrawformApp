@@ -115,9 +115,10 @@ def edges_to_svg_lines(edges):
     return lines
 
 
-def run_unfold(step_path, k_factor=0.40, k_standard="din"):
+def run_unfold(step_path, k_factor=0.40, k_standard="din", dxf_output_path=None):
     """
     Import a STEP file, unfold it using SheetMetal addon, return result dict.
+    Optionally export the unfolded shape as DXF if dxf_output_path is given.
     """
     result = {
         "ok": False,
@@ -232,6 +233,27 @@ def run_unfold(step_path, k_factor=0.40, k_standard="din"):
         _log(f"Result: {result['flat_length_mm']}x{result['flat_width_mm']}mm, "
              f"{result['bend_count']} bends")
 
+        # Optional DXF export of the unfolded shape
+        if dxf_output_path:
+            try:
+                import importDXF
+                doc = App.ActiveDocument or App.newDocument("DXFExport")
+                outline_obj = doc.addObject("Part::Feature", "Outline")
+                outline_obj.Shape = unfolded_shape
+                objs = [outline_obj]
+                if bend_lines_compound and hasattr(bend_lines_compound, "Edges") and result["bend_count"] > 0:
+                    bl_obj = doc.addObject("Part::Feature", "BendLines")
+                    bl_obj.Shape = bend_lines_compound
+                    objs.append(bl_obj)
+                doc.recompute()
+                importDXF.export(objs, str(dxf_output_path))
+                result["dxf_exported"] = True
+                _log(f"DXF exported: {dxf_output_path}")
+            except Exception as dxf_err:
+                result["dxf_exported"] = False
+                result["dxf_error"] = str(dxf_err)
+                _log(f"DXF export failed: {dxf_err}")
+
     except ImportError:
         result["error"] = "SheetMetal addon or networkx not available"
         _log(result["error"])
@@ -266,18 +288,20 @@ def run_unfold(step_path, k_factor=0.40, k_standard="din"):
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <input.step> <output.json>", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} <input.step> <output.json> [output.dxf]", file=sys.stderr)
         sys.exit(1)
 
     step_path = os.path.abspath(sys.argv[1])
     out_path = os.path.abspath(sys.argv[2])
+    dxf_path = os.path.abspath(sys.argv[3]) if len(sys.argv) > 3 else None
 
     # Optional K-factor from env
     k_factor = float(os.environ.get("DRAWFORM_K_FACTOR", "0.40"))
     k_standard = os.environ.get("DRAWFORM_K_STANDARD", "din")
 
     try:
-        result = run_unfold(step_path, k_factor=k_factor, k_standard=k_standard)
+        result = run_unfold(step_path, k_factor=k_factor, k_standard=k_standard,
+                            dxf_output_path=dxf_path)
     except Exception:
         result = {
             "ok": False,

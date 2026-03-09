@@ -73,3 +73,44 @@ export async function requestPdfExport(file: File): Promise<ExportResult> {
     };
   }
 }
+
+export async function requestDxfExport(file: File): Promise<ExportResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const response = await fetch('/api/export-dxf', {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      return {
+        success: false,
+        message: await readErrorMessage(response),
+      };
+    }
+
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('application/dxf') && !contentType.includes('application/octet-stream')) {
+      return {
+        success: false,
+        message: await readErrorMessage(response),
+      };
+    }
+
+    const blob = await response.blob();
+    const fallbackName = `${file.name.replace(/\.[^.]+$/, '')}_flat.dxf`;
+    const fileName = getFileNameFromDisposition(response.headers.get('content-disposition'), fallbackName);
+    const blobUrl = URL.createObjectURL(blob);
+    return {
+      success: true,
+      message: 'DXF erstellt.',
+      fileName,
+      blobUrl,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: (error as Error)?.message ?? 'DXF-Export konnte nicht gestartet werden.',
+    };
+  }
+}

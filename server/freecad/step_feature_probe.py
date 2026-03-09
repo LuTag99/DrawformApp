@@ -112,10 +112,61 @@ def collect_cylindrical_radii(shape: Part.Shape) -> list[float]:
 
 def measure_wall_thickness(shape: Part.Shape) -> float | None:
     """
-    Find the actual sheet metal wall thickness by identifying pairs of anti-parallel
-    Plane faces and measuring their perpendicular distance.
-    Returns the minimum such distance in mm, or None if no valid pair found.
+    Find the actual sheet metal wall thickness using two strategies:
+
+    1. **Cylinder pairs** (primary for bent parts): Find pairs of cylindrical faces
+       sharing the same axis direction and center line but different radii. The radius
+       difference (outer - inner) equals the wall thickness. This works reliably on
+       sheet metal bends where antiparallel plane pairs measure flange-to-flange
+       distance instead of wall thickness.
+
+    2. **Antiparallel planes** (fallback): Find the minimum perpendicular distance
+       between antiparallel planar face pairs.
+
+    Returns the minimum plausible thickness in mm, or None if no valid pair found.
     """
+    # --- Strategy 1: Cylinder radius difference (best for bent sheet metal) ---
+    cylinders: list[tuple[App.Vector, App.Vector, float]] = []  # (axis_dir, center_pt, radius)
+    for face in shape.Faces:
+        surface = getattr(face, "Surface", None)
+        if surface is None or surface.__class__.__name__ != "Cylinder":
+            continue
+        axis = getattr(surface, "Axis", None)
+        center = getattr(surface, "Center", None)
+        radius = getattr(surface, "Radius", None)
+        if axis is None or center is None or radius is None or radius <= 0:
+            continue
+        a_len = axis.Length
+        if a_len < 1e-9:
+            continue
+        unit_axis = App.Vector(axis.x / a_len, axis.y / a_len, axis.z / a_len)
+        cylinders.append((unit_axis, center, float(radius)))
+
+    cyl_thickness = None
+    axis_tol = math.cos(math.radians(5.0))
+    for i in range(len(cylinders)):
+        a1, c1, r1 = cylinders[i]
+        for j in range(i + 1, len(cylinders)):
+            a2, c2, r2 = cylinders[j]
+            # Must share the same axis direction (parallel or anti-parallel)
+            dot = abs(a1.dot(a2))
+            if dot < axis_tol:
+                continue
+            # Must share approximately the same center line
+            delta = c2.sub(c1)
+            perp_dist = delta.sub(a1.multiply(delta.dot(a1))).Length
+            if perp_dist > max(r1, r2) * 0.3:
+                continue  # centers too far apart — different bend
+            rdiff = abs(r1 - r2)
+            if rdiff < 0.1 or rdiff > 10.0:
+                continue  # too small (same surface) or too large (not wall thickness)
+            if cyl_thickness is None or rdiff < cyl_thickness:
+                cyl_thickness = rdiff
+
+    if cyl_thickness is not None and cyl_thickness <= 10.0:
+        return round(cyl_thickness, 2)
+
+    # --- Strategy 2: Antiparallel plane face pairs (fallback) ---
     plane_faces: list[tuple[App.Vector, App.Vector]] = []
     for face in shape.Faces:
         surface = getattr(face, "Surface", None)
@@ -151,7 +202,12 @@ def measure_wall_thickness(shape: Part.Shape) -> float | None:
                 continue  # co-planar faces (< 0.05mm apart), skip
             if min_distance is None or dist < min_distance:
                 min_distance = dist
-    return min_distance
+
+    # Only accept plane-based thickness if plausible for sheet metal (≤10mm)
+    if min_distance is not None and min_distance <= 10.0:
+        return round(min_distance, 2)
+
+    return round(min_distance, 2) if min_distance is not None else None
 
 
 def classify_face_types(shape: Part.Shape) -> dict:
@@ -397,6 +453,21 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
         if smallest < largest * 0.78:
             thread_core_diameter_mm = smallest
     thread_label = infer_metric_thread_label(thread_core_diameter_mm)
+
+    # Suppress thread detection on thin sheet metal parts: a thread needs
+    # minimum engagement depth ≈ nominal_diameter * 0.5. If measured wall
+    # thickness is known and too thin, the "thread" is actually a through-hole.
+    measured_thickness_for_thread = measure_wall_thickness(shape)
+    if thread_label and measured_thickness_for_thread is not None:
+        # Extract nominal diameter from thread label (e.g. "M8" -> 8.0)
+        try:
+            nom_dia = float(thread_label[1:])
+            min_engagement = nom_dia * 0.5
+            if measured_thickness_for_thread < min_engagement:
+                thread_label = None
+                thread_core_diameter_mm = None
+        except (ValueError, IndexError):
+            pass
 
     hole_pitch_mm = None
     if hole_count >= 2:

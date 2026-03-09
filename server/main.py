@@ -14,6 +14,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
@@ -21,6 +22,7 @@ from fastapi.responses import Response
 
 ROOT = Path(__file__).resolve().parent
 FREECAD_SCRIPT = ROOT / "freecad" / "step_to_pdf.py"
+FREECAD_UNFOLD_SCRIPT = ROOT / "freecad" / "step_unfold.py"
 FREECAD_FEATURE_SCRIPT = ROOT / "freecad" / "step_feature_probe.py"
 FREECAD_TIMEOUT_SECONDS = int(os.getenv("DRAWFORM_FREECAD_TIMEOUT_SECONDS", "180"))
 ANALYZER_WORKER_DELAY_SECONDS = float(os.getenv("DRAWFORM_ANALYZER_DELAY_SECONDS", "1.1"))
@@ -48,6 +50,19 @@ EXPORT_ALLOWED_SCALES = {
     "1:100",
 }
 DRAWING_NO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,31}$")
+
+
+def _safe_content_disposition(filename: str) -> dict[str, str]:
+    """Build Content-Disposition header with RFC 5987 encoding for safe filenames."""
+    ascii_safe = filename.encode("ascii", errors="replace").decode("ascii")
+    ascii_safe = ascii_safe.replace('"', "_").replace("\n", "_").replace("\r", "_")
+    encoded = quote(filename, safe="")
+    return {
+        "Content-Disposition": (
+            f'attachment; filename="{ascii_safe}"; '
+            f"filename*=UTF-8''{encoded}"
+        )
+    }
 REVISION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,7}$")
 TOLERANCE_2768_RE = re.compile(r"^din\s+iso\s+2768-([fmcv])([hkl])?$", re.IGNORECASE)
 
@@ -821,6 +836,30 @@ async def export_step_to_pdf(
         meta_path = temp_root / "meta.json"
 
         input_path.write_bytes(data)
+
+        # DSE: Run feature probe + build dimension plan before FreeCAD subprocess
+        from rules.dimension_strategy import (
+            build_dimension_plan,
+            select_layout_profile_standalone,
+        )
+
+        try:
+            probe_result = run_feature_probe(file.filename, data)
+            if probe_result and probe_result.get("ok") is True:
+                dse_layout = select_layout_profile_standalone(
+                    file.filename, probe_result
+                )
+                dse_plan = build_dimension_plan(
+                    feature_payload=probe_result,
+                    layout_profile=dse_layout,
+                    detail_level=int(export_meta.get("detail_level", 1)),
+                )
+                export_meta["features"] = probe_result
+                export_meta["dimension_plan"] = dse_plan.model_dump()
+        except (ValueError, KeyError, TypeError) as exc:
+            import logging
+            logging.getLogger("drawform.dse").warning("DSE failed (non-fatal): %s", exc)
+
         meta_path.write_text(
             json.dumps(
                 export_meta,
@@ -883,8 +922,72 @@ async def export_step_to_pdf(
         pdf_bytes = output_path.read_bytes()
 
     download_name = f"{Path(file.filename).stem}.pdf"
-    headers = {"Content-Disposition": f'attachment; filename="{download_name}"'}
-    return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+    return Response(content=pdf_bytes, media_type="application/pdf", headers=_safe_content_disposition(download_name))
+
+
+@app.post("/api/export-dxf")
+async def export_step_to_dxf(
+    file: UploadFile = File(...),
+    k_factor: Optional[float] = Form(None),
+) -> Response:
+    """Export the flat pattern (Abwicklung / laser contour) of a sheet metal STEP as DXF."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing file name.")
+    extension = Path(file.filename).suffix.lower()
+    if extension not in (".step", ".stp"):
+        raise HTTPException(status_code=400, detail="Only STEP files (.step/.stp) are supported.")
+
+    freecad_cmd = resolve_freecad_cmd()
+    if not freecad_cmd or not freecad_cmd.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="FreeCAD not found. Install FreeCAD and set FREECAD_PYTHON or FREECAD_CMD.",
+        )
+
+    data = await file.read()
+    await file.close()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_root = Path(tmpdir)
+        safe_name = Path(file.filename).name
+        input_path = temp_root / safe_name
+        out_json = temp_root / "unfold.json"
+        out_dxf = temp_root / "flat_pattern.dxf"
+
+        input_path.write_bytes(data)
+
+        env = os.environ.copy()
+        if k_factor is not None:
+            env["DRAWFORM_K_FACTOR"] = str(k_factor)
+        env["DRAWFORM_K_STANDARD"] = "din"
+
+        command = [str(freecad_cmd), str(FREECAD_UNFOLD_SCRIPT),
+                   str(input_path), str(out_json), str(out_dxf)]
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run, command,
+                capture_output=True, text=True, env=env, timeout=90,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise HTTPException(status_code=504, detail="Unfold timed out.") from error
+        except OSError as error:
+            raise HTTPException(status_code=500, detail=f"Process error: {error}") from error
+
+        if not out_dxf.exists():
+            detail = "DXF export failed — part may not be sheet metal or unfold is unsupported."
+            if out_json.exists():
+                try:
+                    info = json.loads(out_json.read_text(encoding="utf-8"))
+                    if info.get("error"):
+                        detail = f"Unfold error: {info['error']}"
+                except Exception:
+                    pass
+            raise HTTPException(status_code=422, detail=detail)
+
+        dxf_bytes = out_dxf.read_bytes()
+
+    download_name = f"{Path(file.filename).stem}_flat.dxf"
+    return Response(content=dxf_bytes, media_type="application/dxf", headers=_safe_content_disposition(download_name))
 
 
 # =========================================================================== #
@@ -896,6 +999,9 @@ RECONSTRUCT_LOCK = threading.Lock()
 RECONSTRUCT_PIPELINE_SCRIPT = ROOT / "freecad" / "reconstruct_pipeline.py"
 RECONSTRUCT_STL_TO_STEP_SCRIPT = ROOT / "freecad" / "stl_to_step.py"
 RECONSTRUCT_TIMEOUT_SECONDS = int(os.getenv("DRAWFORM_RECONSTRUCT_TIMEOUT_SECONDS", "300"))
+RECONSTRUCT_MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB per image
+RECONSTRUCT_MAX_DIMENSION_MM = 10_000.0
+RECONSTRUCT_MAX_PART_NAME_LEN = 80
 
 # Ausgabe-Verzeichnis für Rekonstruktions-Jobs
 RECONSTRUCT_OUTPUT_DIR = ROOT / "_debug" / "reconstruct"
@@ -973,11 +1079,11 @@ def _run_reconstruct_pipeline(
         # 4. STEP → PDF Zeichnung via step_to_pdf.py
         pdf_ok = False
         if stl_ok and freecad_cmd:
-            _update_reconstruct_job(job_id, progress="Technische Zeichnung wird erstellt...")
+            job_snapshot = _update_reconstruct_job(job_id, progress="Technische Zeichnung wird erstellt...")
             meta = {
                 "format": "pdf",
                 "paper_size": "A3",
-                "title": RECONSTRUCT_JOBS.get(job_id, {}).get("partName", "Rekonstruiertes Bauteil"),
+                "title": job_snapshot.get("partName", "Rekonstruiertes Bauteil"),
                 "input_path": step_path,
             }
             with tempfile.NamedTemporaryFile(
@@ -985,18 +1091,20 @@ def _run_reconstruct_pipeline(
             ) as mf:
                 json.dump(meta, mf)
                 meta_path = mf.name
-            env = os.environ.copy()
-            env["DRAWFORM_META"] = meta_path
-            env["DRAWFORM_DEBUG_DIR"] = str(job_dir)
-            pdf_result = subprocess.run(
-                [str(freecad_cmd), str(FREECAD_SCRIPT), step_path, pdf_path],
-                capture_output=True, text=True, timeout=RECONSTRUCT_TIMEOUT_SECONDS, env=env,
-            )
-            pdf_ok = pdf_result.returncode == 0 and Path(pdf_path).exists()
             try:
-                os.unlink(meta_path)
-            except OSError:
-                pass
+                env = os.environ.copy()
+                env["DRAWFORM_META"] = meta_path
+                env["DRAWFORM_DEBUG_DIR"] = str(job_dir)
+                pdf_result = subprocess.run(
+                    [str(freecad_cmd), str(FREECAD_SCRIPT), step_path, pdf_path],
+                    capture_output=True, text=True, timeout=RECONSTRUCT_TIMEOUT_SECONDS, env=env,
+                )
+                pdf_ok = pdf_result.returncode == 0 and Path(pdf_path).exists()
+            finally:
+                try:
+                    os.unlink(meta_path)
+                except OSError:
+                    pass
 
         _update_reconstruct_job(
             job_id,
@@ -1064,8 +1172,11 @@ def download_reconstruct_file(job_id: str, type: str = "stl") -> Response:
     mime_map = {"stl": "model/stl", "step": "application/step", "pdf": "application/pdf"}
     part_name = job.get("partName", "rekonstruktion")
     safe_name = re.sub(r"[^A-Za-z0-9_\-]", "_", part_name)
-    headers = {"Content-Disposition": f'attachment; filename="{safe_name}.{type}"'}
-    return Response(content=file_path.read_bytes(), media_type=mime_map[type], headers=headers)
+    return Response(
+        content=file_path.read_bytes(),
+        media_type=mime_map[type],
+        headers=_safe_content_disposition(f"{safe_name}.{type}"),
+    )
 
 
 @app.post("/api/reconstruct")
@@ -1098,20 +1209,20 @@ async def create_reconstruct_job(
         await upload.close()
         if len(data) == 0:
             raise HTTPException(status_code=400, detail=f"Leere Datei für Ansicht: {view_name}")
-        if len(data) > 20 * 1024 * 1024:  # 20 MB pro Bild
+        if len(data) > RECONSTRUCT_MAX_IMAGE_BYTES:
             raise HTTPException(status_code=413, detail=f"Bild zu groß (max 20 MB): {view_name}")
         image_files[view_name] = data
         total_size += len(data)
 
     # Dimensionen validieren
     dims = (
-        max(1.0, min(float(width_mm), 10_000.0)),
-        max(1.0, min(float(height_mm), 10_000.0)),
-        max(1.0, min(float(depth_mm), 10_000.0)),
+        max(1.0, min(float(width_mm), RECONSTRUCT_MAX_DIMENSION_MM)),
+        max(1.0, min(float(height_mm), RECONSTRUCT_MAX_DIMENSION_MM)),
+        max(1.0, min(float(depth_mm), RECONSTRUCT_MAX_DIMENSION_MM)),
     )
 
     job_id = uuid4().hex
-    safe_part_name = (part_name or "Bauteil").strip()[:80] or "Bauteil"
+    safe_part_name = (part_name or "Bauteil").strip()[:RECONSTRUCT_MAX_PART_NAME_LEN] or "Bauteil"
     job: Dict[str, Any] = {
         "id": job_id,
         "createdAt": now_iso(),

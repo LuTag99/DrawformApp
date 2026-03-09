@@ -55,11 +55,13 @@ export interface AnalyzerJob {
 const STORAGE_KEY = 'drawform-analyzer-jobs';
 const ANALYZE_API = '/api/analyze';
 const POLL_INTERVAL_MS = 1200;
+const MAX_CONSECUTIVE_POLL_ERRORS = 30;
 
 type Listener = (jobs: AnalyzerJob[]) => void;
 
 const listeners = new Set<Listener>();
 const pollingTimers = new Map<string, number>();
+const pollingErrorCounts = new Map<string, number>();
 
 function getStorage(): Storage | null {
   if (typeof window === 'undefined') {
@@ -280,18 +282,24 @@ function startPolling(jobId: string) {
   if (pollingTimers.has(jobId)) {
     return;
   }
+  pollingErrorCounts.set(jobId, 0);
   const tick = async () => {
     try {
       const serverJob = await fetchServerJob(jobId);
       if (!serverJob) {
         return;
       }
+      pollingErrorCounts.set(jobId, 0);
       const merged = upsertJob(serverJob);
       if (merged.status === 'completed' || merged.status === 'failed') {
         stopPolling(jobId);
       }
     } catch {
-      // Keep polling; backend may be temporarily unavailable.
+      const errors = (pollingErrorCounts.get(jobId) ?? 0) + 1;
+      pollingErrorCounts.set(jobId, errors);
+      if (errors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+        stopPolling(jobId);
+      }
     }
   };
   const timer = window.setInterval(() => {

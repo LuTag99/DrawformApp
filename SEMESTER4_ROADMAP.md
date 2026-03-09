@@ -108,25 +108,29 @@ Zeichnungsqualität jetzt → CI härten → Docker → Auth → Foto-Pipeline �
 
 ---
 
-### Monat 3 (KW 9–12): Foto → STL Pipeline
+### Monat 3 (KW 9–12): Foto → STL Pipeline — TEILWEISE ABGESCHLOSSEN
 
 **Ziel:** Nutzer lädt 30–50 Fotos hoch, bekommt STL zurück.
 
-| Woche | Aufgabe | Warum |
-|-------|---------|-------|
-| 9 | COLMAP Proof-of-Concept: 10 Test-Bilder lokal, CPU-only | Machbarkeit validieren bevor Architektur baut |
-| 9 | pycolmap installieren, Skript schreiben: `images/ → sparse_cloud/ → dense_cloud/` | |
-| 10 | Open3D Pipeline: `dense_cloud → poisson_mesh → cleaned_mesh.stl` | |
-| 10 | Job-Architektur: FastAPI `POST /api/reconstruct` → BackgroundTask → Job-State in Redis | Async weil 10–60 Min. Laufzeit |
-| 11 | Frontend: Foto-Upload UI, Job-Status-Polling (`GET /api/reconstruct/{id}`) | |
-| 12 | RunPod Integration: COLMAP-Job auf GPU-VM auslagern wenn verfügbar | Für akzeptable Demo-Performance |
+| Woche | Aufgabe | Status |
+|-------|---------|--------|
+| 9 | COLMAP Proof-of-Concept: 10 Test-Bilder lokal, CPU-only | Ersatz: Voxel-Carving (5 feste Ansichten) |
+| 9 | pycolmap installieren, Skript schreiben: `images/ → sparse_cloud/ → dense_cloud/` | Voxel-Carving-Ansatz gewaehlt statt SfM |
+| 10 | Open3D Pipeline: `dense_cloud → poisson_mesh → cleaned_mesh.stl` | `reconstruct_pipeline.py` Voxel-basiert |
+| 10 | Job-Architektur: FastAPI `POST /api/reconstruct` → BackgroundTask → Job-State | **ERLEDIGT** — `/api/reconstruct` live |
+| 11 | Frontend: Foto-Upload UI, Job-Status-Polling (`GET /api/reconstruct/{id}`) | **ERLEDIGT** — `/reconstruct` Page vollstaendig |
+| 12 | RunPod Integration: COLMAP-Job auf GPU-VM auslagern wenn verfügbar | Ausstehend |
 
-**Warum BackgroundTasks jetzt statt Celery?**
-BackgroundTasks reichen für Einzelnutzer-Demo (Semester 4). Bei Server-Restart verliert man den Job — das ist für Showcase akzeptabel. Celery später einführen wenn wirkliche Nutzer kommen.
+**Architekturentscheidung (Maerz 2026):** Statt COLMAP+OpenMVS wurde Voxel-Carving gewaehlt:
+- 5 feste Ansichtsfenster (Vorne/Oben/Links/Rechts/Hinten) statt beliebiger Fotos
+- Kein GPU noetig, deterministisch
+- Nachteil: weniger Detail als echtes SfM; kommuniziert im UI
 
-**Falle:** Foto-Qualität ist kritisch. Nutzer müssen verstehen: gleichmäßige Beleuchtung, 60–80% Bild-Überlappung, keine spiegelnden Oberflächen. Ohne Guidance wird die Qualität immer enttäuschend. → Foto-Checkliste im UI einbauen.
+**Abgeschlossen:** Backend `/api/reconstruct` (POST + GET + download), Frontend `/reconstruct` mit 5-Foto-Upload, Job-Karten, STL/STEP/PDF-Download.
 
-**Meilenstein M3:** Test-Objekt (kleines Metallteil, mattiert) → 40 Fotos vom Handy → STL herunterladbar. Laufzeit < 30 Min. auf RunPod GPU.
+**Noch ausstehend:** COLMAP/SfM fuer 30–50 beliebige Fotos, RunPod-GPU-Integration.
+
+**Meilenstein M3 (erreichter Stand):** 5 Ansichtsfotos → STL → STEP → herunterladbar. UI mit Tipps und Hinweis auf tessellierte Ausgabe.
 
 ---
 

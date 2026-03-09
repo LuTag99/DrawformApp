@@ -1,0 +1,425 @@
+{
+  "version": "0.2.0",
+  "region": "DE-AT",
+  "updated_at": "2026-03-03",
+  "quality_policy": {
+    "minimum_source_tier": "tier_2",
+    "minimum_independent_reviewers": 2,
+    "require_traceability": true
+  },
+  "sources": [
+    {
+      "id": "iso_128_series",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 128 (series) – Technical drawings: General principles of presentation",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/81804.html",
+      "scope": "Line types (visible 0.5mm, hidden 0.25mm dashed, center 0.18mm chain), views, sections, simplifications",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_129_1_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 129-1 – Dimensioning: General principles",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/stanedard/64741.html",
+      "scope": "Dimension lines, extension lines, arrows (filled 3mm), spacing (10mm from contour, 7mm between), placement outside contour, no redundant dims",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_286_series",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 286 (series) – ISO tolerance system for linear sizes",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/72801.html",
+      "scope": "Fit designations (H7/g6, H7/k6), tolerance grades IT01-IT18, fundamental deviations a-zc/A-ZC",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_2768_series",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 2768 (series) – General tolerances",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/67583.html",
+      "scope": "Part 1: Linear/angular (f/m/c/v classes). Part 2: Geometrical (H/K/L classes). Title block reference: 'DIN ISO 2768-mK'",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_1101_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 1101 – Geometrical tolerancing (GD&T)",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/61707.html",
+      "scope": "Form tolerances (flatness, roundness, straightness), orientation (parallelism, perpendicularity), location (position, concentricity), runout. Feature control frames.",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_5459_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 5459 – Datum systems for geometrical tolerancing",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/80910.html",
+      "scope": "Datum features (A, B, C), datum targets, common datum systems, datum precedence in feature control frames",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_8015_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 8015 – GPS fundamentals: Independence principle",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/45419.html",
+      "scope": "Independence principle (each GPS specification independent unless envelope requirement indicated). Foundation for all GPS standards.",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_1302_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 1302 / ISO 21920-1 – Surface texture indication",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/75967.html",
+      "scope": "Surface roughness symbols (Ra, Rz), machining allowance, surface lay, removal required/prohibited symbols. ISO 21920-1 modernises ISO 1302.",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_13715_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 13715 – Edge states indication",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/72302.html",
+      "scope": "Edge break notation: undefined edges, defined edges (chamfer, radius), burr direction. Symbol placement on drawing.",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_261_965_series",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 261 / ISO 965 (series) – Metric ISO threads",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/43298.html",
+      "scope": "Thread profiles M3-M68, pitch series, tolerance classes (6H/6g standard), thread representation per ISO 6410-1 (thin/thick lines, hatching)",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_2553_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 2553 – Welding symbol representation",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/66380.html",
+      "scope": "Weld joint symbols, reference/identification lines, supplementary symbols (field weld, all around), throat thickness 'a', leg length 'z'",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_5457_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 5457 – Drawing sheets: Sizes, layout",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/79849.html",
+      "scope": "Paper sizes A0-A4, margins (A3: 10mm all sides, A4: 20mm left), zone system (columns 1-n, rows a-n), border line widths",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_5455_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 5455 – Scales for technical drawings",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/11321.html",
+      "scope": "Preferred scales: Enlargement 50:1, 20:1, 10:1, 5:1, 2:1. Full size 1:1. Reduction 1:2, 1:5, 1:10, 1:20, 1:50, 1:100. Title block notation.",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_7200_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 7200 – Title blocks",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/79848.html",
+      "scope": "Required fields: title, drawing number, revision, date, scale, projection method symbol, material, mass, general tolerance reference, company, sheet size. 180x56mm identification zone.",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_7573_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 7573 – Item references / balloons",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/14352.html",
+      "scope": "Item reference numbering, balloon callouts linked to parts list, leader lines, numbering sequence (clockwise/counter-clockwise)",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_5456_2_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 5456-2 – Projection methods: Orthographic",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/11714.html",
+      "scope": "First-angle (Europe) and third-angle (USA) projection. View placement rules. Projection symbol in title block.",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "din_iso_baseline_drawform",
+      "tier": "tier_2",
+      "kind": "internal_baseline",
+      "title": "Drawform DIN/ISO baseline",
+      "path": "server/docs/DIN_ISO_BASELINE_TECHNISCHE_ZEICHNUNG.md",
+      "owner": "Drawform",
+      "verified_on": "2026-03-03"
+    },
+    {
+      "id": "golden_samples_review_2026_02",
+      "tier": "tier_2",
+      "kind": "internal_golden_samples",
+      "title": "Visual review of complex golden sample set",
+      "path": "server/_debug/PDF_REVIEW_CHECKLIST.md",
+      "owner": "Drawform",
+      "verified_on": "2026-02-16"
+    },
+    {
+      "id": "shopfloor_feedback",
+      "tier": "tier_3",
+      "kind": "manufacturing_feedback",
+      "title": "Production and QA feedback log",
+      "path": "server/knowledge/feedback_log.jsonl",
+      "owner": "Manufacturing",
+      "verified_on": "2026-02-16"
+    }
+  ],
+  "rules": [
+    {
+      "id": "overall_dimensions_required",
+      "feature": "outer_contour",
+      "priority": "must",
+      "when": { "view_kind": "orthographic" },
+      "actions": [
+        { "type": "add_dimension", "dimension": "overall_length" },
+        { "type": "add_dimension", "dimension": "overall_height" }
+      ],
+      "source_refs": ["iso_129_1_catalog", "din_iso_baseline_drawform"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "hole_diameter_required",
+      "feature": "hole",
+      "priority": "must",
+      "when": { "visible": true },
+      "actions": [
+        { "type": "add_dimension", "dimension": "diameter", "format": "Ø {diameter_mm}" }
+      ],
+      "source_refs": ["iso_129_1_catalog", "golden_samples_review_2026_02"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "hole_location_required",
+      "feature": "hole_pattern",
+      "priority": "must",
+      "when": { "count_min": 2 },
+      "actions": [
+        { "type": "add_dimension", "dimension": "pitch_or_spacing" },
+        { "type": "add_dimension", "dimension": "position_from_datums" }
+      ],
+      "source_refs": ["iso_129_1_catalog", "din_iso_baseline_drawform"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "metrology_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "avoid_duplicate_dimensions",
+      "feature": "global",
+      "priority": "must_not",
+      "actions": [
+        { "type": "forbid", "dimension": "duplicate_same_information" }
+      ],
+      "source_refs": ["iso_129_1_catalog", "golden_samples_review_2026_02"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "slot_complete_definition",
+      "feature": "slot",
+      "priority": "should",
+      "actions": [
+        { "type": "add_dimension", "dimension": "width" },
+        { "type": "add_dimension", "dimension": "length" },
+        { "type": "add_dimension", "dimension": "location_from_datums" }
+      ],
+      "source_refs": ["iso_129_1_catalog", "shopfloor_feedback"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "thread_callout_required",
+      "feature": "thread",
+      "priority": "must",
+      "actions": [
+        { "type": "add_callout", "dimension": "thread_designation", "format": "M{nominal_diameter}-{tolerance_class}" }
+      ],
+      "source_refs": ["iso_261_965_series", "din_iso_baseline_drawform"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "general_tolerance_required",
+      "feature": "global",
+      "priority": "must",
+      "when": { "view_kind": "any" },
+      "actions": [
+        { "type": "add_annotation", "location": "title_block_or_notes", "format": "Allgemeintoleranzen nach DIN ISO 2768-{format_class}{form_class}" }
+      ],
+      "note": "Must reference ISO 2768 in title block or annotation field. Format class: f/m/c/v. Form class: H/K/L.",
+      "source_refs": ["iso_2768_series", "din_iso_baseline_drawform"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "scale_iso_5455_conformity",
+      "feature": "global",
+      "priority": "must",
+      "actions": [
+        { "type": "validate", "parameter": "scale", "allowed_values": ["50:1", "20:1", "10:1", "5:1", "2:1", "1:1", "1:2", "1:5", "1:10", "1:20", "1:50", "1:100"] }
+      ],
+      "source_refs": ["iso_5455_catalog"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "title_block_iso_7200_completeness",
+      "feature": "title_block",
+      "priority": "must",
+      "actions": [
+        { "type": "validate_presence", "fields": ["title", "drawing_no", "revision", "date", "scale", "projection_symbol", "material", "unit", "sheet_size", "company"] }
+      ],
+      "note": "ISO 7200 mandates: identification zone with title, drawing number, revision index. Supplementary: material, mass, scale, projection method symbol, general tolerance.",
+      "source_refs": ["iso_7200_catalog", "din_iso_baseline_drawform"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "projection_symbol_required",
+      "feature": "title_block",
+      "priority": "must",
+      "actions": [
+        { "type": "add_symbol", "symbol": "first_angle_projection", "location": "title_block" }
+      ],
+      "note": "ISO 5456-2 requires the projection method to be indicated by its symbol (truncated cone + circles) in the title block, not just text.",
+      "source_refs": ["iso_5456_2_catalog", "iso_7200_catalog"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "line_weight_hierarchy_iso_128",
+      "feature": "global",
+      "priority": "must",
+      "actions": [
+        { "type": "validate_line_weights", "hierarchy": {
+          "visible_edges": { "type": "continuous_thick", "ratio": 1.0 },
+          "hidden_edges": { "type": "dashed_thin", "ratio": 0.5 },
+          "center_lines": { "type": "chain_thin", "ratio": 0.35 },
+          "dimension_lines": { "type": "continuous_thin", "ratio": 0.35 },
+          "extension_lines": { "type": "continuous_thin", "ratio": 0.35 }
+        }}
+      ],
+      "note": "ISO 128-2 defines two line groups: thick (visible edges, cutting planes) and thin (hidden, center, dimension, extension, hatching). Thick:thin ratio = 2:1.",
+      "source_refs": ["iso_128_series"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "dimension_outside_contour",
+      "feature": "dimension",
+      "priority": "must",
+      "actions": [
+        { "type": "validate_placement", "rule": "outside_part_contour", "min_spacing_mm": 10.0, "inter_dim_spacing_mm": 7.0 }
+      ],
+      "note": "ISO 129-1: Dimensions shall be placed outside the part outline. First dimension line ≥10mm from contour. Subsequent dimension lines ≥7mm apart.",
+      "source_refs": ["iso_129_1_catalog"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "edge_state_indication",
+      "feature": "edge",
+      "priority": "should",
+      "actions": [
+        { "type": "add_annotation", "location": "notes_or_view", "format": "Alle Kanten {min}-{max} entgraten" }
+      ],
+      "note": "ISO 13715: Undefined edges shall be indicated with the appropriate symbol. Minimum: a general note for deburring. Best practice: specific chamfer/radius per edge where critical.",
+      "source_refs": ["iso_13715_catalog", "din_iso_baseline_drawform"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "surface_roughness_indication",
+      "feature": "surface",
+      "priority": "should",
+      "actions": [
+        { "type": "add_symbol", "symbol": "surface_roughness", "location": "critical_surfaces_or_general_note" }
+      ],
+      "note": "ISO 1302 / ISO 21920-1: Surface texture must be indicated where functionally relevant. General default Ra in title block notes. Specific Ra on critical surfaces (sealing, bearing).",
+      "source_refs": ["iso_1302_catalog", "din_iso_baseline_drawform"],
+      "quality": { "status": "draft", "reviewers": ["design_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "paper_format_iso_5457",
+      "feature": "drawing_sheet",
+      "priority": "must",
+      "actions": [
+        { "type": "validate", "parameter": "paper_size", "allowed_values": ["A4", "A3", "A2", "A1", "A0"] },
+        { "type": "validate", "parameter": "margins", "A3_margins_mm": { "top": 10, "bottom": 10, "left": 10, "right": 10 } }
+      ],
+      "note": "ISO 5457: Drawing sheets must use A-series sizes. Margins and zone system defined per sheet size. A3 landscape: 420×297mm, 10mm margins all sides.",
+      "source_refs": ["iso_5457_catalog"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "welding_symbol_iso_2553",
+      "feature": "weld_joint",
+      "priority": "must",
+      "when": { "part_has_welds": true },
+      "actions": [
+        { "type": "add_symbol", "symbol": "weld_joint_per_iso_2553" }
+      ],
+      "note": "ISO 2553: Weld joints must be indicated with standardized symbols on reference line. Include: joint type, throat/leg size, process number if needed.",
+      "source_refs": ["iso_2553_catalog"],
+      "quality": { "status": "draft", "reviewers": ["design_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "gdt_feature_control_frame",
+      "feature": "critical_feature",
+      "priority": "should",
+      "when": { "functional_surface": true },
+      "actions": [
+        { "type": "add_tolerance_frame", "format": "per ISO 1101 with datum references per ISO 5459" }
+      ],
+      "note": "ISO 1101 + ISO 5459: Functional features (bearing surfaces, sealing faces, mating faces) should have explicit GD&T with datum references. ISO 8015 independence principle applies.",
+      "source_refs": ["iso_1101_catalog", "iso_5459_catalog", "iso_8015_catalog"],
+      "quality": { "status": "draft", "reviewers": ["design_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "dimension_accuracy_vs_geometry",
+      "feature": "global",
+      "priority": "must",
+      "actions": [
+        { "type": "validate_accuracy", "tolerance_mm": 0.5, "compare": "dse_dimensions_vs_cad_bbox" }
+      ],
+      "note": "Every dimension value on the drawing must match the actual CAD geometry within 0.5mm. Automated check in test_views.py: check_geometry_accuracy().",
+      "source_refs": ["iso_129_1_catalog", "din_iso_baseline_drawform"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-03" }
+    }
+  ]
+}

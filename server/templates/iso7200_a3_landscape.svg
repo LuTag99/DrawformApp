@@ -93,4 +93,7 @@
 
   <text class="label" x="312" y="277">BLATT</text>
   <text class="value" id="SHEET" x="312" y="285">A3</text>
+
+  <text class="label" x="372" y="277">WERKSTOFF</text>
+  <text class="value" id="MATERIAL" x="372" y="285"></text>
 </svg>

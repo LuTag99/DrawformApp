@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-24T20:48:55+00:00",
+  "generated_at": "2026-02-28T11:26:05+00:00",
   "parts": {
     "10x10x10": {
       "alignment": {
@@ -17,6 +17,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -93,6 +94,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -169,6 +171,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 4.0,
         "hole_count": 2,
@@ -245,6 +248,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 6.0,
         "hole_count": 8,
@@ -265,8 +269,8 @@
             65.5
           ],
           "paper_size": [
-            96.26,
-            63.0
+            115.7,
+            75.73
           ],
           "rotation_deg": 90
         },
@@ -276,8 +280,8 @@
             176.5
           ],
           "paper_size": [
-            84.46,
-            70.2
+            101.52,
+            84.38
           ],
           "rotation_deg": 0
         },
@@ -287,8 +291,8 @@
             64.62
           ],
           "paper_size": [
-            63.0,
-            61.25
+            75.73,
+            73.63
           ],
           "rotation_deg": 0
         },
@@ -298,8 +302,8 @@
             176.5
           ],
           "paper_size": [
-            96.26,
-            61.25
+            115.7,
+            73.63
           ],
           "rotation_deg": 0
         }
@@ -321,6 +325,7 @@
         "longest_axis": "Z",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 25.0,
         "hole_count": 2,
@@ -397,6 +402,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 5.1,
         "hole_count": 5,
@@ -413,45 +419,45 @@
       "views": {
         "Front": {
           "center": [
-            70.0,
+            110.0,
             65.5
           ],
           "paper_size": [
-            70.67,
-            38.06
+            110.83,
+            59.68
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            190.0,
+            310.0,
             176.5
           ],
           "paper_size": [
-            36.23,
-            41.12
+            65.56,
+            74.4
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            190.0,
+            310.0,
             65.5
           ],
           "paper_size": [
-            8.15,
-            38.06
+            12.79,
+            59.68
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            70.0,
+            110.0,
             176.5
           ],
           "paper_size": [
-            70.67,
-            8.15
+            110.83,
+            12.79
           ],
           "rotation_deg": 270
         }
@@ -473,6 +479,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 5.0,
         "hole_count": 7,
@@ -489,45 +496,45 @@
       "views": {
         "Front": {
           "center": [
-            70.0,
+            110.0,
             65.5
           ],
           "paper_size": [
-            64.77,
-            64.77
+            74.8,
+            74.8
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            190.0,
+            310.0,
             176.5
           ],
           "paper_size": [
-            70.49,
-            62.49
+            43.64,
+            53.5
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            190.0,
+            310.0,
             65.5
           ],
           "paper_size": [
-            6.48,
-            64.77
+            7.48,
+            74.8
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            70.0,
+            110.0,
             176.5
           ],
           "paper_size": [
-            64.77,
-            6.48
+            74.8,
+            7.48
           ],
           "rotation_deg": 90
         }
@@ -549,6 +556,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 55.0,
         "hole_count": 11,
@@ -625,6 +633,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -701,6 +710,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -777,6 +787,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 8.0,
         "hole_count": 11,
@@ -793,45 +804,45 @@
       "views": {
         "Front": {
           "center": [
-            70.0,
+            110.0,
             65.5
           ],
           "paper_size": [
-            70.67,
-            39.75
+            106.4,
+            59.85
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            190.0,
+            310.0,
             176.5
           ],
           "paper_size": [
-            33.7,
-            40.56
+            58.54,
+            70.45
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            190.0,
+            310.0,
             65.5
           ],
           "paper_size": [
-            2.65,
-            39.75
+            3.99,
+            59.85
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            70.0,
+            110.0,
             176.5
           ],
           "paper_size": [
-            70.67,
-            2.65
+            106.4,
+            3.99
           ],
           "rotation_deg": 270
         }
@@ -853,6 +864,7 @@
         "longest_axis": "Y",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 16.155,
         "hole_count": 2,
@@ -869,45 +881,45 @@
       "views": {
         "Front": {
           "center": [
-            70.0,
+            110.0,
             65.5
           ],
           "paper_size": [
-            70.67,
-            11.78
+            130.81,
+            21.8
           ],
           "rotation_deg": 90
         },
         "Iso": {
           "center": [
-            190.0,
+            310.0,
             176.5
           ],
           "paper_size": [
-            16.24,
-            46.26
+            34.29,
+            97.68
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            190.0,
+            310.0,
             65.5
           ],
           "paper_size": [
-            23.56,
-            11.78
+            43.6,
+            21.8
           ],
           "rotation_deg": 270
         },
         "Top": {
           "center": [
-            70.0,
+            110.0,
             176.5
           ],
           "paper_size": [
-            70.67,
-            23.56
+            130.81,
+            43.6
           ],
           "rotation_deg": 270
         }
@@ -929,6 +941,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -1005,6 +1018,7 @@
         "longest_axis": "Z",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 15.0,
         "hole_count": 3,
@@ -1025,8 +1039,8 @@
             65.5
           ],
           "paper_size": [
-            136.73,
-            41.02
+            130.81,
+            39.24
           ],
           "rotation_deg": 0
         },
@@ -1036,8 +1050,8 @@
             176.5
           ],
           "paper_size": [
-            114.16,
-            78.87
+            109.21,
+            75.45
           ],
           "rotation_deg": 0
         },
@@ -1047,19 +1061,19 @@
             65.5
           ],
           "paper_size": [
-            136.73,
-            41.02
+            130.81,
+            39.24
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            62.14,
+            64.22,
             176.5
           ],
           "paper_size": [
-            41.02,
-            41.02
+            39.24,
+            39.24
           ],
           "rotation_deg": 0
         }
@@ -1081,6 +1095,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -1097,45 +1112,45 @@
       "views": {
         "Front": {
           "center": [
-            70.0,
+            110.0,
             65.5
           ],
           "paper_size": [
-            70.67,
-            35.34
+            144.19,
+            72.09
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            190.0,
+            310.0,
             176.5
           ],
           "paper_size": [
-            32.97,
-            37.79
+            77.61,
+            88.96
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            190.0,
+            310.0,
             65.5
           ],
           "paper_size": [
-            1.06,
-            35.34
+            2.16,
+            72.09
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            70.0,
+            110.0,
             176.5
           ],
           "paper_size": [
-            70.67,
-            1.06
+            144.19,
+            2.16
           ],
           "rotation_deg": 90
         }
@@ -1157,6 +1172,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 8.0,
         "hole_count": 1,
@@ -1173,45 +1189,45 @@
       "views": {
         "Front": {
           "center": [
-            70.0,
+            110.0,
             65.5
           ],
           "paper_size": [
-            70.67,
-            35.34
+            118.48,
+            59.24
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            190.0,
+            310.0,
             176.5
           ],
           "paper_size": [
-            34.65,
-            38.76
+            67.02,
+            74.97
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            190.0,
+            310.0,
             65.5
           ],
           "paper_size": [
-            4.71,
-            35.34
+            7.9,
+            59.24
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            70.0,
+            110.0,
             176.5
           ],
           "paper_size": [
-            70.67,
-            4.71
+            118.48,
+            7.9
           ],
           "rotation_deg": 90
         }
@@ -1233,6 +1249,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 32.0,
         "hole_count": 7,
@@ -1253,8 +1270,8 @@
             65.5
           ],
           "paper_size": [
-            136.73,
-            35.0
+            130.81,
+            33.49
           ],
           "rotation_deg": 90
         },
@@ -1264,8 +1281,8 @@
             176.5
           ],
           "paper_size": [
-            99.16,
-            65.55
+            94.87,
+            62.71
           ],
           "rotation_deg": 0
         },
@@ -1275,8 +1292,8 @@
             65.5
           ],
           "paper_size": [
-            35.0,
-            35.0
+            33.49,
+            33.49
           ],
           "rotation_deg": 0
         },
@@ -1286,8 +1303,8 @@
             176.5
           ],
           "paper_size": [
-            136.73,
-            35.0
+            130.81,
+            33.49
           ],
           "rotation_deg": 0
         }
@@ -1309,6 +1326,7 @@
         "longest_axis": "Y",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -1385,6 +1403,7 @@
         "longest_axis": "Z",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -1461,6 +1480,7 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
+      "dimension_plan_summary": null,
       "features": {
         "bend_radius_mm": 5.0,
         "hole_count": 15,

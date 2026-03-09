@@ -32,11 +32,13 @@ export interface ReconstructJob {
 const STORAGE_KEY = 'drawform-reconstruct-jobs';
 const API_BASE = '/api/reconstruct';
 const POLL_INTERVAL_MS = 1500;
+const MAX_CONSECUTIVE_POLL_ERRORS = 30;
 
 type Listener = (jobs: ReconstructJob[]) => void;
 
 const listeners = new Set<Listener>();
 const pollingTimers = new Map<string, number>();
+const pollingErrorCounts = new Map<string, number>();
 
 // --------------------------------------------------------------------------
 // LocalStorage persistence
@@ -160,9 +162,18 @@ async function fetchServerJob(jobId: string): Promise<ReconstructJob | null> {
 
 function startPolling(jobId: string) {
   if (pollingTimers.has(jobId)) return;
+  pollingErrorCounts.set(jobId, 0);
   const tick = async () => {
     const serverJob = await fetchServerJob(jobId);
-    if (!serverJob) return;
+    if (!serverJob) {
+      const errors = (pollingErrorCounts.get(jobId) ?? 0) + 1;
+      pollingErrorCounts.set(jobId, errors);
+      if (errors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+        stopPolling(jobId);
+      }
+      return;
+    }
+    pollingErrorCounts.set(jobId, 0);
     const merged = upsertJob(serverJob);
     if (merged.status === 'completed' || merged.status === 'failed') {
       stopPolling(jobId);

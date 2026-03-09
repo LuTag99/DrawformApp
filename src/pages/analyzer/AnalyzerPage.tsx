@@ -44,10 +44,10 @@ export function AnalyzerPage() {
       setActiveJobId(null);
       return;
     }
-    if (!activeJobId || !jobs.some((job) => job.id === activeJobId)) {
-      setActiveJobId(jobs[0].id);
-    }
-  }, [jobs, activeJobId]);
+    setActiveJobId((prev) =>
+      prev && jobs.some((job) => job.id === prev) ? prev : jobs[0].id,
+    );
+  }, [jobs]);
 
   const activeJob = useMemo(() => jobs.find((job) => job.id === activeJobId), [jobs, activeJobId]);
 

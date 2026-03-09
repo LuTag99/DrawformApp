@@ -2,7 +2,7 @@ import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { HiOutlineArrowUpTray } from 'react-icons/hi2';
 import SectionHeader from '../../components/SectionHeader';
 import { GradientButton } from '../../components/GradientButton';
-import { requestPdfExport } from '../../services/exportService';
+import { requestPdfExport, requestDxfExport } from '../../services/exportService';
 
 export function ExportPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -17,6 +17,10 @@ export function ExportPage() {
   const [logText, setLogText] = useState<string | null>(null);
   const [logBusy, setLogBusy] = useState(false);
   const [logCopyState, setLogCopyState] = useState<'idle' | 'success' | 'error'>('idle');
+  const [dxfBusy, setDxfBusy] = useState(false);
+  const [dxfUrl, setDxfUrl] = useState<string | null>(null);
+  const [dxfName, setDxfName] = useState<string | null>(null);
+  const [dxfStatus, setDxfStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
     return () => {
@@ -25,6 +29,14 @@ export function ExportPage() {
       }
     };
   }, [downloadUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (dxfUrl) {
+        URL.revokeObjectURL(dxfUrl);
+      }
+    };
+  }, [dxfUrl]);
 
   const onSelectFile = () => {
     fileInputRef.current?.click();
@@ -44,6 +56,14 @@ export function ExportPage() {
       }
       return null;
     });
+    setDxfUrl((current) => {
+      if (current) {
+        URL.revokeObjectURL(current);
+      }
+      return null;
+    });
+    setDxfName(null);
+    setDxfStatus(null);
   };
 
   const handleExport = async (event: FormEvent<HTMLFormElement>) => {
@@ -86,6 +106,28 @@ export function ExportPage() {
       });
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleDxfExport = async () => {
+    if (!selectedFile) return;
+    setDxfBusy(true);
+    setDxfStatus(null);
+    setDxfUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+    try {
+      const result = await requestDxfExport(selectedFile);
+      setDxfStatus({ type: result.success ? 'success' : 'error', message: result.message });
+      if (result.success && result.blobUrl) {
+        setDxfUrl(result.blobUrl);
+        setDxfName(result.fileName ?? 'flat_pattern.dxf');
+      }
+    } catch (error) {
+      setDxfStatus({ type: 'error', message: (error as Error)?.message ?? 'DXF-Export fehlgeschlagen.' });
+    } finally {
+      setDxfBusy(false);
     }
   };
 
@@ -226,7 +268,16 @@ export function ExportPage() {
             <span className="chip chip--ghost">Top + Front + Left + Iso</span>
           </div>
         </div>
-        <GradientButton type="submit" label="PDF erzeugen" busy={busy} busyLabel="Erzeuge PDF..." />
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <GradientButton type="submit" label="PDF erzeugen" busy={busy} busyLabel="Erzeuge PDF..." />
+          <GradientButton
+            type="button"
+            label="DXF exportieren"
+            busy={dxfBusy}
+            busyLabel="Erzeuge DXF..."
+            onClick={handleDxfExport}
+          />
+        </div>
         {downloadUrl && (
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
             <button type="button" className="gradient-button" onClick={() => setShowPreview((value) => !value)}>
@@ -235,6 +286,18 @@ export function ExportPage() {
             <a className="gradient-button" href={downloadUrl} download={downloadName ?? 'drawing.pdf'}>
               PDF herunterladen
             </a>
+          </div>
+        )}
+        {dxfUrl && (
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <a className="gradient-button" href={dxfUrl} download={dxfName ?? 'flat_pattern.dxf'}>
+              DXF herunterladen
+            </a>
+          </div>
+        )}
+        {dxfStatus && dxfStatus.type === 'error' && (
+          <div className="status-banner status-banner--error">
+            <span style={{ flex: 1 }}>{dxfStatus.message}</span>
           </div>
         )}
         {status && (

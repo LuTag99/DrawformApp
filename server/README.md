@@ -4,7 +4,7 @@ This service converts STEP files into DIN/ISO-style manufacturing drawings (PDF)
 
 ## Requirements
 
-- FreeCAD installed (0.21+ recommended)
+- FreeCAD 1.0+ installed
 - Python 3.10+ for FastAPI
 
 ## Setup (Windows)
@@ -48,7 +48,7 @@ docker compose up --build
 
 Der Service laeuft danach auf `http://localhost:8000`.
 
-## Test
+## Export
 
 ```powershell
 curl -F "file=@C:\path\model.step" -F "format=pdf" http://localhost:8000/api/export -o drawing.pdf
@@ -67,68 +67,45 @@ curl -F "file=@C:\path\model.step" -F "format=pdf" `
   http://localhost:8000/api/export -o drawing.pdf
 ```
 
-Unit tests for norm profile:
+## Testing
+
+Unit tests (norm profile, sample catalog, API endpoints):
 
 ```powershell
 cd server
-python -m unittest test_norm_profile.py
-python -m unittest test_sample_catalog.py
+python -m unittest test_norm_profile
+python -m unittest test_sample_catalog
+python -m unittest test_api_endpoints
 ```
 
-API endpoint tests (mocked FreeCAD subprocess):
+DSE unit tests (Dimension Strategy Engine):
 
 ```powershell
 cd server
-python -m unittest test_api_endpoints.py
+python -m unittest tests.test_dimension_strategy -v
 ```
 
-View regression tests (with golden baseline):
+View regression tests against golden baseline:
 
 ```powershell
 cd server
-python test_views.py --sample-set baseline
+python test_views.py --sample-set baseline          # 20 baseline parts
+python test_views.py --sample-set real              # real customer parts
+python test_views.py --sample-set all               # all 48 parts
 ```
 
-Create/update golden baseline (after intentional layout/geometry changes):
+Create/update golden baseline (after intentional layout changes):
 
 ```powershell
 cd server
-python test_views.py --sample-set baseline --update-golden
+python test_views.py --sample-set all --update-golden
 ```
 
-View stability loop (repeat marked samples):
+View stability loop (repeat marked samples N times, check drift):
 
 ```powershell
 cd server
 python test_views.py --sample-set baseline --stability-runs 3
-```
-
-Real-world local regression set (14 unique STEP/PDF pairs from `_samples/Sheetmetals` + `_samples/milling parts`):
-
-```powershell
-cd server
-python test_views.py --sample-set real --update-golden
-python test_views.py --sample-set all --update-golden
-```
-
-Local visual benchmark against real reference PDFs:
-
-```powershell
-cd server
-python -m pip install pymupdf
-python benchmark_real_parts.py --sample-set real
-```
-
-Norm and drawing-quality checks are part of `test_views.py`:
-- title-block norm markers
-- unitless dimension values
-- dashed centerlines for circular features
-- drawing-area overflow checks
-
-Generate complex regression samples (5 feature-rich parts):
-
-```powershell
-& "C:\Program Files\FreeCAD 1.0\bin\python.exe" server\freecad\generate_complex_reference_parts.py
 ```
 
 Run full local quality gate (self-check loop):
@@ -141,30 +118,86 @@ python run_quality_gate.py --stability-runs 2 --iterations 2
 
 `run_quality_gate.py` uses `server/.venv/Scripts/python.exe` automatically when available.
 
-Knowledge base for dimensioning decisions:
+## Dimension Strategy Engine (DSE)
+
+The DSE is a deterministic rule engine that decides **what** to dimension on a drawing before the FreeCAD subprocess runs.
+
+**Pipeline position:**
+
+```
+main.py
+  └─ run_feature_probe()          → feature_payload (FreeCAD subprocess)
+  └─ select_layout_profile_standalone()  → "milling" | "sheet_metal"
+  └─ build_dimension_plan()       → DimensionPlan (JSON)
+  └─ write meta.json (features + dimension_plan)
+  └─ FreeCAD subprocess (step_to_pdf.py)
+        └─ reads dimension_plan from meta → plan-driven rendering
+        └─ fallback: hardcoded logic if no plan present
+```
+
+**Key files:**
+
+| File | Purpose |
+|------|---------|
+| `rules/dimension_plan_schema.py` | Pydantic models: `DimensionPlan`, `ViewPlan`, `DimensionItem`, `ProcessNote` |
+| `rules/dimension_strategy.py` | `build_dimension_plan()`, `select_layout_profile_standalone()`, `apply_overrides()` |
+| `tests/test_dimension_strategy.py` | 35 unit tests |
+
+**Detail levels** — pass `detail_level=1|2|3` in export metadata:
+- `1` Manufacturing-minimal (default): L × B × H + Löcher + Biegeradius
+- `2` Inspection-ready: + Tiefen, Bezugsmaße, Left-view
+- `3` Customer-spec: + alle Prozessnotizen
+
+**LLM-Overrides** — structured JSON on top of the deterministic baseline:
+
+```python
+from rules.dimension_strategy import apply_overrides
+plan = apply_overrides(plan, [
+    {"action": "add",    "target_view": "Front", "dimension": {"dim_type": "pocket_depth", "value_mm": 5.0}},
+    {"action": "remove", "target_view": "Front", "dim_type": "hole_pitch"},
+])
+```
+
+Every override is logged in `plan.overrides_applied` for auditability.
+
+## Knowledge Base & Rule Engine
+
+Rules that inform the DSE live in `knowledge_base.json`:
 
 ```powershell
 cd server
 python knowledge/validate_knowledge_base.py
 python rules/rule_engine.py --feature hole --ctx visible=true
+python rules/rule_engine.py --validate
 ```
 
 Knowledge data and quality process:
 - Data file: `server/knowledge/knowledge_base.json`
 - Quality guide: `server/knowledge/QUALITY_GUIDE.md`
 - Rule engine: `server/rules/rule_engine.py`
+- DSE: `server/rules/dimension_strategy.py`
 
-Analyzer (Phase 3, Feature-Erkennung):
+## Analyzer (Feature-Erkennung)
 
 ```powershell
 curl -F "file=@C:\path\model.step" -F "units=mm" -F "scale=1" http://localhost:8000/api/analyze
 ```
 
+`/api/analyze` supports backend jobs (pending/processing/completed/failed).
+
+Generate complex regression samples (5 feature-rich parts):
+
+```powershell
+& "C:\Program Files\FreeCAD 1.0\bin\python.exe" server\freecad\generate_complex_reference_parts.py
+```
+
 ## Notes
 
 - The export layout supports `sheet=auto|A3|A2`; `auto` starts with A3 and promotes to A2 for large/low-scale parts.
-- Views are generated as top/front/left/iso with an additional local flat-pattern fallback area for sheet-metal profiles.
-- The drawing includes an ISO7200-style title block and overall dimensions.
-- `/api/analyze` supports backend jobs (pending/processing/completed/failed).
-- For CAD files (`.step/.stp/.iges/.igs/.stl/.brep`) a FreeCAD feature probe derives dimensions and hole/bend hints.
+- Views: Front / Top / Left / Iso + Abwicklung column for Biegeteile.
+- The drawing includes an ISO 7200 title block, overall dimensions, and feature callouts.
+- Flat pattern (Abwicklung) coordinate system: XMin=YMin=0, bend lines embedded in outline SVG.
+- Diameter symbol: `Ø` (U+00D8) — NOT `⌀` (U+2300, renders as ■ in FreeCAD PDF fonts).
+- Default tolerance: `DIN ISO 2768-mK`.
 - Norm baseline for DE/AT technical drawings: `server/docs/DIN_ISO_BASELINE_TECHNISCHE_ZEICHNUNG.md`.
+- For CAD files (`.step/.stp/.iges/.igs`) a FreeCAD feature probe derives dimensions, hole/bend hints, and feeds the DSE.

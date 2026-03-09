@@ -51,6 +51,104 @@ def log(message):
     sys.stderr.write(f"[drawform] {message}\n")
 
 
+def complexity_score(shape):
+    """Compute a geometry complexity score for safe_mode decisions.
+    Returns dict with individual counts and a composite score.
+    The score heavily weights assembly indicators (shells > 2, compounds)
+    that correlate with TechDraw HLR crashes, rather than face/edge count alone."""
+    n_faces = len(shape.Faces)
+    n_edges = len(shape.Edges)
+    n_verts = len(shape.Vertexes)
+    n_shells = len(shape.Shells) if hasattr(shape, "Shells") else 0
+    n_compounds = len(shape.Compounds) if hasattr(shape, "Compounds") else 0
+    # Count BSpline surfaces/curves (expensive for HLR)
+    n_bspline_faces = 0
+    for face in shape.Faces:
+        stype = getattr(getattr(face, "Surface", None), "__class__", type(None)).__name__
+        if "BSpline" in stype:
+            n_bspline_faces += 1
+    n_bspline_edges = 0
+    for edge in shape.Edges:
+        ctype = getattr(getattr(edge, "Curve", None), "__class__", type(None)).__name__
+        if "BSpline" in ctype:
+            n_bspline_edges += 1
+    # Composite score: assembly structure is the primary crash indicator.
+    # Single-shell parts (sh=1, co=0) rarely crash regardless of face count.
+    # Multi-shell assemblies with compounds are the crash-prone pattern.
+    score = (n_faces * 0.05 + n_edges * 0.02 + n_bspline_faces * 1.0
+             + n_bspline_edges * 0.3 + max(0, n_shells - 1) * 30.0 + n_compounds * 50.0)
+    return {
+        "faces": n_faces, "edges": n_edges, "vertexes": n_verts,
+        "shells": n_shells, "compounds": n_compounds,
+        "bspline_faces": n_bspline_faces, "bspline_edges": n_bspline_edges,
+        "score": round(score, 1),
+    }
+
+
+def _bbox_wireframe_svg(shape, direction):
+    """Generate a simple bounding-box wireframe SVG as fallback when HLR crashes.
+    Projects the 8 BBox corners onto the view plane and draws the outline."""
+    bb = shape.BoundBox
+    corners_3d = [
+        App.Vector(bb.XMin, bb.YMin, bb.ZMin), App.Vector(bb.XMax, bb.YMin, bb.ZMin),
+        App.Vector(bb.XMax, bb.YMax, bb.ZMin), App.Vector(bb.XMin, bb.YMax, bb.ZMin),
+        App.Vector(bb.XMin, bb.YMin, bb.ZMax), App.Vector(bb.XMax, bb.YMin, bb.ZMax),
+        App.Vector(bb.XMax, bb.YMax, bb.ZMax), App.Vector(bb.XMin, bb.YMax, bb.ZMax),
+    ]
+    # Build orthonormal basis from direction
+    d = App.Vector(direction)
+    d.normalize()
+    # Find a non-parallel reference vector
+    ref = App.Vector(0, 0, 1) if abs(d.z) < 0.9 else App.Vector(1, 0, 0)
+    right = d.cross(ref)
+    right.normalize()
+    up = right.cross(d)
+    up.normalize()
+    # Project corners to 2D
+    pts_2d = []
+    for c in corners_3d:
+        x2d = c.dot(right)
+        y2d = -c.dot(up)  # SVG Y-axis is inverted
+        pts_2d.append((x2d, y2d))
+    # Compute convex hull (simple approach: use min/max for bounding rect)
+    xs = [p[0] for p in pts_2d]
+    ys = [p[1] for p in pts_2d]
+    x1, x2 = min(xs), max(xs)
+    y1, y2 = min(ys), max(ys)
+    # Draw projected bbox edges
+    edges_idx = [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7)]
+    lines = []
+    for i, j in edges_idx:
+        px1, py1 = pts_2d[i]
+        px2, py2 = pts_2d[j]
+        lines.append(f'<line x1="{px1:.3f}" y1="{py1:.3f}" x2="{px2:.3f}" y2="{py2:.3f}" '
+                     f'stroke="rgb(0,0,0)" stroke-width="0.35" />')
+    return f'<g>\n{"".join(lines)}\n</g>'
+
+
+def safe_project_to_svg(shape, direction, use_safe_mode=False):
+    """Wrapper around TechDraw.projectToSVG with exception handling.
+    In safe_mode, uses simplified bbox wireframe projection to avoid HLR crashes.
+    Returns (svg_string, ok, degraded)."""
+    if use_safe_mode:
+        try:
+            svg = _bbox_wireframe_svg(shape, direction)
+            return svg, True, True
+        except Exception as exc:
+            log(f"Bbox wireframe fallback also failed: {exc}")
+            return '<g></g>', False, True
+    try:
+        svg = TechDraw.projectToSVG(shape, direction)
+        return svg, True, False
+    except Exception as exc:
+        log(f"TechDraw.projectToSVG failed: {exc} — trying bbox wireframe fallback")
+        try:
+            svg = _bbox_wireframe_svg(shape, direction)
+            return svg, True, True
+        except Exception:
+            return '<g></g>', False, True
+
+
 def read_metadata(path):
     if not path or not os.path.exists(path):
         return {}
@@ -58,8 +156,9 @@ def read_metadata(path):
         return json.load(handle)
 
 
-def _run_unfold_subprocess(input_path, feature_payload):
-    """Run step_unfold.py as a subprocess and return the result dict, or None."""
+def _run_unfold_subprocess(input_path, feature_payload, dxf_output_path=None):
+    """Run step_unfold.py as a subprocess and return the result dict, or None.
+    If dxf_output_path is given, also export the unfolded shape as DXF."""
     import subprocess as _sp
     import tempfile
     unfold_script = os.path.join(os.path.dirname(__file__), "step_unfold.py")
@@ -77,8 +176,11 @@ def _run_unfold_subprocess(input_path, feature_payload):
         if k is not None:
             env["DRAWFORM_K_FACTOR"] = str(k)
         env["DRAWFORM_K_STANDARD"] = "din"
+        cmd = [freecad_py, unfold_script, str(input_path), out_json]
+        if dxf_output_path:
+            cmd.append(str(dxf_output_path))
         result = _sp.run(
-            [freecad_py, unfold_script, str(input_path), out_json],
+            cmd,
             capture_output=True, text=True, timeout=90, env=env,
         )
         if os.path.exists(out_json):
@@ -212,15 +314,46 @@ def load_shape(doc, step_path):
     doc.recompute()
     shapes = []
     for obj in doc.Objects:
-        if hasattr(obj, "Shape"):
-            shape = obj.Shape
-            if shape and not shape.isNull():
+        if not hasattr(obj, "Shape"):
+            continue
+        shape = obj.Shape
+        if not shape or shape.isNull():
+            continue
+        # Filter out datum planes/axes imported from STEP assemblies.
+        # These are infinite geometry objects with enormous bounding boxes (>1e10mm)
+        # that corrupt downstream calculations (TechDraw, scaling, layout).
+        # Accept only shapes with Solids, or non-degenerate Faces with bounded extent.
+        if shape.Solids:
+            shapes.append(shape)
+        elif shape.Faces:
+            bb = shape.BoundBox
+            max_ext = max(bb.XLength, bb.YLength, bb.ZLength)
+            if max_ext < 1e6:  # realistic part: < 1km
                 shapes.append(shape)
+            else:
+                log(f"Skipping datum/infinite geometry: {obj.Label} (extent={max_ext:.1e}mm)")
+        # Skip pure edges/vertices without faces (axes, construction geometry)
     if not shapes:
         raise RuntimeError("No solid geometry found in STEP file.")
-    if len(shapes) == 1:
-        return shapes[0]
-    return Part.makeCompound(shapes)
+    combined = shapes[0] if len(shapes) == 1 else Part.makeCompound(shapes)
+    # Shape healing: removeSplitter merges split faces and simplifies topology.
+    # Only apply when multiple shells/compounds indicate assembly STEP with redundant seams.
+    # Avoids changing geometry of simple parts (which would break golden baseline regression).
+    n_shells = len(combined.Shells) if hasattr(combined, "Shells") else 0
+    if n_shells > 2:
+        try:
+            healed = combined.removeSplitter()
+            if healed and not healed.isNull() and len(healed.Faces) > 0:
+                hbb = healed.BoundBox
+                max_extent = max(hbb.XLength, hbb.YLength, hbb.ZLength)
+                if max_extent < 1e6:
+                    log(f"Shape healed: {len(combined.Faces)} -> {len(healed.Faces)} faces ({n_shells} shells)")
+                    return healed
+                else:
+                    log(f"removeSplitter produced degenerate bbox ({max_extent:.1e}mm), keeping original")
+        except Exception as exc:
+            log(f"removeSplitter failed (non-fatal): {exc}")
+    return combined
 
 
 def replace_text(svg, key, value):
@@ -423,10 +556,10 @@ def build_step_dimensions(svg_group, bounds, scale, stroke_width, line_profile=N
             if label_width is not None:
                 step_val = (x_pos - min_x) / (max_x - min_x) * label_width
             # Extension lines
-            parts.append(f'<line x1="{x_pos:.3f}" y1="{max_y + gap:.3f}" x2="{x_pos:.3f}" y2="{dim_y + ext_over:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+            parts.append(f'<line x1="{x_pos:.3f}" y1="{max_y:.3f}" x2="{x_pos:.3f}" y2="{dim_y + ext_over:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
             # Left reference extension (only first time)
             if i == 0:
-                parts.append(f'<line x1="{min_x:.3f}" y1="{max_y + gap:.3f}" x2="{min_x:.3f}" y2="{dim_y + ext_over + step_spacing * (len(step_x) - 1):.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+                parts.append(f'<line x1="{min_x:.3f}" y1="{max_y:.3f}" x2="{min_x:.3f}" y2="{dim_y + ext_over + step_spacing * (len(step_x) - 1):.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
             # Dimension line
             parts.append(f'<line x1="{min_x:.3f}" y1="{dim_y:.3f}" x2="{x_pos:.3f}" y2="{dim_y:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
             # Arrows
@@ -461,9 +594,9 @@ def build_step_dimensions(svg_group, bounds, scale, stroke_width, line_profile=N
             if label_height is not None:
                 step_val = (y_pos - min_y) / (max_y - min_y) * label_height
             # Extension lines
-            parts.append(f'<line x1="{max_x + gap:.3f}" y1="{y_pos:.3f}" x2="{dim_x + ext_over:.3f}" y2="{y_pos:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+            parts.append(f'<line x1="{max_x:.3f}" y1="{y_pos:.3f}" x2="{dim_x + ext_over:.3f}" y2="{y_pos:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
             if i == 0:
-                parts.append(f'<line x1="{max_x + gap:.3f}" y1="{min_y:.3f}" x2="{dim_x + ext_over + step_spacing * (len(step_y) - 1):.3f}" y2="{min_y:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+                parts.append(f'<line x1="{max_x:.3f}" y1="{min_y:.3f}" x2="{dim_x + ext_over + step_spacing * (len(step_y) - 1):.3f}" y2="{min_y:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
             # Dimension line
             parts.append(f'<line x1="{dim_x:.3f}" y1="{min_y:.3f}" x2="{dim_x:.3f}" y2="{y_pos:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
             # Arrows
@@ -497,24 +630,13 @@ def extract_svg_bounds(svg_group):
     for path in paths:
         coords.extend(_extract_path_coords(path, include_arc_envelopes=True))
     
-    # Extract from circle elements: <circle cx="X" cy="Y" r="R" />
-    circles = re.findall(r'<circle[^>]+cx\s*=\s*"([^"]+)"[^>]+cy\s*=\s*"([^"]+)"[^>]+r\s*=\s*"([^"]+)"', svg_group)
-    for cx, cy, r in circles:
-        cx, cy, r = float(cx), float(cy), float(r)
-        # Circle bounds: center ± radius
-        coords.append((cx - r, cy - r))
-        coords.append((cx + r, cy + r))
-    
-    # Also check for circles with attributes in different order
-    circles2 = re.findall(r'<circle[^>]+>', svg_group)
-    for circle in circles2:
-        cx_match = re.search(r'cx\s*=\s*"([^"]+)"', circle)
-        cy_match = re.search(r'cy\s*=\s*"([^"]+)"', circle)
-        r_match = re.search(r'\br\s*=\s*"([^"]+)"', circle)
-        if cx_match and cy_match and r_match:
-            cx = float(cx_match.group(1))
-            cy = float(cy_match.group(1))
-            r = float(r_match.group(1))
+    # Extract from circle elements (attribute order may vary)
+    for circle in re.findall(r'<circle[^>]+>', svg_group):
+        cx_m = re.search(r'cx\s*=\s*"([^"]+)"', circle)
+        cy_m = re.search(r'cy\s*=\s*"([^"]+)"', circle)
+        r_m = re.search(r'\br\s*=\s*"([^"]+)"', circle)
+        if cx_m and cy_m and r_m:
+            cx, cy, r = float(cx_m.group(1)), float(cy_m.group(1)), float(r_m.group(1))
             coords.append((cx - r, cy - r))
             coords.append((cx + r, cy + r))
     
@@ -563,6 +685,127 @@ def extract_svg_bounds(svg_group):
     xs = [point[0] for point in coords]
     ys = [point[1] for point in coords]
     return min(xs), max(xs), min(ys), max(ys)
+
+
+def _normalize_angle_2pi(angle):
+    two_pi = 2.0 * math.pi
+    while angle < 0.0:
+        angle += two_pi
+    while angle >= two_pi:
+        angle -= two_pi
+    return angle
+
+
+def _svg_vector_angle(ux, uy, vx, vy):
+    return math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
+
+
+def _svg_arc_center_params(x1, y1, rx, ry, xrot_deg, large_arc, sweep, x2, y2):
+    rx = abs(float(rx))
+    ry = abs(float(ry))
+    if rx <= 1e-8 or ry <= 1e-8:
+        return None
+
+    phi = math.radians(float(xrot_deg) % 360.0)
+    cos_phi = math.cos(phi)
+    sin_phi = math.sin(phi)
+
+    dx2 = (x1 - x2) * 0.5
+    dy2 = (y1 - y2) * 0.5
+    x1p = cos_phi * dx2 + sin_phi * dy2
+    y1p = -sin_phi * dx2 + cos_phi * dy2
+
+    lam = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry)
+    if lam > 1.0:
+        scale = math.sqrt(lam)
+        rx *= scale
+        ry *= scale
+
+    num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p
+    den = rx * rx * y1p * y1p + ry * ry * x1p * x1p
+    if abs(den) <= 1e-12:
+        return None
+    sign = -1.0 if int(large_arc) == int(sweep) else 1.0
+    coef = sign * math.sqrt(max(0.0, num / den))
+
+    cxp = coef * ((rx * y1p) / ry)
+    cyp = coef * (-(ry * x1p) / rx)
+    cx = cos_phi * cxp - sin_phi * cyp + (x1 + x2) * 0.5
+    cy = sin_phi * cxp + cos_phi * cyp + (y1 + y2) * 0.5
+
+    ux = (x1p - cxp) / rx
+    uy = (y1p - cyp) / ry
+    vx = (-x1p - cxp) / rx
+    vy = (-y1p - cyp) / ry
+    theta1 = _svg_vector_angle(1.0, 0.0, ux, uy)
+    delta = _svg_vector_angle(ux, uy, vx, vy)
+    if not int(sweep) and delta > 0.0:
+        delta -= 2.0 * math.pi
+    elif int(sweep) and delta < 0.0:
+        delta += 2.0 * math.pi
+
+    return {
+        "cx": cx,
+        "cy": cy,
+        "rx": rx,
+        "ry": ry,
+        "phi": phi,
+        "theta1": theta1,
+        "delta": delta,
+    }
+
+
+def _svg_arc_contains_angle(angle, start_angle, delta_angle, tol=1e-6):
+    angle = _normalize_angle_2pi(angle)
+    start = _normalize_angle_2pi(start_angle)
+    if delta_angle >= 0.0:
+        span = min(delta_angle, 2.0 * math.pi)
+        diff = (angle - start) % (2.0 * math.pi)
+        return diff <= span + tol
+    span = min(-delta_angle, 2.0 * math.pi)
+    diff = (start - angle) % (2.0 * math.pi)
+    return diff <= span + tol
+
+
+def _svg_arc_bbox_points(x1, y1, rx, ry, xrot_deg, large_arc, sweep, x2, y2):
+    params = _svg_arc_center_params(x1, y1, rx, ry, xrot_deg, large_arc, sweep, x2, y2)
+    if not params:
+        return [(x1, y1), (x2, y2)]
+
+    cx = params["cx"]
+    cy = params["cy"]
+    rx = params["rx"]
+    ry = params["ry"]
+    phi = params["phi"]
+    theta1 = params["theta1"]
+    delta = params["delta"]
+
+    cos_phi = math.cos(phi)
+    sin_phi = math.sin(phi)
+
+    def arc_point(theta):
+        ct = math.cos(theta)
+        st = math.sin(theta)
+        return (
+            cx + rx * ct * cos_phi - ry * st * sin_phi,
+            cy + rx * ct * sin_phi + ry * st * cos_phi,
+        )
+
+    candidates = [theta1, theta1 + delta]
+    candidates.extend([
+        math.atan2(-ry * sin_phi, rx * cos_phi),
+        math.atan2(-ry * sin_phi, rx * cos_phi) + math.pi,
+        math.atan2(ry * cos_phi, rx * sin_phi),
+        math.atan2(ry * cos_phi, rx * sin_phi) + math.pi,
+    ])
+
+    points = []
+    for theta in candidates:
+        if _svg_arc_contains_angle(theta, theta1, delta):
+            points.append(arc_point(theta))
+    if not points:
+        points = [(x1, y1), (x2, y2)]
+    return points
 
 
 def _extract_path_coords(path_data, include_arc_envelopes=False):
@@ -724,10 +967,19 @@ def _extract_path_coords(path_data, include_arc_envelopes=False):
                     y += cy
                 coords.append((x, y))
                 if include_arc_envelopes and (rx > 0.0 or ry > 0.0):
-                    coords.append((x - rx, y - ry))
-                    coords.append((x + rx, y + ry))
-                    coords.append((start_x - rx, start_y - ry))
-                    coords.append((start_x + rx, start_y + ry))
+                    coords.extend(
+                        _svg_arc_bbox_points(
+                            start_x,
+                            start_y,
+                            rx,
+                            ry,
+                            _xrot,
+                            int(_laf),
+                            int(_sf),
+                            x,
+                            y,
+                        )
+                    )
                 cx, cy = x, y
             continue
 
@@ -799,6 +1051,17 @@ def expand_bounds(bounds, pad):
     return min_x - pad, max_x + pad, min_y - pad, max_y + pad
 
 
+def expand_dimension_bounds(bounds, pad, *, show_horizontal=True, show_vertical=True, bleed_ratio=0.12):
+    min_x, max_x, min_y, max_y = bounds
+    bleed = max(0.0, pad * bleed_ratio)
+    return (
+        min_x - bleed,
+        max_x + (pad if show_vertical else bleed),
+        min_y - bleed,
+        max_y + (pad if show_horizontal else bleed),
+    )
+
+
 def rotate_bounds_90(bounds):
     min_x, max_x, min_y, max_y = bounds
     return (-max_y, -min_y, min_x, max_x)
@@ -813,11 +1076,92 @@ def append_to_group(svg_group, extra):
     return svg_group + extra
 
 
+def _outline_start_x(svg_group, bounds, y_target, find_max=True):
+    """Find the rightmost (find_max=True) or leftmost x of the part outline at y=y_target.
+
+    Only considers SVG <circle> elements whose extent TOUCHES the bounding box boundary
+    (i.e. outer silhouette circles, not inner holes). This avoids false positives from
+    inner features (pockets, slots) that share path coordinates with the outer boundary region.
+
+    Example: circular disk Ø90 — at y=max_y (top tangent), returns cx, not cx+r.
+    Rectangular part — no boundary-touching circle found, falls back to bounding-box corner.
+    """
+    min_x, max_x, min_y, max_y = bounds
+    # Tolerance for "circle touches bounding-box edge" check (0.5% of dimension, min 0.5mm)
+    tol = max(0.5, (max_y - min_y) * 0.005)
+    candidate_x = []
+
+    for circle_str in re.finditer(r'<circle[^>]+>', svg_group):
+        cs = circle_str.group()
+        cx_m = re.search(r'cx\s*=\s*"([^"]+)"', cs)
+        cy_m = re.search(r'cy\s*=\s*"([^"]+)"', cs)
+        r_m = re.search(r'\br\s*=\s*"([^"]+)"', cs)
+        if not (cx_m and cy_m and r_m):
+            continue
+        cx = float(cx_m.group(1))
+        cy = float(cy_m.group(1))
+        r = float(r_m.group(1))
+        # Only use circles whose top or bottom extent touches the bounding-box y-boundary
+        touches_top = abs(cy - r - min_y) <= tol
+        touches_bottom = abs(cy + r - max_y) <= tol
+        if not (touches_top or touches_bottom):
+            continue
+        dy = abs(y_target - cy)
+        if dy <= r:
+            dx = math.sqrt(max(0.0, r * r - dy * dy))
+            candidate_x.append(cx + dx)
+            candidate_x.append(cx - dx)
+
+    if not candidate_x:
+        return max_x if find_max else min_x
+    return max(candidate_x) if find_max else min(candidate_x)
+
+
+def _outline_start_y(svg_group, bounds, x_target, find_max=True):
+    """Find the bottommost (find_max=True in Y-down) or topmost y of the part outline at x=x_target.
+
+    Only considers SVG <circle> elements whose extent TOUCHES the bounding box boundary.
+    Paths are intentionally excluded: they include inner features (pockets, slots, holes)
+    that share x-coordinates with the outer boundary, causing false positives.
+
+    Example: circular disk — at x=min_x (left tangent), returns cy, not cy+r.
+    Rectangular/complex part — falls back to bounding-box corner (max_y or min_y).
+    """
+    min_x, max_x, min_y, max_y = bounds
+    tol = max(0.5, (max_x - min_x) * 0.005)
+    candidate_y = []
+
+    for circle_str in re.finditer(r'<circle[^>]+>', svg_group):
+        cs = circle_str.group()
+        cx_m = re.search(r'cx\s*=\s*"([^"]+)"', cs)
+        cy_m = re.search(r'cy\s*=\s*"([^"]+)"', cs)
+        r_m = re.search(r'\br\s*=\s*"([^"]+)"', cs)
+        if not (cx_m and cy_m and r_m):
+            continue
+        cx = float(cx_m.group(1))
+        cy = float(cy_m.group(1))
+        r = float(r_m.group(1))
+        # Only use circles whose left or right extent touches the bounding-box x-boundary
+        touches_left = abs(cx - r - min_x) <= tol
+        touches_right = abs(cx + r - max_x) <= tol
+        if not (touches_left or touches_right):
+            continue
+        dx = abs(x_target - cx)
+        if dx <= r:
+            dy = math.sqrt(max(0.0, r * r - dx * dx))
+            candidate_y.append(cy + dy)
+            candidate_y.append(cy - dy)
+
+    if not candidate_y:
+        return max_y if find_max else min_y
+    return max(candidate_y) if find_max else min(candidate_y)
+
+
 def dimension_metrics(bounds, scale):
     width, height = bounds_size(bounds)
     max_dim_paper = max(width, height) * scale
     offset_mm = max(1.6, min(max_dim_paper * 0.1, 10.0))
-    gap_mm = max(0.5, min(1.5, offset_mm * 0.2))
+    gap_mm = 0.0  # Extension lines start at part edge (DIN ISO 129-1, $DIMEXO=0)
     ext_over_mm = max(0.6, min(2.0, offset_mm * 0.25))
     arrow_len_mm = max(0.6, min(2.2, offset_mm * 0.22))
     arrow_half_mm = max(0.3, arrow_len_mm * 0.35)
@@ -882,6 +1226,7 @@ def build_dimension_svg(
     rotation_deg=0,
     show_horizontal=True,
     show_vertical=True,
+    svg_group=None,
 ):
     min_x, max_x, min_y, max_y = bounds
     width, height = bounds_size(bounds)
@@ -908,6 +1253,19 @@ def build_dimension_svg(
     label_w = format_de_number(label_width)
     label_h = format_de_number(label_height)
 
+    # Compute outline-anchored extension line start points.
+    # For a circle: the extension line for the HEIGHT dim at y=max_y starts at x=cx (top tangent),
+    # not at x=max_x (bounding box right). Same principle for all curved profiles.
+    # Falls back to bounding box corner when no svg_group is provided.
+    if svg_group is not None:
+        y_ext_left = _outline_start_y(svg_group, bounds, min_x, find_max=True)
+        y_ext_right = _outline_start_y(svg_group, bounds, max_x, find_max=True)
+        x_ext_top = _outline_start_x(svg_group, bounds, max_y, find_max=True)
+        x_ext_bottom = _outline_start_x(svg_group, bounds, min_y, find_max=True)
+    else:
+        y_ext_left = y_ext_right = max_y
+        x_ext_top = x_ext_bottom = max_x
+
     line_parts = []
     arrow_parts = []
     show_horizontal = bool(show_horizontal)
@@ -916,8 +1274,8 @@ def build_dimension_svg(
         line_parts.extend(
             [
                 f'<line x1="{min_x:.3f}" y1="{y_dim:.3f}" x2="{max_x:.3f}" y2="{y_dim:.3f}" />',
-                f'<line x1="{min_x:.3f}" y1="{max_y + gap:.3f}" x2="{min_x:.3f}" y2="{y_dim + ext_over:.3f}" />',
-                f'<line x1="{max_x:.3f}" y1="{max_y + gap:.3f}" x2="{max_x:.3f}" y2="{y_dim + ext_over:.3f}" />',
+                f'<line x1="{min_x:.3f}" y1="{y_ext_left:.3f}" x2="{min_x:.3f}" y2="{y_dim + ext_over:.3f}" />',
+                f'<line x1="{max_x:.3f}" y1="{y_ext_right:.3f}" x2="{max_x:.3f}" y2="{y_dim + ext_over:.3f}" />',
             ]
         )
         arrow_parts.extend(
@@ -929,8 +1287,8 @@ def build_dimension_svg(
     if show_vertical:
         line_parts.extend(
             [
-                f'<line x1="{max_x + gap:.3f}" y1="{min_y:.3f}" x2="{x_dim + ext_over:.3f}" y2="{min_y:.3f}" />',
-                f'<line x1="{max_x + gap:.3f}" y1="{max_y:.3f}" x2="{x_dim + ext_over:.3f}" y2="{max_y:.3f}" />',
+                f'<line x1="{x_ext_bottom:.3f}" y1="{min_y:.3f}" x2="{x_dim + ext_over:.3f}" y2="{min_y:.3f}" />',
+                f'<line x1="{x_ext_top:.3f}" y1="{max_y:.3f}" x2="{x_dim + ext_over:.3f}" y2="{max_y:.3f}" />',
                 f'<line x1="{x_dim:.3f}" y1="{min_y:.3f}" x2="{x_dim:.3f}" y2="{max_y:.3f}" />',
             ]
         )
@@ -992,6 +1350,90 @@ def build_dimension_svg(
     text_group = "".join(text_parts)
     arrows = f'<g fill="rgb(0, 0, 0)" stroke="none">' + "".join(arrow_parts) + "</g>"
     return lines + arrows + text_group if (show_horizontal or show_vertical) else ""
+
+
+def build_round_overall_dimension_svg(svg_group, bounds, scale, stroke_width, line_profile=None):
+    width, height = bounds_size(bounds)
+    diameter = max(width, height)
+    round_ratio = abs(width - height) / max(diameter, 1e-6)
+    if round_ratio > 0.12 or diameter <= 1.0:
+        return ""
+
+    min_x, max_x, min_y, max_y = bounds
+    metrics = dimension_metrics(bounds, scale)
+    offset = metrics["offset"]
+    ext_over = metrics["ext_over"]
+    arrow_len = metrics["arrow_len"]
+    arrow_half = metrics["arrow_half"]
+    text_size = metrics["text_size"]
+    dim_stroke = max(0.0008, stroke_width * 0.6)
+    if isinstance(line_profile, dict):
+        dim_stroke = max(0.0008, float(line_profile.get("dimension", dim_stroke)))
+
+    y_dim = max_y + offset
+    mid_x = (min_x + max_x) / 2
+    label = f"Ø{format_de_number(diameter)}"
+    y_ext_left = _outline_start_y(svg_group, bounds, min_x, find_max=True)
+    y_ext_right = _outline_start_y(svg_group, bounds, max_x, find_max=True)
+
+    lines = (
+        f'<g fill="none" stroke="rgb(0, 0, 0)" stroke-width="{dim_stroke:.4f}" '
+        f'stroke-linecap="butt" stroke-linejoin="miter">'
+        f'<line x1="{min_x:.3f}" y1="{y_dim:.3f}" x2="{max_x:.3f}" y2="{y_dim:.3f}" />'
+        f'<line x1="{min_x:.3f}" y1="{y_ext_left:.3f}" x2="{min_x:.3f}" y2="{y_dim + ext_over:.3f}" />'
+        f'<line x1="{max_x:.3f}" y1="{y_ext_right:.3f}" x2="{max_x:.3f}" y2="{y_dim + ext_over:.3f}" />'
+        "</g>"
+    )
+    arrows = (
+        f'<g fill="rgb(0, 0, 0)" stroke="none">'
+        f'<polygon points="{min_x:.3f},{y_dim:.3f} {min_x + arrow_len:.3f},{y_dim - arrow_half:.3f} {min_x + arrow_len:.3f},{y_dim + arrow_half:.3f}" />'
+        f'<polygon points="{max_x:.3f},{y_dim:.3f} {max_x - arrow_len:.3f},{y_dim - arrow_half:.3f} {max_x - arrow_len:.3f},{y_dim + arrow_half:.3f}" />'
+        "</g>"
+    )
+    return lines + arrows + _feature_text_svg(label, mid_x, y_dim, text_size, anchor="middle")
+
+
+def resolve_overall_dimension_axes(view_name, dim_plan=None):
+    if dim_plan:
+        view_plan = next((v for v in dim_plan.get("views", []) if v.get("view_name") == view_name), None)
+        view_dims = (view_plan or {}).get("dimensions", [])
+        show_horizontal = any(
+            d.get("axis") == "H" and str(d.get("dim_type", "")).startswith("overall")
+            for d in view_dims
+        )
+        show_vertical = any(
+            d.get("axis") == "V" and str(d.get("dim_type", "")).startswith("overall")
+            for d in view_dims
+        )
+        return show_horizontal, show_vertical
+
+    show_horizontal = True
+    show_vertical = True
+    if view_name == "Left":
+        show_horizontal = False
+        show_vertical = False
+    elif view_name == "Top":
+        show_horizontal = False
+        show_vertical = True
+    return show_horizontal, show_vertical
+
+
+def view_requests_feature_dimensions(view_name, dim_plan=None):
+    if not dim_plan:
+        return False
+    view_plan = next((v for v in dim_plan.get("views", []) if v.get("view_name") == view_name), None)
+    view_dims = (view_plan or {}).get("dimensions", [])
+    return any(
+        d.get("dim_type") in (
+            "hole_diameter",
+            "hole_pitch",
+            "hole_location_x",
+            "hole_location_y",
+            "thread_callout",
+            "bend_radius",
+        )
+        for d in view_dims
+    )
 
 
 def compute_stroke_width(scale, stroke_base=0.12, min_width=0.001):
@@ -1295,12 +1737,25 @@ def compute_scale_for_area(bounds, area_w, area_h, padding=0.85):
     return min((area_w * padding) / width, (area_h * padding) / height)
 
 
-def compute_dimension_padded_bounds(base_bounds, cell_w, cell_h, padding=0.85, iterations=2):
+def compute_dimension_padded_bounds(
+    base_bounds,
+    cell_w,
+    cell_h,
+    padding=0.85,
+    iterations=2,
+    show_horizontal=True,
+    show_vertical=True,
+):
     scale = compute_fit_scale(base_bounds, cell_w, cell_h, padding=padding)
     padded_bounds = base_bounds
     for _ in range(max(1, iterations)):
         pad = dimension_metrics(base_bounds, scale)["pad"]
-        padded_bounds = expand_bounds(base_bounds, pad)
+        padded_bounds = expand_dimension_bounds(
+            base_bounds,
+            pad,
+            show_horizontal=show_horizontal,
+            show_vertical=show_vertical,
+        )
         scale = compute_fit_scale(padded_bounds, cell_w, cell_h, padding=padding)
     return padded_bounds, scale
 
@@ -1687,8 +2142,14 @@ def first_angle_projection(shape, points):
         log(f"[FirstAngle] FLAT part (ratio={flatness_ratio:.2f}) -> look from {third_name}")
         front_dir = third_axis
         # Check which direction shows more detail.
-        svg_pos = TechDraw.projectToSVG(shape, third_axis)
-        svg_neg = TechDraw.projectToSVG(shape, third_axis.negative())
+        try:
+            svg_pos = TechDraw.projectToSVG(shape, third_axis)
+        except Exception:
+            svg_pos = '<g></g>'
+        try:
+            svg_neg = TechDraw.projectToSVG(shape, third_axis.negative())
+        except Exception:
+            svg_neg = '<g></g>'
         score_pos = svg_detail_score(svg_pos)
         score_neg = svg_detail_score(svg_neg)
         candidate_scores = [
@@ -1742,7 +2203,7 @@ def first_angle_projection(shape, points):
             try:
                 svg = TechDraw.projectToSVG(shape, d)
                 score = svg_detail_score(svg)
-            except:
+            except Exception:
                 score = 0
             candidate_scores.append((name, score))
             log(f"[FirstAngle]   candidate {name}: score={score:.1f}")
@@ -1983,6 +2444,87 @@ def detect_feature_payload(shape, meta):
     return {"ok": False, "error": "feature_probe_invalid_payload"}
 
 
+def build_local_dimension_plan(meta, feature_payload, layout_profile, unfold_result=None):
+    if not isinstance(feature_payload, dict) or feature_payload.get("ok") is not True:
+        return None
+    try:
+        detail_level = int((meta or {}).get("detail_level", 1) or 1)
+    except (TypeError, ValueError):
+        detail_level = 1
+
+    server_root = Path(__file__).resolve().parent.parent
+    if str(server_root) not in sys.path:
+        sys.path.insert(0, str(server_root))
+
+    try:
+        from rules.dimension_strategy import build_dimension_plan as dse_build_dimension_plan
+        plan = dse_build_dimension_plan(
+            feature_payload=feature_payload,
+            layout_profile=layout_profile,
+            unfold_result=unfold_result,
+            detail_level=detail_level,
+        )
+    except Exception as exc:
+        log(f"Local DSE import/build failed: {exc}")
+        payload = {
+            "feature_payload": feature_payload,
+            "layout_profile": layout_profile,
+            "unfold_result": unfold_result,
+            "detail_level": detail_level,
+        }
+        candidates = [
+            server_root / ".venv" / "Scripts" / "python.exe",
+            server_root.parent / ".venv" / "Scripts" / "python.exe",
+            server_root / ".venv" / "bin" / "python",
+            server_root.parent / ".venv" / "bin" / "python",
+        ]
+        helper_python = next((str(path) for path in candidates if path.exists()), None)
+        if not helper_python:
+            log("No helper Python with DSE dependencies found")
+            return None
+        helper_script = (
+            "import json, sys\n"
+            "from rules.dimension_strategy import build_dimension_plan\n"
+            "payload = json.load(sys.stdin)\n"
+            "plan = build_dimension_plan(\n"
+            "    feature_payload=payload['feature_payload'],\n"
+            "    layout_profile=payload['layout_profile'],\n"
+            "    unfold_result=payload.get('unfold_result'),\n"
+            "    detail_level=int(payload.get('detail_level', 1) or 1),\n"
+            ")\n"
+            "if hasattr(plan, 'model_dump'):\n"
+            "    plan = plan.model_dump()\n"
+            "json.dump(plan, sys.stdout)\n"
+        )
+        try:
+            result = subprocess.run(
+                [helper_python, "-c", helper_script],
+                input=json.dumps(payload),
+                capture_output=True,
+                text=True,
+                cwd=str(server_root),
+                timeout=30,
+            )
+        except Exception as sub_exc:
+            log(f"Local DSE helper subprocess failed: {sub_exc}")
+            return None
+        if result.returncode != 0:
+            err = (result.stderr or "").strip() or f"exit={result.returncode}"
+            log(f"Local DSE helper returned error: {err}")
+            return None
+        try:
+            plan = json.loads(result.stdout)
+        except json.JSONDecodeError as parse_exc:
+            log(f"Local DSE helper produced invalid JSON: {parse_exc}")
+            return None
+
+    if hasattr(plan, "model_dump"):
+        return plan.model_dump()
+    if isinstance(plan, dict):
+        return plan
+    return None
+
+
 def _optional_float(value):
     try:
         if value is None:
@@ -2035,21 +2577,42 @@ def select_layout_profile(input_path, feature_payload, dim_x, dim_y, dim_z):
                 and measured_t is not None and measured_t <= 5.0):
             return "sheet_metal"
 
+        # Tier 1.5: Probe detected bend geometry — strongest sheet metal signal.
+        # The probe's edge-based bend detector (50% circumference filter) already
+        # rejects milling fillets/chamfers. If bends are found, they're real bends.
+        # No cone_count or thickness guard needed: bent parts may have chamfered
+        # edges (cone faces) and measured_thickness_mm can be wrong on complex
+        # bent parts (it may measure the bend height instead of wall thickness).
+        fp = feature_payload.get("flat_pattern") or {}
+        probe_bend_count = int(fp.get("bend_count") or 0)
+        if probe_bend_count > 0:
+            return "sheet_metal"
+
         # Tier 2: Measured wall thickness < 5mm (typical sheet metal range) combined
-        # with non-zero flat_ratio (bent parts are not perfectly flat in bbox terms).
+        # with flat bbox (flat parts without bends = laser cut).
+        # Guard: pocket_ratio — if bbox_min >> measured_t, it's a pocket, not wall.
+        # Guard: cone faces — fillets/chamfers indicate milling.
         if measured_t is not None and 0.3 <= measured_t <= 5.0:
-            flat_ratio = _optional_float(feature_payload.get("flat_ratio"))
-            if flat_ratio is not None and flat_ratio < 0.7:
-                return "sheet_metal"
+            cone_count = int(feature_payload.get("cone_face_count") or 0)
+            if cone_count == 0:
+                bbox_min_dim = min(float(dim_x), float(dim_y), float(dim_z))
+                pocket_ratio = bbox_min_dim / max(measured_t, 0.01)
+                if pocket_ratio <= 3.0:
+                    flat_ratio = _optional_float(feature_payload.get("flat_ratio"))
+                    if flat_ratio is not None and flat_ratio < 0.7:
+                        return "sheet_metal"
 
         # Tier 3 (FALLBACK): BBox ratio with tighter threshold (was 0.25, now 0.15).
         # Prevents thick milling parts from being misclassified.
-        thickness_axis = str(feature_payload.get("thickness_axis") or "").upper()
-        dims = {"X": float(dim_x), "Y": float(dim_y), "Z": float(dim_z)}
-        thickness = dims.get(thickness_axis, min(dims.values()))
-        mid_dim = sorted(dims.values(), reverse=True)[1]
-        if mid_dim > 0 and thickness / mid_dim < 0.15:
-            return "sheet_metal"
+        # Guard: cone faces (chamfers/fillets) are a strong milling indicator.
+        cone_count_t3 = int(feature_payload.get("cone_face_count") or 0)
+        if cone_count_t3 == 0:
+            thickness_axis = str(feature_payload.get("thickness_axis") or "").upper()
+            dims = {"X": float(dim_x), "Y": float(dim_y), "Z": float(dim_z)}
+            thickness = dims.get(thickness_axis, min(dims.values()))
+            mid_dim = sorted(dims.values(), reverse=True)[1]
+            if mid_dim > 0 and thickness / mid_dim < 0.15:
+                return "sheet_metal"
 
     return "milling"
 
@@ -2072,6 +2635,97 @@ def compute_layout_usage(views_bbox, draw_bbox):
     draw_w = max(1e-6, float(draw_bbox.get("right", 0.0)) - float(draw_bbox.get("left", 0.0)))
     draw_h = max(1e-6, float(draw_bbox.get("bottom", 0.0)) - float(draw_bbox.get("top", 0.0)))
     return (views_w / draw_w) * (views_h / draw_h)
+
+
+def select_view_layout_variant(layout_profile, sheet_metal_subtype, feature_payload, dim_x, dim_y, dim_z):
+    if layout_profile == "sheet_metal" and sheet_metal_subtype == "biegeteil":
+        return "sheet_bent"
+
+    dims = sorted([float(dim_x), float(dim_y), float(dim_z)], reverse=True)
+    mid_dim = max(dims[1], 0.1)
+    thickness_ratio = dims[2] / mid_dim
+    is_flat = bool((feature_payload or {}).get("is_flat")) or thickness_ratio < 0.22
+    round_span = max(float(dim_x), float(dim_z), 0.1)
+    roundish_front = abs(float(dim_x) - float(dim_z)) / round_span < 0.12
+
+    if is_flat and roundish_front:
+        return "flat_round_dominant"
+    return "grid_2x2"
+
+
+def build_view_slots(layout_variant, origin_x, origin_y, avail_w, avail_h):
+    if layout_variant == "sheet_bent":
+        views_w = avail_w * 0.60
+        cell_w = views_w / 2.0
+        cell_h = avail_h / 2.0
+        return {
+            "Front": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 0.5, "cy": origin_y + cell_h * 0.5, "enabled": True},
+            "Left": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 1.5, "cy": origin_y + cell_h * 0.5, "enabled": True},
+            "Top": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 0.5, "cy": origin_y + cell_h * 1.5, "enabled": True},
+            "Iso": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 1.5, "cy": origin_y + cell_h * 1.5, "enabled": True},
+        }
+
+    if layout_variant == "flat_round_dominant":
+        gap = 8.0
+        bottom_h = min(32.0, max(26.0, avail_h * 0.13))
+        iso_w = min(92.0, max(74.0, avail_w * 0.20))
+        front_span = min(avail_h - bottom_h - gap, avail_w - iso_w - gap)
+        front_span = max(front_span, min(avail_w * 0.42, avail_h * 0.60))
+        iso_h = min(max(38.0, iso_w * 0.68), avail_h * 0.32)
+        iso_w = min(iso_w, max(40.0, avail_w - front_span - gap))
+        return {
+            "Front": {
+                "w": front_span,
+                "h": front_span,
+                "cx": origin_x + front_span * 0.5,
+                "cy": origin_y + front_span * 0.5,
+                "enabled": True,
+            },
+            "Left": {
+                "w": 0.0,
+                "h": 0.0,
+                "cx": origin_x + front_span * 0.5,
+                "cy": origin_y + front_span * 0.5,
+                "enabled": False,
+            },
+            "Top": {
+                "w": front_span,
+                "h": bottom_h,
+                "cx": origin_x + front_span * 0.5,
+                "cy": origin_y + front_span + gap + bottom_h * 0.5,
+                "enabled": True,
+            },
+            "Iso": {
+                "w": iso_w,
+                "h": iso_h,
+                "cx": origin_x + front_span + gap + iso_w * 0.5,
+                "cy": origin_y + avail_h - iso_h * 0.5,
+                "enabled": True,
+            },
+        }
+
+    if layout_variant == "flat_dominant":
+        side_w = max(84.0, avail_w * 0.28)
+        bottom_h = max(36.0, avail_h * 0.24)
+        side_w = min(side_w, avail_w * 0.38)
+        bottom_h = min(bottom_h, avail_h * 0.34)
+        front_w = avail_w - side_w
+        front_h = avail_h - bottom_h
+        return {
+            "Front": {"w": front_w, "h": front_h, "cx": origin_x + front_w * 0.5, "cy": origin_y + front_h * 0.5, "enabled": True},
+            "Left": {"w": side_w, "h": front_h, "cx": origin_x + front_w + side_w * 0.5, "cy": origin_y + front_h * 0.5, "enabled": True},
+            "Top": {"w": front_w, "h": bottom_h, "cx": origin_x + front_w * 0.5, "cy": origin_y + front_h + bottom_h * 0.5, "enabled": True},
+            "Iso": {"w": side_w, "h": bottom_h, "cx": origin_x + front_w + side_w * 0.5, "cy": origin_y + front_h + bottom_h * 0.5, "enabled": True},
+        }
+
+    cell_w = avail_w / 2.0
+    cell_h = avail_h / 2.0
+    return {
+        "Front": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 0.5, "cy": origin_y + cell_h * 0.5, "enabled": True},
+        "Left": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 1.5, "cy": origin_y + cell_h * 0.5, "enabled": True},
+        "Top": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 0.5, "cy": origin_y + cell_h * 1.5, "enabled": True},
+        "Iso": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 1.5, "cy": origin_y + cell_h * 1.5, "enabled": True},
+    }
 
 
 def should_promote_to_a2(report, dim_x, dim_y, dim_z, *, requested_sheet):
@@ -2378,21 +3032,52 @@ def _resolve_circular_arc_center(arc):
 
 def extract_svg_arc_circles(svg_group):
     circles = []
+    grouped = {}
     for path_data in re.findall(r'd="([^"]+)"', svg_group):
         for arc in _parse_svg_path_arcs(path_data):
             resolved = _resolve_circular_arc_center(arc)
             if not resolved:
                 continue
-            # Filter out tiny corner rounds; keep near-semi/full arcs used for hole contours.
-            if resolved["sweep_abs"] < math.radians(140.0):
-                continue
-            circles.append(
-                {
-                    "cx": resolved["cx"],
-                    "cy": resolved["cy"],
-                    "r": resolved["r"],
-                }
+            if float(resolved["sweep_abs"]) >= math.radians(140.0):
+                circles.append(
+                    {
+                        "cx": float(resolved["cx"]),
+                        "cy": float(resolved["cy"]),
+                        "r": float(resolved["r"]),
+                    }
+                )
+            radius = float(resolved["r"])
+            tol = max(0.2, radius * 0.03)
+            key = (
+                round(float(resolved["cx"]) / tol),
+                round(float(resolved["cy"]) / tol),
+                round(radius / tol),
             )
+            bucket = grouped.setdefault(
+                key,
+                {"cx": 0.0, "cy": 0.0, "r": 0.0, "sweep_abs": 0.0, "count": 0},
+            )
+            bucket["cx"] += float(resolved["cx"])
+            bucket["cy"] += float(resolved["cy"])
+            bucket["r"] += radius
+            bucket["sweep_abs"] += min(float(resolved["sweep_abs"]), 2.0 * math.pi)
+            bucket["count"] += 1
+    for bucket in grouped.values():
+        if int(bucket.get("count") or 0) <= 0:
+            continue
+        total_sweep = float(bucket.get("sweep_abs") or 0.0)
+        # Accept circles reconstructed from multiple smaller arcs. This captures
+        # outer round contours emitted as 4x90° segments, while rejecting fillets.
+        if total_sweep < math.radians(300.0):
+            continue
+        count = float(bucket["count"])
+        circles.append(
+            {
+                "cx": bucket["cx"] / count,
+                "cy": bucket["cy"] / count,
+                "r": bucket["r"] / count,
+            }
+        )
     return circles
 
 
@@ -2627,6 +3312,165 @@ def _feature_text_svg(text, x, y, text_size, anchor="middle"):
     )
 
 
+def _is_round_flat_feature_case(feature_payload):
+    if not isinstance(feature_payload, dict):
+        return False
+    if feature_payload.get("ok") is not True or feature_payload.get("is_flat") is not True:
+        return False
+    bbox = feature_payload.get("bbox_mm") or {}
+    dims = sorted(
+        [
+            _optional_float(bbox.get("X")) or 0.0,
+            _optional_float(bbox.get("Y")) or 0.0,
+            _optional_float(bbox.get("Z")) or 0.0,
+        ],
+        reverse=True,
+    )
+    if len(dims) < 3 or dims[0] <= 0.0 or dims[1] <= 0.0:
+        return False
+    round_ratio = abs(dims[0] - dims[1]) / max(dims[0], dims[1], 1e-6)
+    flat_ratio = dims[2] / max(dims[1], 1e-6)
+    return round_ratio <= 0.12 and flat_ratio <= 0.22
+
+
+def _build_round_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, dim_stroke, text_size, label_gap):
+    if not _is_round_flat_feature_case(feature_payload):
+        return ""
+
+    circles = extract_svg_circular_features(svg_group)
+    if len(circles) < 4:
+        return ""
+
+    outer = max(circles, key=lambda item: item["r"])
+    outer_dia = outer["r"] * 2.0
+    if outer_dia <= 1.0:
+        return ""
+
+    center_x = float(outer["cx"])
+    center_y = float(outer["cy"])
+    inner_circles = [circle for circle in circles if circle["r"] < outer["r"] * 0.92]
+    if not inner_circles:
+        return ""
+
+    grouped = {}
+    for circle in inner_circles:
+        dia = round((circle["r"] * 2.0) * 2.0) / 2.0
+        radial = round((math.hypot(circle["cx"] - center_x, circle["cy"] - center_y)) * 2.0) / 2.0
+        grouped.setdefault((dia, radial), []).append(circle)
+
+    center_feature = None
+    radial_patterns = {}
+    radial_center_tol = max(0.8, outer["r"] * 0.05)
+    for (dia, radial), members in grouped.items():
+        if radial <= radial_center_tol:
+            if center_feature is None or dia > center_feature["dia"]:
+                center_feature = {
+                    "dia": dia,
+                    "circle": max(members, key=lambda item: item["r"]),
+                }
+            continue
+        if len(members) < 3:
+            continue
+        candidate = {
+            "dia": dia,
+            "radial": radial,
+            "count": len(members),
+            "circle": max(members, key=lambda item: math.hypot(item["cx"] - center_x, item["cy"] - center_y)),
+        }
+        picked = radial_patterns.get(radial)
+        if (
+            picked is None
+            or candidate["count"] > picked["count"]
+            or (candidate["count"] == picked["count"] and candidate["dia"] > picked["dia"])
+        ):
+            radial_patterns[radial] = candidate
+
+    callouts = []
+    if center_feature and center_feature["dia"] < outer_dia * 0.95:
+        callouts.append(
+            {
+                "label": f"Ø{format_de_number(center_feature['dia'])}",
+                "circle": center_feature["circle"],
+                "dir": (-0.86, 0.52),
+            }
+        )
+
+    for pattern in sorted(radial_patterns.values(), key=lambda item: (-item["radial"], -item["count"], -item["dia"]))[:3]:
+        label = f"{pattern['count']}x Ø{format_de_number(pattern['dia'])}"
+        if pattern["radial"] > max(1.5, pattern["dia"] * 0.6):
+            label += f" LK Ø{format_de_number(pattern['radial'] * 2.0)}"
+        px = float(pattern["circle"]["cx"]) - center_x
+        py = float(pattern["circle"]["cy"]) - center_y
+        plen = math.hypot(px, py) or 1.0
+        callouts.append(
+            {
+                "label": label,
+                "circle": pattern["circle"],
+                "dir": (px / plen, py / plen),
+            }
+        )
+
+    if not callouts:
+        return ""
+
+    min_x, max_x, min_y, max_y = svg_bounds
+    line_pad = max(0.25, 0.6 / max(scale, 0.05))
+    used_label_y = []
+    collision_boxes = [
+        (
+            min_x - max(0.8, 1.8 / max(scale, 0.05)),
+            max_x + max(0.8, 1.8 / max(scale, 0.05)),
+            min_y - max(0.8, 1.8 / max(scale, 0.05)),
+            max_y + max(0.8, 1.8 / max(scale, 0.05)),
+        )
+    ]
+    parts = []
+    used_dimension_labels = set()
+    text_offset = max(10.0 / max(scale, 0.05), outer["r"] * 0.18)
+    knee_offset = max(4.0 / max(scale, 0.05), outer["r"] * 0.08)
+
+    for callout in callouts:
+        label = callout["label"]
+        if label in used_dimension_labels:
+            continue
+        used_dimension_labels.add(label)
+        circle = callout["circle"]
+        ux, uy = callout["dir"]
+        start_x = float(circle["cx"]) + ux * max(float(circle["r"]) * 0.75, 1.2 / max(scale, 0.05))
+        start_y = float(circle["cy"]) + uy * max(float(circle["r"]) * 0.75, 1.2 / max(scale, 0.05))
+        knee_x = center_x + ux * (outer["r"] + knee_offset)
+        knee_y = center_y + uy * (outer["r"] + knee_offset)
+        text_x = center_x + ux * (outer["r"] + text_offset)
+        pref_y = center_y + uy * (outer["r"] + text_offset * 0.8)
+        anchor = "start" if ux >= 0.0 else "end"
+        text_y = _reserve_feature_label_position(
+            label,
+            text_x,
+            pref_y,
+            text_size,
+            anchor,
+            used_label_y,
+            label_gap,
+            min_y - (8.0 / max(scale, 0.05)),
+            max_y + (8.0 / max(scale, 0.05)),
+            collision_boxes,
+        )
+        end_x = text_x - (1.0 / max(scale, 0.05)) if anchor == "start" else text_x + (1.0 / max(scale, 0.05))
+        end_y = text_y
+        parts.append(
+            f'<g fill="none" stroke="rgb(0, 0, 0)" stroke-width="{dim_stroke:.4f}" '
+            f'stroke-linecap="butt" stroke-linejoin="miter">'
+            f'<line x1="{start_x:.3f}" y1="{start_y:.3f}" x2="{knee_x:.3f}" y2="{knee_y:.3f}" />'
+            f'<line x1="{knee_x:.3f}" y1="{knee_y:.3f}" x2="{end_x:.3f}" y2="{end_y:.3f}" />'
+            "</g>"
+        )
+        collision_boxes.append(_line_collision_box(start_x, start_y, knee_x, knee_y, line_pad))
+        collision_boxes.append(_line_collision_box(knee_x, knee_y, end_x, end_y, line_pad))
+        parts.append(_feature_text_svg(label, text_x, text_y, text_size, anchor=anchor))
+
+    return "".join(parts)
+
+
 def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, stroke_width, line_profile=None):
     if not isinstance(feature_payload, dict) or feature_payload.get("ok") is not True:
         return ""
@@ -2654,6 +3498,17 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
     arrow_half = _metrics["arrow_half"]
     text_size = max(0.2, 2.8 / scale)  # slightly smaller than overall (3.6) but readable
     label_gap = max(1.8, 4.0 / max(scale, 0.05))
+    round_feature_svg = _build_round_feature_dimension_svg(
+        svg_group,
+        svg_bounds,
+        feature_payload,
+        scale,
+        dim_stroke,
+        text_size,
+        label_gap,
+    )
+    if round_feature_svg:
+        return round_feature_svg
     used_label_y = []
     parts = []
     hole_pitch = _optional_float(feature_payload.get("hole_pitch_mm"))
@@ -2664,6 +3519,121 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
     line_pad = max(0.25, 0.6 / max(scale, 0.05))
     arrow_pad = max(0.25, 0.7 / max(scale, 0.05))
     collision_boxes = [(min_x - geom_pad, max_x + geom_pad, min_y - geom_pad, max_y + geom_pad)]
+
+    def _draw_edge_location_dimension(axis, side, circle):
+        if not circle:
+            return
+        radius = max(0.0, float(circle.get("r", 0.0)))
+        if axis == "H":
+            if side == "left":
+                x0 = min_x
+                x1 = float(circle["cx"])
+            else:
+                x0 = float(circle["cx"])
+                x1 = max_x
+            span = abs(x1 - x0)
+            if span <= max(1.0, 4.0 / scale):
+                return
+            pref_above = float(circle["cy"]) - radius - max(4.0 / scale, label_gap * 0.55)
+            pref_below = float(circle["cy"]) + radius + max(4.0 / scale, label_gap * 0.55)
+            y_dim = pref_above
+            if y_dim < min_y + (2.5 / scale):
+                y_dim = pref_below
+            y_dim = max(min_y + (2.5 / scale), min(max_y - (2.5 / scale), y_dim))
+            parts.append(
+                f'<g fill="none" stroke="rgb(0, 0, 0)" stroke-width="{dim_stroke:.4f}" '
+                f'stroke-linecap="butt" stroke-linejoin="miter">'
+                f'<line x1="{x0:.3f}" y1="{y_dim:.3f}" x2="{x1:.3f}" y2="{y_dim:.3f}" />'
+                f'<line x1="{x0:.3f}" y1="{float(circle["cy"]):.3f}" x2="{x0:.3f}" y2="{y_dim:.3f}" />'
+                f'<line x1="{x1:.3f}" y1="{float(circle["cy"]):.3f}" x2="{x1:.3f}" y2="{y_dim:.3f}" />'
+                "</g>"
+            )
+            collision_boxes.append(_line_collision_box(x0, y_dim, x1, y_dim, line_pad))
+            collision_boxes.append(_line_collision_box(x0, float(circle["cy"]), x0, y_dim, line_pad))
+            collision_boxes.append(_line_collision_box(x1, float(circle["cy"]), x1, y_dim, line_pad))
+            parts.append(
+                f'<g fill="rgb(0, 0, 0)" stroke="none">'
+                f'<polygon points="{x0:.3f},{y_dim:.3f} {x0 + arrow_len:.3f},{y_dim - arrow_half:.3f} {x0 + arrow_len:.3f},{y_dim + arrow_half:.3f}" />'
+                f'<polygon points="{x1:.3f},{y_dim:.3f} {x1 - arrow_len:.3f},{y_dim - arrow_half:.3f} {x1 - arrow_len:.3f},{y_dim + arrow_half:.3f}" />'
+                "</g>"
+            )
+            label_text = format_de_number(span)
+            if label_text not in used_dimension_labels:
+                used_dimension_labels.add(label_text)
+                text_x = (x0 + x1) * 0.5
+                text_y = _reserve_feature_label_position(
+                    label_text,
+                    text_x,
+                    y_dim + (1.8 / scale),
+                    text_size,
+                    "middle",
+                    used_label_y,
+                    label_gap,
+                    min_y,
+                    max_y,
+                    collision_boxes,
+                )
+                parts.append(
+                    _feature_text_svg(
+                        label_text,
+                        text_x,
+                        text_y,
+                        text_size,
+                        anchor="middle",
+                    )
+                )
+            return
+
+        if side == "top":
+            y0 = min_y
+            y1 = float(circle["cy"])
+        else:
+            y0 = float(circle["cy"])
+            y1 = max_y
+        span = abs(y1 - y0)
+        if span <= max(1.0, 4.0 / scale):
+            return
+        pref_right = float(circle["cx"]) + radius + max(4.0 / scale, label_gap * 0.55)
+        pref_left = float(circle["cx"]) - radius - max(4.0 / scale, label_gap * 0.55)
+        x_dim = pref_right
+        if x_dim > max_x - (2.5 / scale):
+            x_dim = pref_left
+        x_dim = max(min_x + (2.5 / scale), min(max_x - (2.5 / scale), x_dim))
+        parts.append(
+            f'<g fill="none" stroke="rgb(0, 0, 0)" stroke-width="{dim_stroke:.4f}" '
+            f'stroke-linecap="butt" stroke-linejoin="miter">'
+            f'<line x1="{x_dim:.3f}" y1="{y0:.3f}" x2="{x_dim:.3f}" y2="{y1:.3f}" />'
+            f'<line x1="{float(circle["cx"]):.3f}" y1="{y0:.3f}" x2="{x_dim:.3f}" y2="{y0:.3f}" />'
+            f'<line x1="{float(circle["cx"]):.3f}" y1="{y1:.3f}" x2="{x_dim:.3f}" y2="{y1:.3f}" />'
+            "</g>"
+        )
+        collision_boxes.append(_line_collision_box(x_dim, y0, x_dim, y1, line_pad))
+        collision_boxes.append(_line_collision_box(float(circle["cx"]), y0, x_dim, y0, line_pad))
+        collision_boxes.append(_line_collision_box(float(circle["cx"]), y1, x_dim, y1, line_pad))
+        parts.append(
+            f'<g fill="rgb(0, 0, 0)" stroke="none">'
+            f'<polygon points="{x_dim:.3f},{y0:.3f} {x_dim - arrow_half:.3f},{y0 + arrow_len:.3f} {x_dim + arrow_half:.3f},{y0 + arrow_len:.3f}" />'
+            f'<polygon points="{x_dim:.3f},{y1:.3f} {x_dim - arrow_half:.3f},{y1 - arrow_len:.3f} {x_dim + arrow_half:.3f},{y1 - arrow_len:.3f}" />'
+            "</g>"
+        )
+        label_text = format_de_number(span)
+        if label_text not in used_dimension_labels:
+            used_dimension_labels.add(label_text)
+            text_x = x_dim + (1.5 / scale)
+            text_y = (y0 + y1) * 0.5
+            parts.append(
+                f'<g fill="rgb(0,0,0)" stroke="none" font-size="{text_size:.3f}" '
+                f'font-family="ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace" '
+                f'font-style="normal" font-weight="normal" transform="scale(1,-1)">'
+                f'<text x="{text_x:.3f}" y="{-text_y:.3f}" text-anchor="middle" '
+                f'transform="rotate(90,{text_x:.3f},{-text_y:.3f})">{label_text}</text></g>'
+            )
+
+    edge_location_targets = []
+    if circles:
+        edge_location_targets = sorted(circles, key=lambda item: item["r"], reverse=True)
+    elif main_holes:
+        edge_location_targets = list(main_holes)
 
     # Hole pitch dimension between outer main-hole centers.
     if len(main_holes) >= 2:
@@ -2894,6 +3864,45 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                 )
             )
 
+    if edge_location_targets:
+        min_h_span = max(1.0, 4.0 / scale)
+        horizontal_candidate = None
+        horizontal_key = None
+        for circle in edge_location_targets:
+            left_span = abs(float(circle["cx"]) - min_x)
+            right_span = abs(max_x - float(circle["cx"]))
+            if left_span > min_h_span:
+                key = (left_span, -float(circle.get("r", 0.0)))
+                if horizontal_key is None or key < horizontal_key:
+                    horizontal_key = key
+                    horizontal_candidate = ("left", circle)
+            if right_span > min_h_span:
+                key = (right_span, -float(circle.get("r", 0.0)))
+                if horizontal_key is None or key < horizontal_key:
+                    horizontal_key = key
+                    horizontal_candidate = ("right", circle)
+        if horizontal_candidate:
+            _draw_edge_location_dimension("H", horizontal_candidate[0], horizontal_candidate[1])
+
+        min_v_span = max(1.0, 4.0 / scale)
+        vertical_candidate = None
+        vertical_key = None
+        for circle in edge_location_targets:
+            top_span = abs(float(circle["cy"]) - min_y)
+            bottom_span = abs(max_y - float(circle["cy"]))
+            if top_span > min_v_span:
+                key = (top_span, -float(circle.get("r", 0.0)))
+                if vertical_key is None or key < vertical_key:
+                    vertical_key = key
+                    vertical_candidate = ("top", circle)
+            if bottom_span > min_v_span:
+                key = (bottom_span, -float(circle.get("r", 0.0)))
+                if vertical_key is None or key < vertical_key:
+                    vertical_key = key
+                    vertical_candidate = ("bottom", circle)
+        if vertical_candidate:
+            _draw_edge_location_dimension("V", vertical_candidate[0], vertical_candidate[1])
+
     # Diameter annotation for dominant hole size.
     hole_dia = _optional_float(feature_payload.get("hole_diameter_mm"))
     if (hole_dia is None or hole_dia <= 0) and main_radius > 0:
@@ -2948,17 +3957,37 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
             )
 
     # Thread annotation: smallest circle compared to dominant hole group.
+    # Suppressed for sheet metal parts with thin walls (threads need engagement depth).
     thread_label = feature_payload.get("thread_label")
     thread_core = _optional_float(feature_payload.get("thread_core_diameter_mm"))
     if not thread_label and thread_core:
         thread_label = infer_metric_thread_label(thread_core)
+    # Suppress thread callout when wall thickness is too thin for the thread
+    measured_t = _optional_float(feature_payload.get("measured_thickness_mm"))
+    if thread_label and measured_t is not None:
+        try:
+            nom_dia = float(thread_label[1:])
+            if measured_t < nom_dia * 0.5:
+                thread_label = None
+        except (ValueError, IndexError):
+            pass
     thread_circle = None
     if circles and main_radius > 0:
         thread_candidates = [circle for circle in circles if circle["r"] < main_radius * 0.78]
         if thread_candidates:
             thread_circle = sorted(thread_candidates, key=lambda item: item["r"])[0]
             if not thread_label:
-                thread_label = infer_metric_thread_label(thread_circle["r"] * 2.0)
+                candidate_label = infer_metric_thread_label(thread_circle["r"] * 2.0)
+                # Also check thickness for SVG-inferred threads
+                if candidate_label and measured_t is not None:
+                    try:
+                        nom_dia = float(candidate_label[1:])
+                        if measured_t >= nom_dia * 0.5:
+                            thread_label = candidate_label
+                    except (ValueError, IndexError):
+                        thread_label = candidate_label
+                else:
+                    thread_label = candidate_label
     if thread_label:
         if thread_circle is None:
             thread_circle = {
@@ -3066,6 +4095,7 @@ def build_page_svg(template_path, meta, views_svg, annotation_lines, annotation_
         "SHEET": sheet_value,
         "AUTHOR": meta.get("author", ""),
         "COMPANY": meta.get("company", ""),
+        "MATERIAL": str(meta.get("material", "")).strip() or "-",
     }
     for key, value in replacements.items():
         svg = replace_text(svg, key, value)
@@ -3096,10 +4126,11 @@ def build_page_svg(template_path, meta, views_svg, annotation_lines, annotation_
         "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
         "font-size: 3.0px; font-style: normal; font-weight: normal;"
     )
+    is_first_angle = "1." in projection_value or "first" in projection_value.lower()
     info_rows = [
         ("MATERIAL", material_value),
         ("KANTEN", deburr_value),
-        ("PROJEKTION", projection_short),
+        ("PROJEKTION", projection_short if not is_first_angle else ""),
         ("TOLERANZ", f"Allgemeintoleranzen nach {tolerance_value}"),
     ]
     info_chunks = []
@@ -3117,8 +4148,31 @@ def build_page_svg(template_path, meta, views_svg, annotation_lines, annotation_
         y = base_y - idx * row_step
         info_chunks.append(f'<text x="{label_x}" y="{y:.1f}" style="{title_info_style_label}">{escape(label)}</text>')
         info_chunks.append(f'<text x="{value_x}" y="{y:.1f}" style="{title_info_style_value}">{escape(value)}</text>')
+    # ISO first-angle projection symbol (truncated cone + circle per ISO 5456-2)
+    projection_symbol = ""
+    if is_first_angle:
+        proj_row_idx = 2  # PROJEKTION is the 3rd row (idx=2)
+        sym_y = base_y - proj_row_idx * row_step
+        sym_x = value_x
+        # Truncated cone (side view) + circle (front view)
+        sw = 0.25
+        # Side view: trapezoid
+        projection_symbol = (
+            f'<g transform="translate({sym_x},{sym_y - 2.5})">'
+            f'<line x1="0" y1="0" x2="0" y2="5" stroke="#000" stroke-width="{sw}"/>'
+            f'<line x1="2" y1="1" x2="2" y2="4" stroke="#000" stroke-width="{sw}"/>'
+            f'<line x1="0" y1="0" x2="2" y2="1" stroke="#000" stroke-width="{sw}"/>'
+            f'<line x1="0" y1="5" x2="2" y2="4" stroke="#000" stroke-width="{sw}"/>'
+            # Front view: two concentric circles
+            f'<circle cx="5.5" cy="2.5" r="2.5" fill="none" stroke="#000" stroke-width="{sw}"/>'
+            f'<circle cx="5.5" cy="2.5" r="1.0" fill="none" stroke="#000" stroke-width="{sw}"/>'
+            # Horizontal + vertical center lines
+            f'<line x1="2.5" y1="2.5" x2="8.5" y2="2.5" stroke="#000" stroke-width="0.12" stroke-dasharray="0.8,0.4"/>'
+            f'<line x1="5.5" y1="-0.5" x2="5.5" y2="5.5" stroke="#000" stroke-width="0.12" stroke-dasharray="0.8,0.4"/>'
+            f'</g>'
+        )
     title_info = "\n".join(info_chunks)
-    return svg.replace("</svg>", f"{views_svg}\n{annotation}\n{title_info}\n</svg>")
+    return svg.replace("</svg>", f"{views_svg}\n{annotation}\n{title_info}\n{projection_symbol}\n</svg>")
 
 
 def build_flat_pattern_overlay(
@@ -3132,8 +4186,12 @@ def build_flat_pattern_overlay(
     feature_payload,
     flat_pattern_mode,
     unfold_result=None,
+    sheet_metal_subtype=None,
 ):
     if layout_profile != "sheet_metal":
+        return "", None
+    # Laserteile (bend_count=0): no Abwicklung needed — flat pattern = top view
+    if sheet_metal_subtype == "laserteil":
         return "", None
 
     # Flat pattern area: dedicated 3rd column on the right side of the drawing.
@@ -3272,21 +4330,16 @@ def build_flat_pattern_overlay(
                         f'stroke="rgb(40,40,160)" stroke-width="0.18" stroke-dasharray="2.5,1.0" />'
                     )
 
-        # Bend annotations: place text directly at each bend line
+        # Bend annotations: deduplicated legend block near flat pattern
         bend_lines_data = unfold_result.get("bend_lines") or []
         bend_segments = (flat_pattern or {}).get("bend_segments") or []
         bend_ann_style = (
             "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
             "font-size: 2.5px; font-style: normal; font-weight: normal; fill: #000;"
         )
+        # Collect unique annotations with counts
+        bend_ann_seen = {}  # ann_text -> count
         for bi, bl in enumerate(bend_lines_data):
-            bl_x1 = tx + float(bl["x1"]) * draw_scale
-            bl_y1 = ty + float(bl["y1"]) * draw_scale
-            bl_x2 = tx + float(bl["x2"]) * draw_scale
-            bl_y2 = ty + float(bl["y2"]) * draw_scale
-            bmid_x = (bl_x1 + bl_x2) / 2
-            bmid_y = (bl_y1 + bl_y2) / 2
-            # Build annotation text from matching bend segment
             if bi < len(bend_segments):
                 bseg = bend_segments[bi]
                 b_dir = bseg.get("direction", "OBEN")
@@ -3295,30 +4348,17 @@ def build_flat_pattern_overlay(
                 ann_text = f"NACH {b_dir} {b_angle}\u00B0 R {b_radius}"
             else:
                 ann_text = f"Biegung {bi + 1}"
-            # Determine bend line orientation and place text accordingly
-            bl_dx = bl_x2 - bl_x1
-            bl_dy = bl_y2 - bl_y1
-            bl_angle = math.degrees(math.atan2(bl_dy, bl_dx))
-            # Offset text ~3mm perpendicular to the bend line
-            text_offset = 3.0
-            text_x = bmid_x - text_offset  # offset to the left for mostly-vertical lines
-            text_y = bmid_y
-            # For mostly-vertical lines, rotate -90; for mostly-horizontal, keep 0
-            if abs(bl_dx) < abs(bl_dy):
-                # Vertical bend line: place text to the left, rotated -90
-                rot = -90
+            bend_ann_seen[ann_text] = bend_ann_seen.get(ann_text, 0) + 1
+        # Render legend block below the flat pattern outline
+        if bend_ann_seen:
+            legend_x = outline_x1  # left-aligned with flat pattern
+            legend_y = outline_y2 + 14.0  # below outline + dim line clearance (dim_y_h at +8)
+            for line_i, (ann_text, count) in enumerate(bend_ann_seen.items()):
+                ly = legend_y + line_i * 3.5
+                label = f"{count}\u00D7 {ann_text}" if count > 1 else ann_text
                 parts.append(
-                    f'<text x="{text_x:.3f}" y="{text_y:.3f}" style="{bend_ann_style}" '
-                    f'text-anchor="middle" '
-                    f'transform="rotate({rot},{text_x:.3f},{text_y:.3f})">'
-                    f'{escape(ann_text)}</text>'
-                )
-            else:
-                # Horizontal bend line: place text above
-                parts.append(
-                    f'<text x="{bmid_x:.3f}" y="{bmid_y - text_offset:.3f}" style="{bend_ann_style}" '
-                    f'text-anchor="middle">'
-                    f'{escape(ann_text)}</text>'
+                    f'<text x="{legend_x:.3f}" y="{ly:.3f}" style="{bend_ann_style}" '
+                    f'text-anchor="start">{escape(label)}</text>'
                 )
 
         # --- Flange dimensions between bend lines ---
@@ -3350,7 +4390,7 @@ def build_flat_pattern_overlay(
             # Build segment edges: outline_x1, bend1, bend2, ..., outline_x2
             seg_edges_x = [outline_x1] + [bp[0] for bp in bend_positions_x] + [outline_x2]
             flange_dim_y = min(outline_y2 + 18.0, max_y_bound - 4.0)
-            flange_ext_y0 = outline_y2 + 2.0
+            flange_ext_y0 = outline_y2
             flange_dim_style = (
                 "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
                 "font-size: 2.2px; font-style: normal; font-weight: normal; fill: #000;"
@@ -3379,7 +4419,7 @@ def build_flat_pattern_overlay(
             bend_positions_y.sort(key=lambda item: item[0])
             seg_edges_y = [outline_y1] + [bp[0] for bp in bend_positions_y] + [outline_y2]
             flange_dim_x = min(outline_x2 + 18.0, max_x_bound - 4.0)
-            flange_ext_x0 = outline_x2 + 2.0
+            flange_ext_x0 = outline_x2
             flange_dim_style = (
                 "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
                 "font-size: 2.2px; font-style: normal; font-weight: normal; fill: #000;"
@@ -3418,7 +4458,7 @@ def build_flat_pattern_overlay(
 
         # Horizontal dimension (flat length) below the outline
         dim_y_h = outline_y2 + 8.0
-        ext_y0 = outline_y2 + 2.0
+        ext_y0 = outline_y2
         parts.append(f'<line x1="{outline_x1:.3f}" y1="{ext_y0:.3f}" x2="{outline_x1:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
         parts.append(f'<line x1="{outline_x2:.3f}" y1="{ext_y0:.3f}" x2="{outline_x2:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
         parts.append(f'<line x1="{outline_x1:.3f}" y1="{dim_y_h:.3f}" x2="{outline_x2:.3f}" y2="{dim_y_h:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
@@ -3428,7 +4468,7 @@ def build_flat_pattern_overlay(
 
         # Vertical dimension (flat width) to the right of outline
         dim_x_v = outline_x2 + 8.0
-        ext_x0 = outline_x2 + 2.0
+        ext_x0 = outline_x2
         mid_y = outline_cy
         parts.append(f'<line x1="{ext_x0:.3f}" y1="{outline_y1:.3f}" x2="{dim_x_v:.3f}" y2="{outline_y1:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
         parts.append(f'<line x1="{ext_x0:.3f}" y1="{outline_y2:.3f}" x2="{dim_x_v:.3f}" y2="{outline_y2:.3f}" stroke="rgb(0,0,0)" stroke-width="0.18" />')
@@ -3594,7 +4634,7 @@ def build_flat_pattern_overlay(
 
         # Horizontal dimension below the rect (flat length)
         dim_y_h = rect_y + rect_h + 8.0
-        ext_y0 = rect_y + rect_h + 2.0
+        ext_y0 = rect_y + rect_h
         parts.append(  # extension line left
             f'<line x1="{rect_x:.3f}" y1="{ext_y0:.3f}" '
             f'x2="{rect_x:.3f}" y2="{dim_y_h:.3f}" '
@@ -3621,7 +4661,7 @@ def build_flat_pattern_overlay(
 
         # Vertical dimension to the left of the rect (flat width)
         dim_x_v = rect_x - 8.0
-        ext_x0 = rect_x - 2.0
+        ext_x0 = rect_x
         rect_mid_y = rect_y + rect_h / 2
         parts.append(  # extension line top
             f'<line x1="{ext_x0:.3f}" y1="{rect_y:.3f}" '
@@ -3909,6 +4949,17 @@ def main():
     dim_y = bb.YLength
     dim_z = bb.ZLength
     log(f"Bounds mm: X={dim_x:.2f} Y={dim_y:.2f} Z={dim_z:.2f}")
+
+    # Complexity scoring for safe_mode
+    comp = complexity_score(shape)
+    env_safe = os.getenv("DRAWFORM_SAFE_MODE", "").strip()
+    safe_mode = env_safe == "1" or comp["score"] > 200
+    degrade_steps = []
+    if env_safe == "1":
+        degrade_steps.append("env_forced")
+    log(f"Complexity: faces={comp['faces']} edges={comp['edges']} "
+        f"bspline_f={comp['bspline_faces']} score={comp['score']} safe_mode={safe_mode}")
+
     feature_payload = detect_feature_payload(shape, meta)
     if feature_payload.get("ok") is True:
         log(
@@ -3921,6 +4972,10 @@ def main():
         )
     else:
         log(f"Feature payload unavailable: {feature_payload.get('error', 'unknown')}")
+
+    raw_plan = meta.get("dimension_plan")
+    dim_plan = None
+    dim_plan_source = "none"
 
     requested_sheet = str(os.getenv("DRAWFORM_SHEET_REQUESTED") or resolve_requested_sheet(meta)).strip()
     if requested_sheet.upper() in {"A2", "A3"}:
@@ -3942,6 +4997,33 @@ def main():
             err = (unfold_result or {}).get("error", "unknown")
             log(f"SheetMetal unfold failed: {err} — using fallback")
 
+    # ---------- Sheet metal subtype: biegeteil vs laserteil ----------
+    sheet_metal_subtype = None
+    if layout_profile == "sheet_metal":
+        if unfold_result and unfold_result.get("ok"):
+            bend_count = unfold_result.get("bend_count", 0)
+            sheet_metal_subtype = "biegeteil" if bend_count > 0 else "laserteil"
+        else:
+            sheet_metal_subtype = "biegeteil"  # Safer default — assume bends
+        log(f"Sheet metal subtype: {sheet_metal_subtype} "
+            f"({unfold_result.get('bend_count', '?') if unfold_result else '?'} bends)")
+
+    if isinstance(raw_plan, dict) and raw_plan.get("views"):
+        dim_plan = raw_plan
+        dim_plan_source = "meta"
+        log(f"Dimension plan loaded: part_type={dim_plan.get('part_type')}, "
+            f"views={len(dim_plan.get('views', []))}")
+    else:
+        dim_plan = build_local_dimension_plan(meta, feature_payload, layout_profile, unfold_result=unfold_result)
+        if isinstance(dim_plan, dict) and dim_plan.get("views"):
+            dim_plan_source = "local_dse"
+            meta["dimension_plan"] = dim_plan
+            log(f"Dimension plan built locally: part_type={dim_plan.get('part_type')}, "
+                f"views={len(dim_plan.get('views', []))}")
+        else:
+            dim_plan = None
+            log("No dimension plan in meta or local DSE — using hardcoded fallback logic")
+
     normalized_sheet = str(meta.get("sheet") or "").strip().upper()
     if normalized_sheet in {"A2", "A3"}:
         sheet_resolved = normalized_sheet
@@ -3954,6 +5036,7 @@ def main():
     meta["sheet_resolved"] = sheet_resolved
     meta["layout_profile"] = layout_profile
     meta["flat_pattern_mode"] = flat_pattern_mode
+    meta["sheet_metal_subtype"] = sheet_metal_subtype
     log(
         f"Layout profile: {layout_profile} | Flat pattern mode: {flat_pattern_mode} | "
         f"Sheet requested={requested_sheet}, resolved={sheet_resolved}"
@@ -3963,26 +5046,32 @@ def main():
     sheet_h = spec["height"]
     margin = 10.0
     title_block_h = spec["title_block_h"]
+    origin_x = margin
+    origin_y = margin
     avail_w = sheet_w - 2 * margin
     avail_h = sheet_h - title_block_h - 2 * margin
+    layout_variant = select_view_layout_variant(
+        layout_profile,
+        sheet_metal_subtype,
+        feature_payload,
+        dim_x,
+        dim_y,
+        dim_z,
+    )
+    view_slots = build_view_slots(layout_variant, origin_x, origin_y, avail_w, avail_h)
+    meta["view_layout_variant"] = layout_variant
+    log(f"View layout variant: {layout_variant}")
+    for view_name in ("Front", "Left", "Top", "Iso"):
+        slot = view_slots[view_name]
+        log(
+            f"Layout slot {view_name}: {slot['w']:.1f} x {slot['h']:.1f} at "
+            f"({slot['cx']:.1f}, {slot['cy']:.1f})"
+        )
 
-    # Sheet metal: 3-column layout (views + Abwicklung column on the right)
-    # Milling: standard 2×2 grid
-    if layout_profile == "sheet_metal":
-        views_w = avail_w * 0.60          # 60% for 4 orthographic views
-        cell_w = views_w / 2
-        abwicklung_col_w = avail_w - views_w  # 28% for Abwicklung
-    else:
-        cell_w = avail_w / 2
-    cell_h = avail_h / 2
-
-    center_left_x = margin + cell_w * 0.5
-    center_right_x = margin + cell_w * 1.5
-    origin_y = margin
-    center_top_y = origin_y + cell_h * 0.5
-    center_bottom_y = origin_y + cell_h * 1.5
-
-    view_dirs = compute_view_directions(shape, points=points)
+    view_dirs = None if safe_mode else compute_view_directions(shape, points=points)
+    if safe_mode:
+        log("safe_mode: skipping TechDraw-based view scoring, using world axis fallback")
+        degrade_steps.append("skip_view_scoring")
     if view_dirs is None:
         log("PCA view detection failed, falling back to world axes.")
         front_dir = App.Vector(0, -1, 0)
@@ -4024,17 +5113,24 @@ def main():
     # Fixed projection layout:
     # FRONT at top-left, TOP below FRONT, LEFT to the right of FRONT, ISO bottom-right.
     views = [
-        ("Front", front_dir, center_left_x, center_top_y),
-        ("Left", left_dir, center_right_x, center_top_y),
-        ("Top", top_dir, center_left_x, center_bottom_y),
-        ("Iso", iso_dir, center_right_x, center_bottom_y),
+        ("Front", front_dir, view_slots["Front"]["cx"], view_slots["Front"]["cy"]),
+        ("Left", left_dir, view_slots["Left"]["cx"], view_slots["Left"]["cy"]),
+        ("Top", top_dir, view_slots["Top"]["cx"], view_slots["Top"]["cy"]),
+        ("Iso", iso_dir, view_slots["Iso"]["cx"], view_slots["Iso"]["cy"]),
     ]
 
     ortho_padding = 0.85 if layout_profile == "milling" else 0.82
     iso_padding = 0.90 if layout_profile == "milling" else 0.88
     view_data = []
+    projection_failures = []
     for name, direction, cx, cy in views:
-        svg_group = TechDraw.projectToSVG(shape, direction)
+        svg_group, proj_ok, proj_degraded = safe_project_to_svg(shape, direction, use_safe_mode=safe_mode)
+        if proj_degraded:
+            if "bbox_wireframe" not in degrade_steps:
+                degrade_steps.append("bbox_wireframe")
+        if not proj_ok:
+            projection_failures.append(name)
+            log(f"View {name}: projection FAILED — using empty placeholder")
         svg_bounds = extract_svg_bounds(svg_group)
         proj_bounds = projected_bounds(points, direction) or svg_bounds
         svg_w, svg_h = bounds_size(svg_bounds)
@@ -4081,13 +5177,25 @@ def main():
             best_rot = (best_rot + 180) % 360
         rotation_deg = best_rot
         bounds_for_layout = rotate_bounds_90(svg_bounds) if rotation_deg % 180 != 0 else svg_bounds
-        if name != "Iso":
+        slot = view_slots[name]
+        fit_show_horizontal, fit_show_vertical = resolve_overall_dimension_axes(name, dim_plan=dim_plan)
+        enabled = bool(slot.get("enabled", True))
+        if not enabled:
+            bounds_for_scale = bounds_for_layout
+            scale_fit = 0.0
+        elif name != "Iso":
             bounds_for_scale, scale_fit = compute_dimension_padded_bounds(
-                bounds_for_layout, cell_w, cell_h, padding=ortho_padding, iterations=2
+                bounds_for_layout,
+                slot["w"],
+                slot["h"],
+                padding=ortho_padding,
+                iterations=2,
+                show_horizontal=fit_show_horizontal,
+                show_vertical=fit_show_vertical,
             )
         else:
             bounds_for_scale = bounds_for_layout
-            scale_fit = compute_fit_scale(bounds_for_scale, cell_w, cell_h, padding=iso_padding)
+            scale_fit = compute_fit_scale(bounds_for_scale, slot["w"], slot["h"], padding=iso_padding)
         geom_w, geom_h = bounds_size(bounds_for_layout)
         fit_w, fit_h = bounds_size(bounds_for_scale)
         view_data.append(
@@ -4104,8 +5212,10 @@ def main():
                 "geom_h": geom_h,
                 "fit_w": fit_w,
                 "fit_h": fit_h,
-                "cx": cx,
-                "cy": cy,
+                "cx": slot["cx"],
+                "cy": slot["cy"],
+                "slot": slot,
+                "enabled": enabled,
                 "proj_swap": proj_swap,
             }
         )
@@ -4114,18 +5224,27 @@ def main():
         )
 
     ortho_scale = min(
-        item["scale_fit"] for item in view_data if item["name"] in ("Top", "Front", "Left")
+        item["scale_fit"]
+        for item in view_data
+        if item["name"] in ("Top", "Front", "Left") and item.get("enabled", True)
     )
     log(f"ALIGN ortho_scale={ortho_scale:.4f}")
     iso_item = next((item for item in view_data if item["name"] == "Iso"), None)
     if iso_item is not None:
         iso_bounds = iso_item["layout_bounds"]
-        iso_scale = compute_scale_for_area(iso_bounds, cell_w, cell_h, padding=iso_padding)
-        iso_max_ratio = 0.65 if layout_profile == "sheet_metal" else 0.75
+        iso_slot = iso_item.get("slot") or view_slots["Iso"]
+        iso_scale = compute_scale_for_area(iso_bounds, iso_slot["w"], iso_slot["h"], padding=iso_padding)
+        if layout_variant == "sheet_bent":
+            iso_max_ratio = 0.65
+        elif layout_variant == "flat_round_dominant":
+            iso_max_ratio = 0.45
+        elif layout_variant == "flat_dominant":
+            iso_max_ratio = 0.55
+        else:
+            iso_max_ratio = 0.75
         iso_scale = min(iso_scale, ortho_scale * iso_max_ratio)
-        iso_cx, iso_cy = center_right_x, center_bottom_y
-        iso_item["cx"] = iso_cx
-        iso_item["cy"] = iso_cy
+        iso_item["cx"] = iso_slot["cx"]
+        iso_item["cy"] = iso_slot["cy"]
         iso_item["scale"] = iso_scale
     if not meta.get("scale") or str(meta.get("scale")).lower() == "auto":
         meta["scale"] = format_scale(ortho_scale)
@@ -4196,6 +5315,8 @@ def main():
         all_right, all_bottom = float('-inf'), float('-inf')
 
         for item in view_data:
+            if not item.get("enabled", True):
+                continue
             scale = item.get("scale", ortho_scale)
             vb = compute_view_bounds(item, scale)
             all_left = min(all_left, vb["left"])
@@ -4203,6 +5324,8 @@ def main():
             all_right = max(all_right, vb["right"])
             all_bottom = max(all_bottom, vb["bottom"])
 
+        if all_left == float('inf'):
+            return draw_left, draw_top, draw_left, draw_top
         return all_left, all_top, all_right, all_bottom
     
     # Check if all views fit within drawing area
@@ -4268,7 +5391,14 @@ def main():
             "sheet_requested": requested_sheet,
             "sheet_resolved": sheet_resolved,
             "layout_profile": layout_profile,
+            "dimension_plan_source": dim_plan_source,
+            "view_layout_variant": layout_variant,
+            "sheet_metal_subtype": sheet_metal_subtype,
             "flat_pattern_mode": flat_pattern_mode,
+            "complexity_score": comp,
+            "safe_mode_applied": safe_mode,
+            "degrade_steps": degrade_steps,
+            "projection_failures": projection_failures,
             "bounding_box": {
                 "X": round(dim_x, 2),
                 "Y": round(dim_y, 2),
@@ -4308,9 +5438,14 @@ def main():
             top_edge = item["cy"] - paper_h / 2
             
             report["views"][item["name"]] = {
+                "enabled": bool(item.get("enabled", True)),
                 "rotation_deg": item["rotation_deg"],
                 "center": [round(item["cx"], 2), round(item["cy"], 2)],
                 "paper_size": [round(paper_w, 2), round(paper_h, 2)],
+                "slot_size": [
+                    round(_optional_float((item.get("slot") or {}).get("w")) or 0.0, 2),
+                    round(_optional_float((item.get("slot") or {}).get("h")) or 0.0, 2),
+                ],
                 "left_edge": round(left_edge, 2),
                 "top_edge": round(top_edge, 2),
                 "svg_bounds": [round(b, 2) for b in item["svg_bounds"]],
@@ -4340,14 +5475,20 @@ def main():
             top_left = report["views"]["Top"]["left_edge"]
             report["alignment"]["front_left_edge"] = front_left
             report["alignment"]["top_left_edge"] = top_left
-            report["alignment"]["front_top_left_match"] = abs(front_left - top_left) < 0.5
+            if not report["views"]["Top"].get("enabled", True):
+                report["alignment"]["front_top_left_match"] = True
+            else:
+                report["alignment"]["front_top_left_match"] = abs(front_left - top_left) < 0.5
         
         if "Front" in report["views"] and "Left" in report["views"]:
             front_top = report["views"]["Front"]["top_edge"]
             left_top = report["views"]["Left"]["top_edge"]
             report["alignment"]["front_top_edge"] = front_top
             report["alignment"]["left_top_edge"] = left_top
-            report["alignment"]["front_left_top_match"] = abs(front_top - left_top) < 0.5
+            if not report["views"]["Left"].get("enabled", True):
+                report["alignment"]["front_left_top_match"] = True
+            else:
+                report["alignment"]["front_left_top_match"] = abs(front_top - left_top) < 0.5
 
         overflow_left = max(0.0, draw_left - all_left)
         overflow_top = max(0.0, draw_top - all_top)
@@ -4409,7 +5550,7 @@ def main():
     feature_view_circle_count = 0
     if isinstance(feature_payload, dict) and feature_payload.get("ok") is True:
         for candidate in view_data:
-            if candidate["name"] == "Iso":
+            if candidate["name"] == "Iso" or not candidate.get("enabled", True):
                 continue
             circle_count = count_svg_circles(candidate["svg"])
             if circle_count > feature_view_circle_count:
@@ -4420,6 +5561,8 @@ def main():
 
     for item in view_data:
         name = item["name"]
+        if not item.get("enabled", True):
+            continue
 
         # ISO view is always rendered (sheet_metal included — at reduced scale).
 
@@ -4460,30 +5603,41 @@ def main():
             scale = ortho_scale
             line_profile = iso128_line_profile(scale)
             stroke_width = float(line_profile.get("visible", compute_stroke_width(scale)))
-            # Dimension strategy: avoid redundant overall dimensions.
-            show_horizontal = True
-            show_vertical = True
-            if name == "Left":
-                show_horizontal = False
-                show_vertical = False
-            elif name == "Top":
-                # Keep only one depth overall dimension (prefer vertical on Top view).
-                show_horizontal = False
-                show_vertical = True
+            show_horizontal, show_vertical = resolve_overall_dimension_axes(name, dim_plan=dim_plan)
             # Dimension lines are drawn around the SVG geometry (svg_bounds)
             # but labels show the TRUE 3D dimensions (from proj_bounds)
-            dimension_svg = build_dimension_svg(
-                svg_bounds,  # Use svg_bounds for LINE positions (around the geometry)
-                scale,
-                stroke_width,
-                line_profile=line_profile,
-                label_width=label_w,   # TRUE 3D dimension for horizontal
-                label_height=label_h,  # TRUE 3D dimension for vertical
-                rotation_deg=item["rotation_deg"],
-                show_horizontal=show_horizontal,
-                show_vertical=show_vertical,
+            use_round_overall = (
+                name == "Front"
+                and show_horizontal
+                and show_vertical
+                and _is_round_flat_feature_case(feature_payload)
             )
-            dim_tracking["dim_text_count"] += (1 if show_horizontal else 0) + (1 if show_vertical else 0)
+            if use_round_overall:
+                dimension_svg = build_round_overall_dimension_svg(
+                    item["svg"],
+                    svg_bounds,
+                    scale,
+                    stroke_width,
+                    line_profile=line_profile,
+                )
+            else:
+                dimension_svg = ""
+            if not dimension_svg:
+                dimension_svg = build_dimension_svg(
+                    svg_bounds,  # Use svg_bounds for LINE positions (around the geometry)
+                    scale,
+                    stroke_width,
+                    line_profile=line_profile,
+                    label_width=label_w,   # TRUE 3D dimension for horizontal
+                    label_height=label_h,  # TRUE 3D dimension for vertical
+                    rotation_deg=item["rotation_deg"],
+                    show_horizontal=show_horizontal,
+                    show_vertical=show_vertical,
+                    svg_group=item["svg"],  # Used to anchor extension lines to actual part outline
+                )
+                dim_tracking["dim_text_count"] += (1 if show_horizontal else 0) + (1 if show_vertical else 0)
+            else:
+                dim_tracking["dim_text_count"] += 1
             centerline_svg, centerline_count = build_centerline_svg(
                 item["svg"],
                 scale,
@@ -4493,7 +5647,10 @@ def main():
             )
             if centerline_svg:
                 dimension_svg = f"{dimension_svg}{centerline_svg}"
-            if feature_view_name == name:
+            # Feature dimensions: plan-aware view selection
+            _show_features = view_requests_feature_dimensions(name, dim_plan=dim_plan) if dim_plan else (feature_view_name == name)
+
+            if _show_features:
                 feature_dimension_svg = build_feature_dimension_svg(
                     item["svg"],
                     svg_bounds,
@@ -4504,6 +5661,7 @@ def main():
                 )
                 if feature_dimension_svg:
                     dimension_svg = f"{dimension_svg}{feature_dimension_svg}"
+                    dim_tracking["dim_text_count"] += feature_dimension_svg.count("<text")
                     dim_tracking["feature_dim_present"] = True
             # Step dimensions disabled: produces irrelevant edge-position values
             # that don't correspond to intentional design dimensions.
@@ -4554,11 +5712,14 @@ def main():
         feature_payload=feature_payload,
         flat_pattern_mode=flat_pattern_mode,
         unfold_result=unfold_result,
+        sheet_metal_subtype=sheet_metal_subtype,
     )
     if flat_pattern_overlay:
         view_groups.append(flat_pattern_overlay)
 
     report = build_report()
+    if dim_plan:
+        report["dimension_plan"] = dim_plan
     if abwicklung_meta:
         report["abwicklung"] = abwicklung_meta
     if (
@@ -4590,8 +5751,6 @@ def main():
     )
     standard_line = str(meta.get("standard", "DIN EN ISO 128/129-1"))
     projection_line = str(meta.get("projection", "1. Winkel (DIN EN ISO 5456-2)"))
-    tolerance_line = str(meta.get("general_tolerance", DEFAULT_GENERAL_TOLERANCE))
-    tolerance_note = f"Allgemeintoleranzen nach {tolerance_line}"
     unit_line = f"Alle Masse in {meta.get('unit', 'mm')} sofern nicht anders angegeben."
     feature_lines = build_feature_annotation_lines(feature_payload, layout_profile)
     process_lines = []
@@ -4599,17 +5758,14 @@ def main():
         thickness = estimate_sheet_thickness(feature_payload, dim_x, dim_y, dim_z)
         flat_pattern = (feature_payload or {}).get("flat_pattern") or {}
         k_used = flat_pattern.get("k_factor_used") or 0.33
-        process_lines = [
-            f"Blechst\u00e4rke = {format_de_number(thickness)}",
-            f"K-Faktor = {format_de_number(k_used, 2)}",
-        ]
+        process_lines = [f"Blechst\u00e4rke = {format_de_number(thickness)}"]
+        if sheet_metal_subtype == "biegeteil":
+            process_lines.append(f"K-Faktor = {format_de_number(k_used, 2)}")
         # "Scharfe Kanten entgraten" comes from build_feature_annotation_lines — no duplicate
     annotation_lines = [
         dimensions_text,
-        f"Norm: {standard_line}",
-        f"Projektion: {projection_line}",
-        tolerance_note,
         unit_line,
+        f"Norm: {standard_line} | Projektion: {projection_line}",
     ] + process_lines + feature_lines
     log("DEBUG: dimensions_text set")
 

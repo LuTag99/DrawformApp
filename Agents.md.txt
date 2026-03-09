@@ -1,0 +1,79 @@
+# Drawform – globale Agentenregeln
+
+## Produktkontext
+Drawform ist eine CAD-nahe Plattform für die Automatisierung von ingenieur- und fertigungsnahen Prozessen.
+Im aktuellen MVP liegt der Fokus auf der automatisierten Erstellung professioneller 2D-Fertigungszeichnungen aus 3D-Modellen.
+
+## Oberstes Ziel im MVP
+Erzeuge nicht nur eine exportierbare Datei, sondern eine fachlich brauchbare, professionell wirkende technische Zeichnung.
+
+## Erfolgskriterium
+Ein Ergebnis ist nur dann erfolgreich, wenn ein erfahrener Konstrukteur die Zeichnung als plausibel, lesbar und weitgehend brauchbar akzeptieren würde.
+
+## Verbot
+Markiere niemals eine Aufgabe als erfolgreich, nur weil PDF, SVG, DXF oder andere Dateien erzeugt wurden.
+
+## Pflicht bei jeder Iteration
+1. Bestehende Logik analysieren
+2. Relevante Dateien und Module benennen
+3. Testfall ausführen
+4. Zeichnung rendern/exportieren
+5. Ergebnis fachlich prüfen
+6. Mängel klar benennen
+7. Ursache im Code oder in der Regel-Logik nennen
+8. Gezielt verbessern
+9. Neu prüfen
+
+## Qualitätskriterien
+Eine Zeichnung muss mindestens diese Kriterien erfüllen:
+- Hauptansicht sinnvoll gewählt
+- Ansichten korrekt und logisch angeordnet
+- Blattfläche sinnvoll genutzt
+- Teil ausreichend groß dargestellt
+- Bemaßung vollständig genug für die gezeigte Funktion
+- Bemaßung nicht redundant oder chaotisch
+- Löcher klar bemaßt
+- Isometrie vorhanden, aber nachrangig
+- Zeichnung wirkt professionell und nicht wie ein roher CAD-Export
+- Maße sinnvoll gewählt und liegen immer an Kanten an
+
+## Fehlerklassen
+- VIEW_SELECTION_ERROR
+- VIEW_ALIGNMENT_ERROR
+- SCALE_LAYOUT_ERROR
+- DIMENSION_MISSING
+- DIMENSION_REDUNDANT
+- DIMENSION_POOR_PLACEMENT
+- SHEET_SPACE_WASTE
+- ISOMETRIC_OVEREMPHASIS
+- HOLE_PATTERN_UNCLEAR
+- PROJECTION_INCONSISTENT
+- TITLEBLOCK_INCOMPLETE
+
+## Scoring
+Bewerte jede Zeichnung mit 0–5 Punkten je Kriterium:
+1. Hauptansicht
+2. Ansichtsanordnung
+3. Blattlayout
+4. Maßvollständigkeit
+5. Maßlogik
+6. Lesbarkeit
+7. Gesamtprofessionalität
+
+## Mindestgrenze
+- Kein Hauptkriterium unter 4/5
+- Gesamt mindestens 30/35
+- Sonst neue Iteration
+
+## Iterationsregeln
+- Maximal 5 Iterationen pro Task
+- Wenn derselbe Fehler erneut auftritt: Root Cause benennen
+- Wenn Ziel nach 5 Iterationen nicht erreicht wird:
+  - ehrlich scheitern
+  - Ursachenliste schreiben
+  - betroffene Module nennen
+  - nächste technische Maßnahmen vorschlagen
+
+## Denkweise
+Handle wie ein Senior-Konstrukteur und CNC Fertiger mit hohem Qualitätsanspruch und gleichzeitig wie ein pragmatischer Softwareentwickler.
+Beurteile nicht nur technische Funktion, sondern vor allem die Qualität der erzeugten Zeichnung.

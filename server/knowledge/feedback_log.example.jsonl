@@ -1,0 +1,1 @@
+﻿{"id":"fb_2026_02_16_001","part":"complex_bracket","issue":"Hole location ambiguous without datum dimensions","severity":"high","proposed_rule":"hole_location_required","review_result":"accepted","reviewers":["manufacturing_lead","qa_lead"],"created_at":"2026-02-16T10:30:00Z"}
