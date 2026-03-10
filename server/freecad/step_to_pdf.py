@@ -206,7 +206,9 @@ def _extract_part_name(input_path: str) -> str:
     stem = Path(input_path).stem
     stem = re.sub(r"^\d+_", "", stem)                               # date prefix (any length)
     stem = re.sub(r"_V\d+[\.\d]*$", "", stem, flags=re.IGNORECASE)  # _V1.0 suffix
-    return stem.strip()
+    stem = stem.replace("_", " ")
+    stem = re.sub(r"\s+", " ", stem)
+    return stem.strip(" -_")
 
 
 def normalize_export_metadata(meta):
@@ -489,7 +491,9 @@ def _unique_positions(values, tolerance=0.5):
 
 
 def build_step_dimensions(svg_group, bounds, scale, stroke_width, line_profile=None,
-                          label_width=None, label_height=None, max_steps=5):
+                          label_width=None, label_height=None, max_steps=5,
+                          show_horizontal_steps=True, show_vertical_steps=True,
+                          horizontal_side="above", horizontal_max_ratio=None):
     """Build ISO 129-1 step dimensions from edge segments.
 
     Identifies horizontal and vertical steps in the part outline and adds
@@ -534,6 +538,32 @@ def build_step_dimensions(svg_group, bounds, scale, stroke_width, line_profile=N
     h_segs = [s for s in segments if s["orientation"] == "h"]
     v_segs = [s for s in segments if s["orientation"] == "v"]
 
+    def _pick_step_positions(raw_positions, lower_bound, upper_bound, span, tolerance):
+        unique = _unique_positions(list(raw_positions), tolerance=tolerance)
+        candidates = [value for value in unique if value > lower_bound and value < upper_bound]
+        if not candidates:
+            return []
+
+        def _hit_count(value):
+            return sum(1 for raw in raw_positions if abs(raw - value) <= tolerance)
+
+        ranked = []
+        for value in candidates:
+            hits = _hit_count(value)
+            edge_dist = min(abs(value - min_x), abs(max_x - value))
+            if hits < 2 and edge_dist > span * 0.10:
+                continue
+            ranked.append((value, hits, edge_dist))
+
+        if not ranked:
+            ranked = [
+                (value, _hit_count(value), min(abs(value - min_x), abs(max_x - value)))
+                for value in candidates
+            ]
+
+        ranked.sort(key=lambda item: (-item[1], -item[2], item[0]))
+        return sorted(item[0] for item in ranked[:max_steps])
+
     # Horizontal step dimensions (below geometry):
     # Unique X positions along horizontal segments → step widths from left edge
     x_positions = set()
@@ -542,24 +572,34 @@ def build_step_dimensions(svg_group, bounds, scale, stroke_width, line_profile=N
         x_positions.add(s["x2"])
     for s in v_segs:
         x_positions.add(s["x1"])  # x1==x2 for vertical
-    unique_x = _unique_positions(list(x_positions), tolerance=1.0 / scale)
-
-    # Filter: only positions between min_x and max_x, exclude the reference edge (min_x) and the far edge (max_x)
-    step_x = [x for x in unique_x if x > min_x + width * 0.05 and x < max_x - width * 0.05]
-    step_x = step_x[:max_steps]
+    horizontal_upper_bound = max_x - width * 0.05
+    if horizontal_max_ratio is not None:
+        max_ratio = max(0.15, min(0.98, float(horizontal_max_ratio)))
+        horizontal_upper_bound = min(horizontal_upper_bound, min_x + width * max_ratio)
+    step_x = _pick_step_positions(
+        list(x_positions),
+        min_x + width * 0.05,
+        horizontal_upper_bound,
+        width,
+        tolerance=1.0 / scale,
+    )
 
     # Draw horizontal step dimensions below geometry
-    if step_x:
+    if show_horizontal_steps and step_x:
+        direction = 1.0 if str(horizontal_side).lower() != "below" else -1.0
+        ref_y = max_y if direction > 0 else min_y
         for i, x_pos in enumerate(step_x):
-            dim_y = max_y + gap + step_spacing * (i + 2)  # offset below overall dim
+            dim_y = ref_y + direction * (gap + step_spacing * (i + 2))
+            ext_y = dim_y + direction * ext_over
             step_val = (x_pos - min_x) / scale if scale > 0 else 0
             if label_width is not None:
                 step_val = (x_pos - min_x) / (max_x - min_x) * label_width
             # Extension lines
-            parts.append(f'<line x1="{x_pos:.3f}" y1="{max_y:.3f}" x2="{x_pos:.3f}" y2="{dim_y + ext_over:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+            parts.append(f'<line x1="{x_pos:.3f}" y1="{ref_y:.3f}" x2="{x_pos:.3f}" y2="{ext_y:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
             # Left reference extension (only first time)
             if i == 0:
-                parts.append(f'<line x1="{min_x:.3f}" y1="{max_y:.3f}" x2="{min_x:.3f}" y2="{dim_y + ext_over + step_spacing * (len(step_x) - 1):.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
+                far_ext_y = ref_y + direction * (gap + step_spacing * (len(step_x) + 1) + ext_over)
+                parts.append(f'<line x1="{min_x:.3f}" y1="{ref_y:.3f}" x2="{min_x:.3f}" y2="{far_ext_y:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
             # Dimension line
             parts.append(f'<line x1="{min_x:.3f}" y1="{dim_y:.3f}" x2="{x_pos:.3f}" y2="{dim_y:.3f}" stroke="rgb(0,0,0)" stroke-width="{dim_sw:.4f}" />')
             # Arrows
@@ -582,12 +622,15 @@ def build_step_dimensions(svg_group, bounds, scale, stroke_width, line_profile=N
         y_positions.add(s["y2"])
     for s in h_segs:
         y_positions.add(s["y1"])
-    unique_y = _unique_positions(list(y_positions), tolerance=1.0 / scale)
+    step_y = _pick_step_positions(
+        list(y_positions),
+        min_y + height * 0.05,
+        max_y - height * 0.05,
+        height,
+        tolerance=1.0 / scale,
+    )
 
-    step_y = [y for y in unique_y if y > min_y + height * 0.05 and y < max_y - height * 0.05]
-    step_y = step_y[:max_steps]
-
-    if step_y:
+    if show_vertical_steps and step_y:
         for i, y_pos in enumerate(step_y):
             dim_x = max_x + gap + step_spacing * (i + 2)
             step_val = (y_pos - min_y) / scale if scale > 0 else 0
@@ -1165,7 +1208,7 @@ def dimension_metrics(bounds, scale):
     ext_over_mm = max(0.6, min(2.0, offset_mm * 0.25))
     arrow_len_mm = max(0.6, min(2.2, offset_mm * 0.22))
     arrow_half_mm = max(0.3, arrow_len_mm * 0.35)
-    text_size_mm = 3.6
+    text_size_mm = 4.2
     text_gap_mm = 1.6
     pad_mm = offset_mm + ext_over_mm + text_gap_mm + text_size_mm
 
@@ -2650,19 +2693,26 @@ def select_view_layout_variant(layout_profile, sheet_metal_subtype, feature_payl
 
     if is_flat and roundish_front:
         return "flat_round_dominant"
+    if is_flat:
+        return "flat_dominant"
     return "grid_2x2"
 
 
 def build_view_slots(layout_variant, origin_x, origin_y, avail_w, avail_h):
     if layout_variant == "sheet_bent":
         views_w = avail_w * 0.60
-        cell_w = views_w / 2.0
-        cell_h = avail_h / 2.0
+        gap = 8.0
+        aux_w = min(max(48.0, views_w * 0.26), views_w * 0.34)
+        bottom_h = min(max(34.0, avail_h * 0.22), avail_h * 0.30)
+        front_w = max(70.0, views_w - aux_w - gap)
+        front_h = max(70.0, avail_h - bottom_h - gap)
+        left_h = max(46.0, front_h * 0.62)
+        iso_h = max(34.0, avail_h - left_h - gap)
         return {
-            "Front": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 0.5, "cy": origin_y + cell_h * 0.5, "enabled": True},
-            "Left": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 1.5, "cy": origin_y + cell_h * 0.5, "enabled": True},
-            "Top": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 0.5, "cy": origin_y + cell_h * 1.5, "enabled": True},
-            "Iso": {"w": cell_w, "h": cell_h, "cx": origin_x + cell_w * 1.5, "cy": origin_y + cell_h * 1.5, "enabled": True},
+            "Front": {"w": front_w, "h": front_h, "cx": origin_x + front_w * 0.5, "cy": origin_y + front_h * 0.5, "enabled": True},
+            "Left": {"w": aux_w, "h": left_h, "cx": origin_x + front_w + gap + aux_w * 0.5, "cy": origin_y + left_h * 0.5, "enabled": True},
+            "Top": {"w": front_w, "h": bottom_h, "cx": origin_x + front_w * 0.5, "cy": origin_y + front_h + gap + bottom_h * 0.5, "enabled": True},
+            "Iso": {"w": aux_w, "h": iso_h, "cx": origin_x + front_w + gap + aux_w * 0.5, "cy": origin_y + left_h + gap + iso_h * 0.5, "enabled": True},
         }
 
     if layout_variant == "flat_round_dominant":
@@ -2705,17 +2755,18 @@ def build_view_slots(layout_variant, origin_x, origin_y, avail_w, avail_h):
         }
 
     if layout_variant == "flat_dominant":
-        side_w = max(84.0, avail_w * 0.28)
-        bottom_h = max(36.0, avail_h * 0.24)
-        side_w = min(side_w, avail_w * 0.38)
-        bottom_h = min(bottom_h, avail_h * 0.34)
-        front_w = avail_w - side_w
-        front_h = avail_h - bottom_h
+        gap = 8.0
+        side_w = min(max(62.0, avail_w * 0.22), avail_w * 0.28)
+        bottom_h = min(max(28.0, avail_h * 0.16), avail_h * 0.24)
+        front_w = max(70.0, avail_w - side_w - gap)
+        front_h = max(70.0, avail_h - bottom_h - gap)
+        left_h = max(42.0, front_h * 0.62)
+        iso_h = max(28.0, avail_h - left_h - gap)
         return {
             "Front": {"w": front_w, "h": front_h, "cx": origin_x + front_w * 0.5, "cy": origin_y + front_h * 0.5, "enabled": True},
-            "Left": {"w": side_w, "h": front_h, "cx": origin_x + front_w + side_w * 0.5, "cy": origin_y + front_h * 0.5, "enabled": True},
-            "Top": {"w": front_w, "h": bottom_h, "cx": origin_x + front_w * 0.5, "cy": origin_y + front_h + bottom_h * 0.5, "enabled": True},
-            "Iso": {"w": side_w, "h": bottom_h, "cx": origin_x + front_w + side_w * 0.5, "cy": origin_y + front_h + bottom_h * 0.5, "enabled": True},
+            "Left": {"w": side_w, "h": left_h, "cx": origin_x + front_w + gap + side_w * 0.5, "cy": origin_y + left_h * 0.5, "enabled": True},
+            "Top": {"w": front_w, "h": bottom_h, "cx": origin_x + front_w * 0.5, "cy": origin_y + front_h + gap + bottom_h * 0.5, "enabled": True},
+            "Iso": {"w": side_w, "h": iso_h, "cx": origin_x + front_w + gap + side_w * 0.5, "cy": origin_y + left_h + gap + iso_h * 0.5, "enabled": True},
         }
 
     cell_w = avail_w / 2.0
@@ -3474,6 +3525,7 @@ def _build_round_feature_dimension_svg(svg_group, svg_bounds, feature_payload, s
 def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, stroke_width, line_profile=None):
     if not isinstance(feature_payload, dict) or feature_payload.get("ok") is not True:
         return ""
+    min_x, max_x, min_y, max_y = svg_bounds
     circles = extract_svg_circular_features(svg_group)
     main_holes = []
     main_radius = 0.0
@@ -3488,7 +3540,47 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
         main_holes = [circle for circle in circles if abs(circle["r"] - main_bucket) <= tol]
         main_radius = main_bucket
 
-    min_x, max_x, min_y, max_y = svg_bounds
+    def _pick_hole_pattern_group(candidates):
+        if len(candidates) < 3:
+            return list(candidates)
+        cluster_gap = max(
+            main_radius * 10.0,
+            min(max_x - min_x, max_y - min_y) * 0.30,
+            14.0 / max(scale, 0.05),
+        )
+        remaining = list(candidates)
+        clusters = []
+        while remaining:
+            seed = remaining.pop(0)
+            cluster = [seed]
+            changed = True
+            while changed:
+                changed = False
+                still_open = []
+                for circle in remaining:
+                    if any(
+                        math.hypot(float(circle["cx"]) - float(member["cx"]), float(circle["cy"]) - float(member["cy"])) <= cluster_gap
+                        for member in cluster
+                    ):
+                        cluster.append(circle)
+                        changed = True
+                    else:
+                        still_open.append(circle)
+                remaining = still_open
+            clusters.append(cluster)
+
+        def _cluster_score(cluster):
+            xs = [float(circle["cx"]) for circle in cluster]
+            ys = [float(circle["cy"]) for circle in cluster]
+            span_x = max(xs) - min(xs)
+            span_y = max(ys) - min(ys)
+            area = max(span_x * span_y, 1.0)
+            return (len(cluster), -area, -max(span_x, span_y))
+
+        picked = max(clusters, key=_cluster_score)
+        return picked if len(picked) >= 3 else list(candidates)
+
+    pattern_holes = _pick_hole_pattern_group(main_holes) if main_holes else []
     dim_stroke = max(0.0008, stroke_width * 0.55)
     if isinstance(line_profile, dict):
         dim_stroke = max(0.0008, float(line_profile.get("dimension", dim_stroke)))
@@ -3496,7 +3588,7 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
     _metrics = dimension_metrics(svg_bounds, scale)
     arrow_len = _metrics["arrow_len"]
     arrow_half = _metrics["arrow_half"]
-    text_size = max(0.2, 2.8 / scale)  # slightly smaller than overall (3.6) but readable
+    text_size = max(0.2, 3.3 / scale)  # slightly smaller than overall but still readable
     label_gap = max(1.8, 4.0 / max(scale, 0.05))
     round_feature_svg = _build_round_feature_dimension_svg(
         svg_group,
@@ -3629,20 +3721,21 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                 f'transform="rotate(90,{text_x:.3f},{-text_y:.3f})">{label_text}</text></g>'
             )
 
-    edge_location_targets = []
-    if circles:
-        edge_location_targets = sorted(circles, key=lambda item: item["r"], reverse=True)
-    elif main_holes:
-        edge_location_targets = list(main_holes)
+    edge_location_targets = list(pattern_holes) if pattern_holes else []
+    if not edge_location_targets:
+        if circles:
+            edge_location_targets = sorted(circles, key=lambda item: item["r"], reverse=True)
+        elif main_holes:
+            edge_location_targets = list(main_holes)
 
     # Hole pitch dimension between outer main-hole centers.
-    if len(main_holes) >= 2:
-        by_x = sorted(main_holes, key=lambda item: item["cx"])
+    if len(pattern_holes) >= 2:
+        by_x = sorted(pattern_holes, key=lambda item: item["cx"])
         left_hole = by_x[0]
         right_hole = by_x[-1]
         span = abs(right_hole["cx"] - left_hole["cx"])
         if span > max(1.0, 5.0 / scale):
-            if hole_pitch is None or hole_pitch <= 0:
+            if hole_pitch is None or hole_pitch <= 0 or hole_pitch > span * 1.6:
                 hole_pitch = span
             y_dim = min(left_hole["cy"], right_hole["cy"]) - max(left_hole["r"], right_hole["r"]) - (4.0 / scale)
             if y_dim < min_y + (3.0 / scale):
@@ -3683,25 +3776,34 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                     y_dim + arrow_half + arrow_pad,
                 )
             )
-            # Prefer positioning from one outer datum edge to avoid pure chain dimensioning.
-            edge_span = abs(left_hole["cx"] - min_x)
-            if edge_span > max(1.0, 4.0 / scale):
+            # Prefer positioning from the nearest outer datum edge to avoid pure chain dimensioning.
+            left_edge_span = abs(left_hole["cx"] - min_x)
+            right_edge_span = abs(max_x - right_hole["cx"])
+            if min(left_edge_span, right_edge_span) > max(1.0, 4.0 / scale):
                 edge_y = y_dim - max(2.5 / scale, label_gap * 0.55)
                 if edge_y < min_y + (2.5 / scale):
                     edge_y = y_dim + max(2.5 / scale, label_gap * 0.55)
-                ex0 = min_x
-                ex1 = left_hole["cx"]
+                if right_edge_span < left_edge_span:
+                    ex0 = right_hole["cx"]
+                    ex1 = max_x
+                    edge_circle = right_hole
+                    edge_span = right_edge_span
+                else:
+                    ex0 = min_x
+                    ex1 = left_hole["cx"]
+                    edge_circle = left_hole
+                    edge_span = left_edge_span
                 parts.append(
                     f'<g fill="none" stroke="rgb(0, 0, 0)" stroke-width="{dim_stroke:.4f}" '
                     f'stroke-linecap="butt" stroke-linejoin="miter">'
                     f'<line x1="{ex0:.3f}" y1="{edge_y:.3f}" x2="{ex1:.3f}" y2="{edge_y:.3f}" />'
-                    f'<line x1="{ex0:.3f}" y1="{left_hole["cy"]:.3f}" x2="{ex0:.3f}" y2="{edge_y:.3f}" />'
-                    f'<line x1="{ex1:.3f}" y1="{left_hole["cy"]:.3f}" x2="{ex1:.3f}" y2="{edge_y:.3f}" />'
+                    f'<line x1="{ex0:.3f}" y1="{edge_circle["cy"]:.3f}" x2="{ex0:.3f}" y2="{edge_y:.3f}" />'
+                    f'<line x1="{ex1:.3f}" y1="{edge_circle["cy"]:.3f}" x2="{ex1:.3f}" y2="{edge_y:.3f}" />'
                     "</g>"
                 )
                 collision_boxes.append(_line_collision_box(ex0, edge_y, ex1, edge_y, line_pad))
-                collision_boxes.append(_line_collision_box(ex0, left_hole["cy"], ex0, edge_y, line_pad))
-                collision_boxes.append(_line_collision_box(ex1, left_hole["cy"], ex1, edge_y, line_pad))
+                collision_boxes.append(_line_collision_box(ex0, edge_circle["cy"], ex0, edge_y, line_pad))
+                collision_boxes.append(_line_collision_box(ex1, edge_circle["cy"], ex1, edge_y, line_pad))
                 parts.append(
                     f'<g fill="rgb(0, 0, 0)" stroke="none">'
                     f'<polygon points="{ex0:.3f},{edge_y:.3f} {ex0 + arrow_len:.3f},{edge_y - arrow_half:.3f} {ex0 + arrow_len:.3f},{edge_y + arrow_half:.3f}" />'
@@ -3733,25 +3835,34 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                             anchor="middle",
                         )
                     )
-            # Vertical hole-to-edge: distance from bottom edge to bottom-most hole
-            by_y = sorted(main_holes, key=lambda item: item["cy"], reverse=True)
+            # Vertical hole-to-edge: distance from the nearest horizontal datum edge.
+            by_y = sorted(pattern_holes, key=lambda item: item["cy"], reverse=True)
             bottom_hole = by_y[0]
-            vert_edge_span = abs(max_y - bottom_hole["cy"])
+            top_hole = by_y[-1]
+            bottom_span = abs(max_y - bottom_hole["cy"])
+            top_span = abs(float(top_hole["cy"]) - min_y)
+            vert_edge_span = min(bottom_span, top_span)
             if vert_edge_span > max(1.0, 4.0 / scale):
                 edge_x = max_x + max(2.5 / scale, label_gap * 0.55)
-                ey0 = max_y
-                ey1 = bottom_hole["cy"]
+                if top_span < bottom_span:
+                    anchor_hole = top_hole
+                    ey0 = min_y
+                    ey1 = anchor_hole["cy"]
+                else:
+                    anchor_hole = bottom_hole
+                    ey0 = max_y
+                    ey1 = anchor_hole["cy"]
                 parts.append(
                     f'<g fill="none" stroke="rgb(0, 0, 0)" stroke-width="{dim_stroke:.4f}" '
                     f'stroke-linecap="butt" stroke-linejoin="miter">'
                     f'<line x1="{edge_x:.3f}" y1="{ey0:.3f}" x2="{edge_x:.3f}" y2="{ey1:.3f}" />'
-                    f'<line x1="{bottom_hole["cx"]:.3f}" y1="{ey0:.3f}" x2="{edge_x:.3f}" y2="{ey0:.3f}" />'
-                    f'<line x1="{bottom_hole["cx"]:.3f}" y1="{ey1:.3f}" x2="{edge_x:.3f}" y2="{ey1:.3f}" />'
+                    f'<line x1="{anchor_hole["cx"]:.3f}" y1="{ey0:.3f}" x2="{edge_x:.3f}" y2="{ey0:.3f}" />'
+                    f'<line x1="{anchor_hole["cx"]:.3f}" y1="{ey1:.3f}" x2="{edge_x:.3f}" y2="{ey1:.3f}" />'
                     "</g>"
                 )
                 collision_boxes.append(_line_collision_box(edge_x, ey0, edge_x, ey1, line_pad))
-                collision_boxes.append(_line_collision_box(bottom_hole["cx"], ey0, edge_x, ey0, line_pad))
-                collision_boxes.append(_line_collision_box(bottom_hole["cx"], ey1, edge_x, ey1, line_pad))
+                collision_boxes.append(_line_collision_box(anchor_hole["cx"], ey0, edge_x, ey0, line_pad))
+                collision_boxes.append(_line_collision_box(anchor_hole["cx"], ey1, edge_x, ey1, line_pad))
                 # Vertical arrows
                 parts.append(
                     f'<g fill="rgb(0, 0, 0)" stroke="none">'
@@ -3908,14 +4019,32 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
     if (hole_dia is None or hole_dia <= 0) and main_radius > 0:
         hole_dia = max(0.0, main_radius * 2.0)
     if hole_dia and hole_dia > 0:
-        if main_holes:
+        if pattern_holes:
+            cx_mean = sum(float(circle["cx"]) for circle in pattern_holes) / len(pattern_holes)
+            cy_mean = sum(float(circle["cy"]) for circle in pattern_holes) / len(pattern_holes)
+            radial_values = [
+                math.hypot(float(circle["cx"]) - cx_mean, float(circle["cy"]) - cy_mean)
+                for circle in pattern_holes
+            ]
+            radial_mean = sum(radial_values) / max(len(radial_values), 1)
+            radial_spread = (max(radial_values) - min(radial_values)) if radial_values else 0.0
+            target = max(
+                pattern_holes,
+                key=lambda item: math.hypot(float(item["cx"]) - cx_mean, float(item["cy"]) - cy_mean),
+            )
+            dia_text = f"{len(pattern_holes)}x \u00D8 {format_de_number(hole_dia)}"
+            if len(pattern_holes) >= 4 and radial_mean > hole_dia * 0.75 and radial_spread <= max(hole_dia * 0.45, 1.8 / max(scale, 0.05)):
+                dia_text += f" LK \u00D8{format_de_number(radial_mean * 2.0)}"
+        elif main_holes:
             target = sorted(main_holes, key=lambda item: (item["cx"], item["cy"]))[0]
+            dia_text = f"\u00D8 {format_de_number(hole_dia)}"
         else:
             target = {
                 "cx": min_x + (max_x - min_x) * 0.2,
                 "cy": min_y + (max_y - min_y) * 0.25,
                 "r": max(0.8, 2.0 / scale),
             }
+            dia_text = f"\u00D8 {format_de_number(hole_dia)}"
         sx = target["cx"] + target["r"] * 0.7
         sy = target["cy"] - target["r"] * 0.7
         kx = sx + (8.0 / scale)
@@ -3930,7 +4059,6 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
         )
         collision_boxes.append(_line_collision_box(sx, sy, kx, ky, line_pad))
         collision_boxes.append(_line_collision_box(kx, ky, ex, ey, line_pad))
-        dia_text = f"\u00D8 {format_de_number(hole_dia)}"
         text_x = ex + (1.0 / scale)
         text_y = _reserve_feature_label_position(
             dia_text,
@@ -4104,11 +4232,11 @@ def build_page_svg(template_path, meta, views_svg, annotation_lines, annotation_
         annotation_lines = [""]
     text_style = (
         "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-        "font-size: 3.2px; font-style: normal; font-weight: normal;"
+        "font-size: 3.8px; font-style: normal; font-weight: normal;"
     )
     annotation_chunks = []
     for index, line in enumerate(annotation_lines[:10]):
-        y = annotation_y - (index * 3.4)
+        y = annotation_y - (index * 4.0)
         annotation_chunks.append(
             f'<text x="12" y="{y:.1f}" style="{text_style}">{escape(str(line))}</text>'
         )
@@ -4120,11 +4248,11 @@ def build_page_svg(template_path, meta, views_svg, annotation_lines, annotation_
     tolerance_value = str(meta.get("general_tolerance", DEFAULT_GENERAL_TOLERANCE)).strip()
     title_info_style_label = (
         "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-        "font-size: 2.6px; font-style: normal; font-weight: normal;"
+        "font-size: 3.0px; font-style: normal; font-weight: normal;"
     )
     title_info_style_value = (
         "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-        "font-size: 3.0px; font-style: normal; font-weight: normal;"
+        "font-size: 3.6px; font-style: normal; font-weight: normal;"
     )
     is_first_angle = "1." in projection_value or "first" in projection_value.lower()
     info_rows = [
@@ -5119,8 +5247,8 @@ def main():
         ("Iso", iso_dir, view_slots["Iso"]["cx"], view_slots["Iso"]["cy"]),
     ]
 
-    ortho_padding = 0.85 if layout_profile == "milling" else 0.82
-    iso_padding = 0.90 if layout_profile == "milling" else 0.88
+    ortho_padding = 0.90 if layout_profile == "milling" else 0.88
+    iso_padding = 0.84 if layout_profile == "milling" else 0.82
     view_data = []
     projection_failures = []
     for name, direction, cx, cy in views:
@@ -5228,68 +5356,13 @@ def main():
         for item in view_data
         if item["name"] in ("Top", "Front", "Left") and item.get("enabled", True)
     )
-    log(f"ALIGN ortho_scale={ortho_scale:.4f}")
-    iso_item = next((item for item in view_data if item["name"] == "Iso"), None)
-    if iso_item is not None:
-        iso_bounds = iso_item["layout_bounds"]
-        iso_slot = iso_item.get("slot") or view_slots["Iso"]
-        iso_scale = compute_scale_for_area(iso_bounds, iso_slot["w"], iso_slot["h"], padding=iso_padding)
-        if layout_variant == "sheet_bent":
-            iso_max_ratio = 0.65
-        elif layout_variant == "flat_round_dominant":
-            iso_max_ratio = 0.45
-        elif layout_variant == "flat_dominant":
-            iso_max_ratio = 0.55
-        else:
-            iso_max_ratio = 0.75
-        iso_scale = min(iso_scale, ortho_scale * iso_max_ratio)
-        iso_item["cx"] = iso_slot["cx"]
-        iso_item["cy"] = iso_slot["cy"]
-        iso_item["scale"] = iso_scale
-    if not meta.get("scale") or str(meta.get("scale")).lower() == "auto":
-        meta["scale"] = format_scale(ortho_scale)
 
-    front_item = next((item for item in view_data if item["name"] == "Front"), None)
-    top_item = next((item for item in view_data if item["name"] == "Top"), None)
-    left_item = next((item for item in view_data if item["name"] == "Left"), None)
-    
-    # Simple alignment based on scaled dimensions (like CAD software does)
-    # After rotation, width and height may swap
+    # After rotation, width and height may swap.
     def get_paper_dimensions(item, scale, include_fit_padding=False):
-        """Get width and height in paper space after rotation.
-        include_fit_padding=True includes dimension margin for bounds/clipping checks."""
+        """Get width and height in paper space after rotation."""
         if include_fit_padding:
             return item["fit_w"] * scale, item["fit_h"] * scale
         return item["geom_w"] * scale, item["geom_h"] * scale
-    
-    # Calculate Front's left edge position
-    if front_item:
-        front_paper_w, front_paper_h = get_paper_dimensions(front_item, ortho_scale)
-        front_left = front_item["cx"] - front_paper_w / 2
-        front_top = front_item["cy"] - front_paper_h / 2
-        log(f"ALIGN Front: cx={front_item['cx']:.2f}, paper_w={front_paper_w:.2f}, left_edge={front_left:.2f}")
-    
-    # Align Top view: move cx so its left edge matches Front's left edge
-    if front_item and top_item:
-        top_paper_w, top_paper_h = get_paper_dimensions(top_item, ortho_scale)
-        # Top's left edge = top_cx - top_paper_w / 2
-        # We want: top_left = front_left
-        # So: top_cx - top_paper_w / 2 = front_left
-        # top_cx = front_left + top_paper_w / 2
-        new_top_cx = front_left + top_paper_w / 2
-        log(f"ALIGN Top: paper_w={top_paper_w:.2f}, old_cx={top_item['cx']:.2f}, new_cx={new_top_cx:.2f}")
-        top_item["cx"] = new_top_cx
-    
-    # Align Left view: move cy so its top edge matches Front's top edge  
-    if front_item and left_item:
-        left_paper_w, left_paper_h = get_paper_dimensions(left_item, ortho_scale)
-        # Left's top edge = left_cy - left_paper_h / 2
-        # We want: left_top = front_top
-        # So: left_cy - left_paper_h / 2 = front_top
-        # left_cy = front_top + left_paper_h / 2
-        new_left_cy = front_top + left_paper_h / 2
-        log(f"ALIGN Left: paper_h={left_paper_h:.2f}, old_cy={left_item['cy']:.2f}, new_cy={new_left_cy:.2f}")
-        left_item["cy"] = new_left_cy
 
     # === BOUNDS CHECKING: Ensure all views fit within drawing area ===
     # Drawing area limits (excluding margin and title block)
@@ -5297,6 +5370,185 @@ def main():
     draw_top = margin
     draw_right = sheet_w - margin
     draw_bottom = sheet_h - margin - title_block_h
+
+    front_item = next((item for item in view_data if item["name"] == "Front"), None)
+    top_item = next((item for item in view_data if item["name"] == "Top"), None)
+    left_item = next((item for item in view_data if item["name"] == "Left"), None)
+    iso_item = next((item for item in view_data if item["name"] == "Iso"), None)
+
+    anchor_layout_variants = {"sheet_bent", "flat_dominant", "flat_round_dominant"}
+    use_anchor_layout = layout_variant in anchor_layout_variants and front_item is not None
+    if use_anchor_layout:
+        anchor_gap_x = 10.0 if layout_variant != "sheet_bent" else 12.0
+        anchor_gap_y = 10.0 if layout_variant == "flat_dominant" else 12.0
+        if layout_variant == "sheet_bent":
+            outer_margin_x = 14.0
+            outer_margin_y = 14.0
+            margin_factor_x = 0.18
+            margin_factor_y = 0.16
+            margin_cap_x = 32.0
+            margin_cap_y = 28.0
+            scale_growth_cap = 1.18
+        else:
+            outer_margin_x = 10.0
+            outer_margin_y = 10.0
+            margin_factor_x = 0.12
+            margin_factor_y = 0.10
+            margin_cap_x = 18.0
+            margin_cap_y = 18.0
+            scale_growth_cap = 1.25
+        draw_w = draw_right - draw_left
+        draw_h = draw_bottom - draw_top
+        iso_reserve_w = 0.0
+        if iso_item is not None and iso_item.get("enabled", True):
+            if layout_variant == "sheet_bent":
+                iso_reserve_w = min(max(54.0, draw_w * 0.16), draw_w * 0.24)
+            elif layout_variant == "flat_round_dominant":
+                iso_reserve_w = min(max(68.0, draw_w * 0.18), draw_w * 0.24)
+            else:
+                iso_reserve_w = min(max(60.0, draw_w * 0.17), draw_w * 0.24)
+
+        top_enabled = bool(top_item and top_item.get("enabled", True))
+        left_enabled = bool(left_item and left_item.get("enabled", True))
+        front_fit_w = _optional_float(front_item.get("fit_w")) or 0.0
+        front_fit_h = _optional_float(front_item.get("fit_h")) or 0.0
+        top_fit_w = (_optional_float(top_item.get("fit_w")) or 0.0) if top_enabled else 0.0
+        top_fit_h = (_optional_float(top_item.get("fit_h")) or 0.0) if top_enabled else 0.0
+        left_fit_w = (_optional_float(left_item.get("fit_w")) or 0.0) if left_enabled else 0.0
+        left_fit_h = (_optional_float(left_item.get("fit_h")) or 0.0) if left_enabled else 0.0
+        main_fit_w = max(front_fit_w, top_fit_w, 1e-6)
+        main_fit_h = max(front_fit_h, left_fit_h, 1e-6)
+        cluster_fit_w_units = main_fit_w + (left_fit_w if left_enabled else 0.0)
+        cluster_fit_h_units = main_fit_h + (top_fit_h if top_enabled else 0.0)
+        cluster_fit_w_mm = max(1e-6, draw_w - iso_reserve_w - outer_margin_x * 2.0 - (anchor_gap_x if left_enabled else 0.0))
+        cluster_fit_h_mm = max(1e-6, draw_h - outer_margin_y * 2.0 - (anchor_gap_y if top_enabled else 0.0))
+        anchor_scale = min(
+            cluster_fit_w_mm / max(cluster_fit_w_units, 1e-6),
+            cluster_fit_h_mm / max(cluster_fit_h_units, 1e-6),
+        )
+        # Promote scale only moderately; Welle 1b should improve density without destabilising dimensioning.
+        ortho_scale = max(0.01, min(anchor_scale * 0.98, ortho_scale * scale_growth_cap))
+        log(
+            f"ALIGN ortho_scale slot={min(item['scale_fit'] for item in view_data if item['name'] in ('Top', 'Front', 'Left') and item.get('enabled', True)):.4f} "
+            f"anchor={anchor_scale:.4f} final={ortho_scale:.4f}"
+        )
+
+        front_paper_w, front_paper_h = get_paper_dimensions(front_item, ortho_scale)
+        front_fit_w_mm, front_fit_h_mm = get_paper_dimensions(front_item, ortho_scale, include_fit_padding=True)
+        top_paper_w = top_paper_h = top_fit_w_mm = top_fit_h_mm = 0.0
+        left_paper_w = left_paper_h = left_fit_w_mm = left_fit_h_mm = 0.0
+        if top_enabled:
+            top_paper_w, top_paper_h = get_paper_dimensions(top_item, ortho_scale)
+            top_fit_w_mm, top_fit_h_mm = get_paper_dimensions(top_item, ortho_scale, include_fit_padding=True)
+        if left_enabled:
+            left_paper_w, left_paper_h = get_paper_dimensions(left_item, ortho_scale)
+            left_fit_w_mm, left_fit_h_mm = get_paper_dimensions(left_item, ortho_scale, include_fit_padding=True)
+
+        main_col_w_mm = max(front_fit_w_mm, top_fit_w_mm)
+        main_col_h_mm = max(front_fit_h_mm, left_fit_h_mm)
+        projection_spread_y = 0.0
+        if layout_variant == "flat_dominant" and top_enabled:
+            remaining_h = max(0.0, draw_h - (main_col_h_mm + anchor_gap_y + top_fit_h_mm))
+            top_height_ratio = top_fit_h_mm / max(front_fit_h_mm, 1e-6)
+            if remaining_h > 20.0 and top_height_ratio < 0.22:
+                projection_spread_y = min(58.0, max(18.0, remaining_h * 0.34))
+        cluster_fit_w = main_col_w_mm + (anchor_gap_x + left_fit_w_mm if left_enabled else 0.0)
+        cluster_fit_h = main_col_h_mm + (anchor_gap_y + projection_spread_y + top_fit_h_mm if top_enabled else 0.0)
+        cluster_left = draw_left + max(
+            outer_margin_x,
+            min(margin_cap_x, (draw_w - iso_reserve_w - cluster_fit_w) * margin_factor_x),
+        )
+        cluster_top = draw_top + max(
+            outer_margin_y,
+            min(margin_cap_y, (draw_h - cluster_fit_h) * margin_factor_y),
+        )
+        front_item["cx"] = cluster_left + front_paper_w * 0.5
+        front_item["cy"] = cluster_top + front_paper_h * 0.5
+
+        if top_enabled:
+            top_item["cx"] = cluster_left + top_paper_w * 0.5
+            top_item["cy"] = cluster_top + front_fit_h_mm + anchor_gap_y + projection_spread_y + top_paper_h * 0.5
+        if left_enabled:
+            left_item["cx"] = cluster_left + main_col_w_mm + anchor_gap_x + left_paper_w * 0.5
+            left_item["cy"] = cluster_top + left_paper_h * 0.5
+
+        if iso_item is not None and iso_item.get("enabled", True):
+            iso_bounds = iso_item["layout_bounds"]
+            iso_fit_area_w = max(40.0, draw_right - cluster_left - cluster_fit_w - outer_margin_x)
+            iso_fit_area_h = max(40.0, draw_h - outer_margin_y * 2.0)
+            iso_scale = compute_scale_for_area(
+                iso_bounds,
+                iso_fit_area_w,
+                iso_fit_area_h,
+                padding=iso_padding,
+            )
+            if layout_variant == "sheet_bent":
+                iso_max_ratio = 0.45
+            elif layout_variant == "flat_round_dominant":
+                iso_max_ratio = 0.45
+            elif layout_variant == "flat_dominant":
+                iso_max_ratio = 0.40
+            else:
+                iso_max_ratio = 0.75
+            iso_scale = min(iso_scale, ortho_scale * iso_max_ratio)
+            iso_item["scale"] = iso_scale
+            iso_paper_w, iso_paper_h = get_paper_dimensions(iso_item, iso_scale)
+            iso_fit_w_mm, iso_fit_h_mm = get_paper_dimensions(iso_item, iso_scale, include_fit_padding=True)
+            iso_gap = 12.0
+            pref_iso_left = cluster_left + cluster_fit_w + iso_gap
+            pref_iso_top = max(cluster_top, cluster_top + cluster_fit_h - iso_fit_h_mm)
+            if layout_variant == "flat_dominant":
+                pref_iso_top = max(pref_iso_top, cluster_top + front_fit_h_mm + max(18.0, projection_spread_y * 0.65))
+            if pref_iso_left + iso_fit_w_mm > draw_right - outer_margin_x:
+                pref_iso_left = min(
+                    draw_right - outer_margin_x - iso_fit_w_mm,
+                    max(draw_left + outer_margin_x, cluster_left + cluster_fit_w - iso_fit_w_mm),
+                )
+                pref_iso_top = min(
+                    draw_bottom - outer_margin_y - iso_fit_h_mm,
+                    cluster_top + cluster_fit_h + iso_gap,
+                )
+            iso_item["cx"] = max(draw_left + outer_margin_x, pref_iso_left) + iso_paper_w * 0.5
+            iso_item["cy"] = max(draw_top + outer_margin_y, pref_iso_top) + iso_paper_h * 0.5
+    else:
+        log(f"ALIGN ortho_scale={ortho_scale:.4f}")
+        if iso_item is not None:
+            iso_bounds = iso_item["layout_bounds"]
+            iso_slot = iso_item.get("slot") or view_slots["Iso"]
+            iso_scale = compute_scale_for_area(iso_bounds, iso_slot["w"], iso_slot["h"], padding=iso_padding)
+            if layout_variant == "sheet_bent":
+                iso_max_ratio = 0.45
+            elif layout_variant == "flat_round_dominant":
+                iso_max_ratio = 0.45
+            elif layout_variant == "flat_dominant":
+                iso_max_ratio = 0.40
+            else:
+                iso_max_ratio = 0.75
+            iso_scale = min(iso_scale, ortho_scale * iso_max_ratio)
+            iso_item["cx"] = iso_slot["cx"]
+            iso_item["cy"] = iso_slot["cy"]
+            iso_item["scale"] = iso_scale
+
+        if front_item:
+            front_paper_w, front_paper_h = get_paper_dimensions(front_item, ortho_scale)
+            front_left = front_item["cx"] - front_paper_w / 2
+            front_top = front_item["cy"] - front_paper_h / 2
+            log(f"ALIGN Front: cx={front_item['cx']:.2f}, paper_w={front_paper_w:.2f}, left_edge={front_left:.2f}")
+
+            if top_item and top_item.get("enabled", True):
+                top_paper_w, _ = get_paper_dimensions(top_item, ortho_scale)
+                new_top_cx = front_left + top_paper_w / 2
+                log(f"ALIGN Top: paper_w={top_paper_w:.2f}, old_cx={top_item['cx']:.2f}, new_cx={new_top_cx:.2f}")
+                top_item["cx"] = new_top_cx
+
+            if left_item and left_item.get("enabled", True):
+                _, left_paper_h = get_paper_dimensions(left_item, ortho_scale)
+                new_left_cy = front_top + left_paper_h / 2
+                log(f"ALIGN Left: paper_h={left_paper_h:.2f}, old_cy={left_item['cy']:.2f}, new_cy={new_left_cy:.2f}")
+                left_item["cy"] = new_left_cy
+
+    if not meta.get("scale") or str(meta.get("scale")).lower() == "auto":
+        meta["scale"] = format_scale(ortho_scale)
     
     def compute_view_bounds(item, scale):
         """Compute the bounding box of a view in paper coordinates."""
@@ -5663,23 +5915,30 @@ def main():
                     dimension_svg = f"{dimension_svg}{feature_dimension_svg}"
                     dim_tracking["dim_text_count"] += feature_dimension_svg.count("<text")
                     dim_tracking["feature_dim_present"] = True
-            # Step dimensions disabled: produces irrelevant edge-position values
-            # that don't correspond to intentional design dimensions.
-            # TODO: Replace with intelligent feature-based dimensioning.
-            # if name == "Front" and show_horizontal and show_vertical:
-            #     step_dim_svg = build_step_dimensions(
-            #         item["svg"],
-            #         svg_bounds,
-            #         scale,
-            #         stroke_width,
-            #         line_profile=line_profile,
-            #         label_width=label_w,
-            #         label_height=label_h,
-            #         max_steps=5,
-            #     )
-            #     if step_dim_svg:
-            #         dimension_svg = f"{dimension_svg}{step_dim_svg}"
-            #         dim_tracking["step_dim_count"] += step_dim_svg.count("<text")
+            enable_step_dims = (
+                name == "Front"
+                and show_horizontal
+                and bool((feature_payload or {}).get("is_flat"))
+                and svg_detail_score(item["svg"]) > max(proj_w, proj_h) * 2.0
+            )
+            if enable_step_dims:
+                step_dim_svg = build_step_dimensions(
+                    item["svg"],
+                    svg_bounds,
+                    scale,
+                    stroke_width,
+                    line_profile=line_profile,
+                    label_width=label_w,
+                    label_height=label_h,
+                    max_steps=5,
+                    show_horizontal_steps=True,
+                    show_vertical_steps=False,
+                    horizontal_side="below",
+                    horizontal_max_ratio=0.68 if int((feature_payload or {}).get("hole_count") or 0) >= 6 else None,
+                )
+                if step_dim_svg:
+                    dimension_svg = f"{dimension_svg}{step_dim_svg}"
+                    dim_tracking["step_dim_count"] += step_dim_svg.count("<text")
         item["centerline_count"] = int(centerline_count)
         item["line_profile"] = dict(line_profile or {})
         stroke_width = float(line_profile.get("visible", compute_stroke_width(scale)))

@@ -5,21 +5,21 @@
       .grid { fill: none; stroke: #000; stroke-width: 0.25; }
       .label {
         font-family: ISOCP, "ISO 3098", "Hershey Simplex", "Simplex", monospace;
-        font-size: 3.0px;
+        font-size: 3.4px;
         fill: #000;
         font-style: normal;
         font-weight: normal;
       }
       .value {
         font-family: ISOCP, "ISO 3098", "Hershey Simplex", "Simplex", monospace;
-        font-size: 4.8px;
+        font-size: 5.4px;
         fill: #000;
         font-style: normal;
         font-weight: normal;
       }
       .zone {
         font-family: ISOCP, "ISO 3098", "Hershey Simplex", "Simplex", monospace;
-        font-size: 3.6px;
+        font-size: 4.0px;
         fill: #000;
       }
     </style>

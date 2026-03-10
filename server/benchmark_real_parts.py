@@ -82,7 +82,7 @@ def extract_pdf_metrics(pdf_path: Path):
         "median_font_pt": float(median_size),
         "line_count": len(text_lines),
         "has_abwicklung": "abwicklung" in text_blob.lower(),
-        "has_brand_text": "spie" in text_blob.lower(),
+        "has_logo_placeholder": "spie" in text_blob.lower(),
     }
 
 
@@ -102,9 +102,6 @@ def evaluate_metrics(name: str, ref_metrics: dict, out_metrics: dict):
         issues.append(f"{name}: Ausgabeformat unerwartet ({out_metrics['sheet']})")
     if ref_metrics["has_abwicklung"] and not out_metrics["has_abwicklung"]:
         issues.append(f"{name}: Abwicklungsmarker fehlt im generierten PDF.")
-    if out_metrics["has_brand_text"]:
-        issues.append(f"{name}: Branding-Text erkannt (SPIE), neutraler Output erwartet.")
-
     min_font_pt = max(6.5, ref_metrics["median_font_pt"] * 0.50)
     if out_metrics["median_font_pt"] < min_font_pt:
         issues.append(
