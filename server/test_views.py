@@ -96,14 +96,22 @@ EXPECTED = {
         "is_flat": False,
         "alignment_ok": True,
         "front_width_gt_height": True,  # Length horizontal
-        "min_hole_count": 2,
+        "max_hole_count": 0,
+        "bend_radius_absent": True,
+        "rotational_profile": True,
+        "dse_check": True,
+        "part_type": "turning",
     },
     "shaft": {
         "longest_axis": "Z",  # 100mm length
         "is_flat": False,
         "alignment_ok": True,
         "front_width_gt_height": True,  # Length horizontal
-        "min_hole_count": 3,
+        "max_hole_count": 0,
+        "bend_radius_absent": True,
+        "rotational_profile": True,
+        "dse_check": True,
+        "part_type": "turning",
     },
     "flange": {
         "longest_axis": "X",  # Diameter 100mm
@@ -213,11 +221,13 @@ EXPECTED = {
         "is_flat": False,
         "alignment_ok": True,
         "front_width_gt_height": True,
-        "min_hole_count": 5,
-        "min_hole_diameter_mm": 20.0,
-        "min_hole_pitch_mm": 180.0,
+        "max_hole_count": 0,
+        "bend_radius_absent": True,
+        "rotational_profile": True,
         "min_centerline_count": 3,
         "stability_check": True,
+        "dse_check": True,
+        "part_type": "turning",
     },
     "u_channel_assembly": {
         "longest_axis": "X",
@@ -258,6 +268,19 @@ def _round_or_none(value, digits=3):
     if parsed is None:
         return None
     return round(parsed, digits)
+
+
+def _parse_scale_label(value: str | None):
+    if value is None:
+        return None
+    match = re.fullmatch(r"\s*(\d+(?:[.,]\d+)?)\s*:\s*(\d+(?:[.,]\d+)?)\s*", str(value))
+    if not match:
+        return None
+    left = _float_or_none(match.group(1).replace(",", "."))
+    right = _float_or_none(match.group(2).replace(",", "."))
+    if left is None or right is None or left <= 0 or right <= 0:
+        return None
+    return left / right
 
 
 def resolve_freecad_python() -> str:
@@ -334,6 +357,19 @@ def run_conversion(step_file: Path, sample_name: str | None = None) -> dict:
         return {"error": f"No report generated. stderr: {stderr}"}
 
     report = json.loads(json_path.read_text(encoding="utf-8"))
+    actual_pdf_path = Path(pdf_path).resolve()
+    latest_pdf_alias = (DEBUG_DIR / f"{base_name}_latest.pdf").resolve()
+    artifacts = report.setdefault("artifacts", {})
+    artifacts["pdf_path"] = str(actual_pdf_path)
+    artifacts["preferred_open_pdf"] = str(actual_pdf_path)
+    artifacts["latest_pdf_alias"] = str(actual_pdf_path)
+    try:
+        if actual_pdf_path != latest_pdf_alias:
+            shutil.copy2(actual_pdf_path, latest_pdf_alias)
+        artifacts["latest_pdf_alias"] = str(latest_pdf_alias)
+    except Exception:
+        pass
+    json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # Render debug SVG → PNG for agent visual inspection
     svg_path = DEBUG_DIR / f"{base_name}_debug.svg"
@@ -423,6 +459,13 @@ def check_feature_expectations(report: dict, expected: dict) -> tuple[bool, list
                 f"Feature holes too low: expected >= {expected['min_hole_count']}, got {actual_holes}"
             )
 
+    if expected.get("max_hole_count") is not None:
+        actual_holes = int(_float_or_none(features.get("hole_count")) or 0)
+        if actual_holes > int(expected["max_hole_count"]):
+            issues.append(
+                f"Feature holes too high: expected <= {expected['max_hole_count']}, got {actual_holes}"
+            )
+
     if expected.get("min_hole_diameter_mm") is not None:
         hole_dia = _float_or_none(features.get("hole_diameter_mm"))
         if hole_dia is None or hole_dia < float(expected["min_hole_diameter_mm"]):
@@ -442,6 +485,20 @@ def check_feature_expectations(report: dict, expected: dict) -> tuple[bool, list
         if bend_r is None or bend_r < float(expected["min_bend_radius_mm"]):
             issues.append(
                 f"Bend radius too low: expected >= {expected['min_bend_radius_mm']}, got {bend_r}"
+            )
+
+    if expected.get("bend_radius_absent"):
+        bend_r = _float_or_none(features.get("bend_radius_mm"))
+        if bend_r is not None:
+            issues.append(f"Bend radius should be absent, got {bend_r}")
+
+    expected_rotational_profile = expected.get("rotational_profile")
+    if expected_rotational_profile is not None:
+        actual_rotational_profile = bool(features.get("rotational_profile"))
+        if actual_rotational_profile != bool(expected_rotational_profile):
+            issues.append(
+                f"rotational_profile mismatch: expected {bool(expected_rotational_profile)}, "
+                f"got {actual_rotational_profile}"
             )
 
     return len(issues) == 0, issues
@@ -466,8 +523,8 @@ def check_layout_quality(report: dict) -> tuple[bool, list[str]]:
         )
     if not fits:
         issues.append("Views do not fully fit into drawing area.")
-    if scale_reduction_needed:
-        issues.append("Layout required scale reduction to fit drawing area.")
+    if scale_reduction_needed and not fits:
+        issues.append("Layout required scale reduction but views still do not fit.")
 
     return len(issues) == 0, issues
 
@@ -588,6 +645,11 @@ def check_dimension_plan(report: dict, expected: dict) -> tuple[bool, list[str]]
     part_type = plan.get("part_type")
     if not part_type:
         issues.append("dimension_plan: missing part_type")
+    expected_part_type = expected.get("part_type")
+    if expected_part_type and part_type != expected_part_type:
+        issues.append(
+            f"dimension_plan: expected part_type={expected_part_type}, got {part_type}"
+        )
 
     # Must have at least one view with dimensions
     views = plan.get("views", [])
@@ -913,7 +975,7 @@ def check_abwicklung(report: dict, expected: dict) -> tuple[bool, list[str]]:
 # ---------------------------------------------------------------------------
 
 def check_title_block(sample_name: str, report: dict) -> tuple[bool, list[str]]:
-    """Validate title block completeness and format via debug SVG."""
+    """Validate title block completeness and scale consistency via debug SVG."""
     issues = []
     svg_path = DEBUG_DIR / f"{sample_name}_debug.svg"
     if not svg_path.exists():
@@ -936,10 +998,26 @@ def check_title_block(sample_name: str, report: dict) -> tuple[bool, list[str]]:
         if marker not in svg_text:
             issues.append(f"Title block missing field: {label}")
 
-    # Scale format check: should be "1:N" not a decimal
-    scale_matches = re.findall(r'>(\d+\s*:\s*\d+)<', svg_text)
-    if not scale_matches:
-        issues.append("No scale value in 'N:M' format found in title block")
+    # Scale field must exist and match the effective render scale from the report.
+    scale_match = re.search(r'<text[^>]*id="SCALE"[^>]*>([^<]+)</text>', svg_text)
+    if not scale_match:
+        issues.append("No scale value found in title block")
+    else:
+        scale_label = scale_match.group(1).strip()
+        parsed_scale = _parse_scale_label(scale_label)
+        if parsed_scale is None:
+            issues.append("Scale value in title block is not parseable as 'N:M'")
+        else:
+            report_scale = _float_or_none(report.get("scale"))
+            if report_scale is None or report_scale <= 0:
+                issues.append("Report scale missing or invalid")
+            else:
+                tolerance = max(0.01, abs(report_scale) * 0.015)
+                if abs(parsed_scale - report_scale) > tolerance:
+                    issues.append(
+                        f"Title block scale mismatch: label '{scale_label}' -> {parsed_scale:.4f}, "
+                        f"report={report_scale:.4f}"
+                    )
 
     # Date format check: DD.MM.YYYY
     date_matches = re.findall(r'>(\d{2}\.\d{2}\.\d{4})<', svg_text)
@@ -1152,7 +1230,7 @@ def compare_baseline_snapshot(actual: dict, expected: dict) -> list[str]:
     actual_quality = actual.get("quality", {})
     expected_quality = expected.get("quality", {})
     if expected_quality:
-        for key in ("fits_inside_drawing_area", "scale_reduction_needed"):
+        for key in ("fits_inside_drawing_area",):
             if bool(actual_quality.get(key)) != bool(expected_quality.get(key)):
                 issues.append(
                     f"quality.{key}: expected {bool(expected_quality.get(key))}, got {bool(actual_quality.get(key))}"

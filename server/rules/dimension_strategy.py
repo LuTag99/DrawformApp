@@ -86,6 +86,89 @@ def _bbox_dims(fp: dict) -> Dict[str, float]:
     }
 
 
+def _preferred_flat_pattern_hole_diameter(fp: dict) -> Optional[float]:
+    """Prefer a true round-hole diameter over slot-end radii on flat patterns."""
+    hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
+    unique_diameters = sorted(
+        {
+            round(float(value), 5)
+            for value in (fp.get("hole_diameters_mm") or [])
+            if _opt_float(value) is not None and float(value) > 0.0
+        }
+    )
+    if not unique_diameters:
+        return hole_diameter
+    if len(unique_diameters) == 1:
+        return unique_diameters[0]
+
+    smallest = float(unique_diameters[0])
+    largest = float(unique_diameters[-1])
+
+    # The feature probe currently counts slot semicircle ends as holes.
+    # For the flat pattern, a clearly larger diameter is the safer choice.
+    if largest >= smallest * 1.4:
+        return largest
+
+    if hole_diameter is not None:
+        return hole_diameter
+    return largest
+
+
+def _looks_like_turning_part(fp: dict, dims: Dict[str, float]) -> bool:
+    """Detect simple rotational/coaxial parts that should not use sheet-metal logic."""
+    if not isinstance(fp, dict):
+        return False
+    if fp.get("rotational_profile") is True:
+        return True
+
+    flat_ratio = _opt_float(fp.get("flat_ratio"))
+    if flat_ratio is not None and flat_ratio < 0.55:
+        return False
+
+    longest_axis = str(fp.get("longest_axis") or "").upper()
+    if longest_axis not in {"X", "Y", "Z"}:
+        longest_axis = max(dims, key=dims.get) if dims else "X"
+    transverse_axes = [axis for axis in ("X", "Y", "Z") if axis != longest_axis]
+    if len(transverse_axes) != 2:
+        return False
+
+    cross_dims = [max(0.0, float(dims.get(axis, 0.0))) for axis in transverse_axes]
+    cross_max = max(cross_dims) if cross_dims else 0.0
+    cross_min = min(cross_dims) if cross_dims else 0.0
+    if cross_max <= 0.0 or cross_min / cross_max < 0.85:
+        return False
+
+    cylindrical_faces = int(fp.get("cylinder_face_count") or fp.get("cylindrical_face_count") or 0)
+    hole_groups = fp.get("hole_groups") or []
+    if cylindrical_faces < 2 or len(hole_groups) < 2:
+        return False
+
+    unique_diameters = {
+        round(float(group.get("diameter_mm") or 0.0), 3)
+        for group in hole_groups
+        if _opt_float(group.get("diameter_mm")) not in (None, 0.0)
+    }
+    if len(unique_diameters) < 2:
+        return False
+
+    transverse_spans = []
+    for axis in transverse_axes:
+        key = axis.lower()
+        coords = []
+        for group in hole_groups:
+            center = group.get("center_mm") or {}
+            if not isinstance(center, dict):
+                return False
+            value = _opt_float(center.get(key))
+            if value is None:
+                return False
+            coords.append(value)
+        transverse_spans.append(max(coords) - min(coords))
+
+    center_tol = max(0.5, cross_max * 0.02)
+    return all(span <= center_tol for span in transverse_spans)
+
+
 # ---------------------------------------------------------------------------
 # Layout profile (pure-python, no FreeCAD dependency)
 # ---------------------------------------------------------------------------
@@ -95,7 +178,7 @@ def select_layout_profile_standalone(
     input_path: str,
     fp: dict,
 ) -> str:
-    """Classify part as 'milling' or 'sheet_metal' without FreeCAD.
+    """Classify part as 'milling', 'sheet_metal', or 'turning' without FreeCAD.
 
     This is a pure-python clone of step_to_pdf.select_layout_profile()
     that uses fp["bbox_mm"] instead of FreeCAD BoundBox dimensions.
@@ -112,6 +195,12 @@ def select_layout_profile_standalone(
     measured_t = _opt_float(fp.get("measured_thickness_mm"))
     dims = _bbox_dims(fp)
     dim_x, dim_y, dim_z = dims["X"], dims["Y"], dims["Z"]
+
+    # Guard before sheet-metal tiers:
+    # coaxial multi-diameter cylinders (shafts, stepped shafts) often create
+    # false bend/flat-pattern signals in the lightweight probe.
+    if _looks_like_turning_part(fp, dims):
+        return "turning"
 
     # Tier 1: Face-type geometry + thickness guard
     if fp.get("is_sheet_metal_by_faces") is True and measured_t is not None and measured_t <= 5.0:
@@ -310,7 +399,7 @@ def _plan_sheet_metal(
         # Hole positions on flat pattern
         hole_count = int(fp.get("hole_count") or 0)
         if hole_count >= 1:
-            hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
+            hole_diameter = _preferred_flat_pattern_hole_diameter(fp)
             if hole_diameter is not None:
                 flat_dims.append(
                     _dim("hole_diameter", "FlatPattern", value_mm=hole_diameter,

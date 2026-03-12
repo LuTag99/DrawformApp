@@ -24,19 +24,20 @@ except Exception:
 SVG_PATH_NUMBER_RE = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
 SVG_PATH_TOKEN_RE = re.compile(rf"[MLHVCSQTAZmlhvcsqtaz]|{SVG_PATH_NUMBER_RE}")
 SVG_PATH_COMMANDS = set("MLHVCSQTAZmlhvcsqtaz")
-ALLOWED_SCALE_LABELS = {
-    "20:1",
-    "10:1",
-    "5:1",
-    "2:1",
-    "1:1",
-    "1:2",
-    "1:5",
-    "1:10",
-    "1:20",
-    "1:50",
-    "1:100",
-}
+SCALE_CANDIDATES = (
+    (20.0, "20:1"),
+    (10.0, "10:1"),
+    (5.0, "5:1"),
+    (2.0, "2:1"),
+    (1.0, "1:1"),
+    (0.5, "1:2"),
+    (0.2, "1:5"),
+    (0.1, "1:10"),
+    (0.05, "1:20"),
+    (0.02, "1:50"),
+    (0.01, "1:100"),
+)
+ALLOWED_SCALE_LABELS = {label for _, label in SCALE_CANDIDATES}
 TOLERANCE_2768_RE = re.compile(r"^(?:din\s+iso|iso)\s*2768-([fmcv])([hkl])?$", re.IGNORECASE)
 DEFAULT_STANDARD = "DIN EN ISO 128/129-1"
 DEFAULT_PROJECTION = "1. Winkel (DIN EN ISO 5456-2)"
@@ -1208,9 +1209,13 @@ def dimension_metrics(bounds, scale):
     ext_over_mm = max(0.6, min(2.0, offset_mm * 0.25))
     arrow_len_mm = max(0.6, min(2.2, offset_mm * 0.22))
     arrow_half_mm = max(0.3, arrow_len_mm * 0.35)
-    text_size_mm = 4.2
+    layout_text_size_mm = 4.2
+    text_size_mm = max(
+        layout_text_size_mm,
+        min(4.9, layout_text_size_mm + max(0.0, max_dim_paper - 70.0) * 0.006),
+    )
     text_gap_mm = 1.6
-    pad_mm = offset_mm + ext_over_mm + text_gap_mm + text_size_mm
+    pad_mm = offset_mm + ext_over_mm + text_gap_mm + layout_text_size_mm
 
     return {
         "offset": offset_mm / scale,
@@ -1436,9 +1441,56 @@ def build_round_overall_dimension_svg(svg_group, bounds, scale, stroke_width, li
     return lines + arrows + _feature_text_svg(label, mid_x, y_dim, text_size, anchor="middle")
 
 
+def get_dimension_plan_view(dim_plan, view_name):
+    if not isinstance(dim_plan, dict):
+        return None
+    for view in dim_plan.get("views", []):
+        if isinstance(view, dict) and str(view.get("view_name")) == view_name:
+            return view
+    return None
+
+
+def get_dimension_plan_dim_types(view_plan):
+    if not isinstance(view_plan, dict):
+        return set()
+    dim_types = set()
+    for dim in view_plan.get("dimensions", []):
+        if not isinstance(dim, dict):
+            continue
+        dim_type = str(dim.get("dim_type") or "").strip()
+        if dim_type:
+            dim_types.add(dim_type)
+    return dim_types
+
+
+def get_dimension_plan_dim_value(view_plan, dim_type):
+    if not isinstance(view_plan, dict):
+        return None
+    for dim in view_plan.get("dimensions", []):
+        if not isinstance(dim, dict):
+            continue
+        if str(dim.get("dim_type")) != str(dim_type):
+            continue
+        return _optional_float(dim.get("value_mm"))
+    return None
+
+
+def feature_dimension_types_for_view(view_name, dim_plan=None):
+    supported = {
+        "hole_diameter",
+        "hole_pitch",
+        "hole_location_x",
+        "hole_location_y",
+        "thread_callout",
+        "bend_radius",
+    }
+    view_plan = get_dimension_plan_view(dim_plan, view_name)
+    return get_dimension_plan_dim_types(view_plan) & supported
+
+
 def resolve_overall_dimension_axes(view_name, dim_plan=None):
     if dim_plan:
-        view_plan = next((v for v in dim_plan.get("views", []) if v.get("view_name") == view_name), None)
+        view_plan = get_dimension_plan_view(dim_plan, view_name)
         view_dims = (view_plan or {}).get("dimensions", [])
         show_horizontal = any(
             d.get("axis") == "H" and str(d.get("dim_type", "")).startswith("overall")
@@ -1464,19 +1516,7 @@ def resolve_overall_dimension_axes(view_name, dim_plan=None):
 def view_requests_feature_dimensions(view_name, dim_plan=None):
     if not dim_plan:
         return False
-    view_plan = next((v for v in dim_plan.get("views", []) if v.get("view_name") == view_name), None)
-    view_dims = (view_plan or {}).get("dimensions", [])
-    return any(
-        d.get("dim_type") in (
-            "hole_diameter",
-            "hole_pitch",
-            "hole_location_x",
-            "hole_location_y",
-            "thread_callout",
-            "bend_radius",
-        )
-        for d in view_dims
-    )
+    return bool(feature_dimension_types_for_view(view_name, dim_plan=dim_plan))
 
 
 def compute_stroke_width(scale, stroke_base=0.12, min_width=0.001):
@@ -2577,6 +2617,65 @@ def _optional_float(value):
         return None
 
 
+def _looks_like_turning_part(feature_payload, dims):
+    """Detect rotational/coaxial parts before sheet-metal heuristics kick in."""
+    if not isinstance(feature_payload, dict):
+        return False
+    if feature_payload.get("rotational_profile") is True:
+        return True
+
+    flat_ratio = _optional_float(feature_payload.get("flat_ratio"))
+    if flat_ratio is not None and flat_ratio < 0.55:
+        return False
+
+    longest_axis = str(feature_payload.get("longest_axis") or "").upper()
+    if longest_axis not in {"X", "Y", "Z"}:
+        longest_axis = max(dims, key=dims.get) if dims else "X"
+    transverse_axes = [axis for axis in ("X", "Y", "Z") if axis != longest_axis]
+    if len(transverse_axes) != 2:
+        return False
+
+    cross_dims = [max(0.0, float(dims.get(axis, 0.0))) for axis in transverse_axes]
+    cross_max = max(cross_dims) if cross_dims else 0.0
+    cross_min = min(cross_dims) if cross_dims else 0.0
+    if cross_max <= 0.0 or cross_min / cross_max < 0.85:
+        return False
+
+    cylindrical_faces = int(
+        feature_payload.get("cylinder_face_count")
+        or feature_payload.get("cylindrical_face_count")
+        or 0
+    )
+    hole_groups = feature_payload.get("hole_groups") or []
+    if cylindrical_faces < 2 or len(hole_groups) < 2:
+        return False
+
+    unique_diameters = {
+        round(float(group.get("diameter_mm") or 0.0), 3)
+        for group in hole_groups
+        if _optional_float(group.get("diameter_mm")) not in (None, 0.0)
+    }
+    if len(unique_diameters) < 2:
+        return False
+
+    spans = []
+    for axis in transverse_axes:
+        key = axis.lower()
+        coords = []
+        for group in hole_groups:
+            center = group.get("center_mm") or {}
+            if not isinstance(center, dict):
+                return False
+            value = _optional_float(center.get(key))
+            if value is None:
+                return False
+            coords.append(value)
+        spans.append(max(coords) - min(coords))
+
+    center_tol = max(0.5, cross_max * 0.02)
+    return all(span <= center_tol for span in spans)
+
+
 def format_de_number(value, decimals=1):
     try:
         number = float(value)
@@ -2610,6 +2709,13 @@ def select_layout_profile(input_path, feature_payload, dim_x, dim_y, dim_z):
 
     if isinstance(feature_payload, dict):
         measured_t = _optional_float(feature_payload.get("measured_thickness_mm"))
+        dims = {"X": float(dim_x), "Y": float(dim_y), "Z": float(dim_z)}
+
+        # Guard before sheet-metal tiers:
+        # coaxial multi-diameter cylinders can look like "bent" geometry to the
+        # lightweight probe, but produce implausible flat-pattern drawings.
+        if _looks_like_turning_part(feature_payload, dims):
+            return "turning"
 
         # Tier 1 (PRIMARY): Face-type geometry classification from feature probe.
         # Sheet metal = predominantly Plane faces + at least one Cylinder (bend zone)
@@ -2651,7 +2757,6 @@ def select_layout_profile(input_path, feature_payload, dim_x, dim_y, dim_z):
         cone_count_t3 = int(feature_payload.get("cone_face_count") or 0)
         if cone_count_t3 == 0:
             thickness_axis = str(feature_payload.get("thickness_axis") or "").upper()
-            dims = {"X": float(dim_x), "Y": float(dim_y), "Z": float(dim_z)}
             thickness = dims.get(thickness_axis, min(dims.values()))
             mid_dim = sorted(dims.values(), reverse=True)[1]
             if mid_dim > 0 and thickness / mid_dim < 0.15:
@@ -3089,7 +3194,10 @@ def extract_svg_arc_circles(svg_group):
             resolved = _resolve_circular_arc_center(arc)
             if not resolved:
                 continue
-            if float(resolved["sweep_abs"]) >= math.radians(140.0):
+            # Do not treat single 180° slot-end arcs as standalone circular holes.
+            # Real circles are emitted either as <circle> elements or as multiple arcs
+            # whose grouped sweep exceeds ~360°.
+            if float(resolved["sweep_abs"]) >= math.radians(320.0):
                 circles.append(
                     {
                         "cx": float(resolved["cx"]),
@@ -3522,9 +3630,23 @@ def _build_round_feature_dimension_svg(svg_group, svg_bounds, feature_payload, s
     return "".join(parts)
 
 
-def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, stroke_width, line_profile=None):
+def build_feature_dimension_svg(
+    svg_group,
+    svg_bounds,
+    feature_payload,
+    scale,
+    stroke_width,
+    line_profile=None,
+    allowed_dim_types=None,
+    outside_placement=False,
+):
     if not isinstance(feature_payload, dict) or feature_payload.get("ok") is not True:
         return ""
+    allowed_types = set(allowed_dim_types) if allowed_dim_types is not None else None
+
+    def _allow(dim_type):
+        return allowed_types is None or dim_type in allowed_types
+
     min_x, max_x, min_y, max_y = svg_bounds
     circles = extract_svg_circular_features(svg_group)
     main_holes = []
@@ -3588,19 +3710,23 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
     _metrics = dimension_metrics(svg_bounds, scale)
     arrow_len = _metrics["arrow_len"]
     arrow_half = _metrics["arrow_half"]
-    text_size = max(0.2, 3.3 / scale)  # slightly smaller than overall but still readable
+    text_size = max(0.2, 3.7 / scale)  # improve feature-callout legibility without changing layout fit
     label_gap = max(1.8, 4.0 / max(scale, 0.05))
-    round_feature_svg = _build_round_feature_dimension_svg(
-        svg_group,
-        svg_bounds,
-        feature_payload,
-        scale,
-        dim_stroke,
-        text_size,
-        label_gap,
-    )
-    if round_feature_svg:
-        return round_feature_svg
+    outside_margin = max(4.0 / max(scale, 0.05), label_gap * 0.9)
+    label_min_y = min_y - (outside_margin * 3.0 if outside_placement else 0.0)
+    label_max_y = max_y + (outside_margin * 3.0 if outside_placement else 0.0)
+    if _allow("hole_diameter"):
+        round_feature_svg = _build_round_feature_dimension_svg(
+            svg_group,
+            svg_bounds,
+            feature_payload,
+            scale,
+            dim_stroke,
+            text_size,
+            label_gap,
+        )
+        if round_feature_svg:
+            return round_feature_svg
     used_label_y = []
     parts = []
     hole_pitch = _optional_float(feature_payload.get("hole_pitch_mm"))
@@ -3626,23 +3752,30 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
             span = abs(x1 - x0)
             if span <= max(1.0, 4.0 / scale):
                 return
-            pref_above = float(circle["cy"]) - radius - max(4.0 / scale, label_gap * 0.55)
-            pref_below = float(circle["cy"]) + radius + max(4.0 / scale, label_gap * 0.55)
-            y_dim = pref_above
-            if y_dim < min_y + (2.5 / scale):
-                y_dim = pref_below
-            y_dim = max(min_y + (2.5 / scale), min(max_y - (2.5 / scale), y_dim))
+            if outside_placement:
+                # Keep hole X-location dimensions above the flat pattern so they do
+                # not collapse into the global flat-length dimension below the view.
+                y_dim = min_y - outside_margin
+                ext_y = min_y
+            else:
+                pref_above = float(circle["cy"]) - radius - max(4.0 / scale, label_gap * 0.55)
+                pref_below = float(circle["cy"]) + radius + max(4.0 / scale, label_gap * 0.55)
+                y_dim = pref_above
+                if y_dim < min_y + (2.5 / scale):
+                    y_dim = pref_below
+                y_dim = max(min_y + (2.5 / scale), min(max_y - (2.5 / scale), y_dim))
+                ext_y = float(circle["cy"])
             parts.append(
                 f'<g fill="none" stroke="rgb(0, 0, 0)" stroke-width="{dim_stroke:.4f}" '
                 f'stroke-linecap="butt" stroke-linejoin="miter">'
                 f'<line x1="{x0:.3f}" y1="{y_dim:.3f}" x2="{x1:.3f}" y2="{y_dim:.3f}" />'
-                f'<line x1="{x0:.3f}" y1="{float(circle["cy"]):.3f}" x2="{x0:.3f}" y2="{y_dim:.3f}" />'
-                f'<line x1="{x1:.3f}" y1="{float(circle["cy"]):.3f}" x2="{x1:.3f}" y2="{y_dim:.3f}" />'
+                f'<line x1="{x0:.3f}" y1="{ext_y:.3f}" x2="{x0:.3f}" y2="{y_dim:.3f}" />'
+                f'<line x1="{x1:.3f}" y1="{ext_y:.3f}" x2="{x1:.3f}" y2="{y_dim:.3f}" />'
                 "</g>"
             )
             collision_boxes.append(_line_collision_box(x0, y_dim, x1, y_dim, line_pad))
-            collision_boxes.append(_line_collision_box(x0, float(circle["cy"]), x0, y_dim, line_pad))
-            collision_boxes.append(_line_collision_box(x1, float(circle["cy"]), x1, y_dim, line_pad))
+            collision_boxes.append(_line_collision_box(x0, ext_y, x0, y_dim, line_pad))
+            collision_boxes.append(_line_collision_box(x1, ext_y, x1, y_dim, line_pad))
             parts.append(
                 f'<g fill="rgb(0, 0, 0)" stroke="none">'
                 f'<polygon points="{x0:.3f},{y_dim:.3f} {x0 + arrow_len:.3f},{y_dim - arrow_half:.3f} {x0 + arrow_len:.3f},{y_dim + arrow_half:.3f}" />'
@@ -3653,16 +3786,19 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
             if label_text not in used_dimension_labels:
                 used_dimension_labels.add(label_text)
                 text_x = (x0 + x1) * 0.5
+                label_pref_y = y_dim + (1.8 / scale)
+                if outside_placement and y_dim > max_y:
+                    label_pref_y = y_dim - (1.8 / scale)
                 text_y = _reserve_feature_label_position(
                     label_text,
                     text_x,
-                    y_dim + (1.8 / scale),
+                    label_pref_y,
                     text_size,
                     "middle",
                     used_label_y,
                     label_gap,
-                    min_y,
-                    max_y,
+                    label_min_y,
+                    label_max_y,
                     collision_boxes,
                 )
                 parts.append(
@@ -3685,23 +3821,31 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
         span = abs(y1 - y0)
         if span <= max(1.0, 4.0 / scale):
             return
-        pref_right = float(circle["cx"]) + radius + max(4.0 / scale, label_gap * 0.55)
-        pref_left = float(circle["cx"]) - radius - max(4.0 / scale, label_gap * 0.55)
-        x_dim = pref_right
-        if x_dim > max_x - (2.5 / scale):
-            x_dim = pref_left
-        x_dim = max(min_x + (2.5 / scale), min(max_x - (2.5 / scale), x_dim))
+        text_offset = max(2.5 / scale, label_gap * 0.75)
+        if outside_placement:
+            # Keep hole Y-location dimensions on the left side so the global
+            # flat-width dimension on the right remains visually isolated.
+            x_dim = min_x - outside_margin
+            ext_x = min_x
+        else:
+            pref_right = float(circle["cx"]) + radius + max(4.0 / scale, label_gap * 0.55)
+            pref_left = float(circle["cx"]) - radius - max(4.0 / scale, label_gap * 0.55)
+            x_dim = pref_right
+            if x_dim > max_x - (2.5 / scale):
+                x_dim = pref_left
+            x_dim = max(min_x + (2.5 / scale), min(max_x - (2.5 / scale), x_dim))
+            ext_x = float(circle["cx"])
         parts.append(
             f'<g fill="none" stroke="rgb(0, 0, 0)" stroke-width="{dim_stroke:.4f}" '
             f'stroke-linecap="butt" stroke-linejoin="miter">'
             f'<line x1="{x_dim:.3f}" y1="{y0:.3f}" x2="{x_dim:.3f}" y2="{y1:.3f}" />'
-            f'<line x1="{float(circle["cx"]):.3f}" y1="{y0:.3f}" x2="{x_dim:.3f}" y2="{y0:.3f}" />'
-            f'<line x1="{float(circle["cx"]):.3f}" y1="{y1:.3f}" x2="{x_dim:.3f}" y2="{y1:.3f}" />'
+            f'<line x1="{ext_x:.3f}" y1="{y0:.3f}" x2="{x_dim:.3f}" y2="{y0:.3f}" />'
+            f'<line x1="{ext_x:.3f}" y1="{y1:.3f}" x2="{x_dim:.3f}" y2="{y1:.3f}" />'
             "</g>"
         )
         collision_boxes.append(_line_collision_box(x_dim, y0, x_dim, y1, line_pad))
-        collision_boxes.append(_line_collision_box(float(circle["cx"]), y0, x_dim, y0, line_pad))
-        collision_boxes.append(_line_collision_box(float(circle["cx"]), y1, x_dim, y1, line_pad))
+        collision_boxes.append(_line_collision_box(ext_x, y0, x_dim, y0, line_pad))
+        collision_boxes.append(_line_collision_box(ext_x, y1, x_dim, y1, line_pad))
         parts.append(
             f'<g fill="rgb(0, 0, 0)" stroke="none">'
             f'<polygon points="{x_dim:.3f},{y0:.3f} {x_dim - arrow_half:.3f},{y0 + arrow_len:.3f} {x_dim + arrow_half:.3f},{y0 + arrow_len:.3f}" />'
@@ -3711,8 +3855,31 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
         label_text = format_de_number(span)
         if label_text not in used_dimension_labels:
             used_dimension_labels.add(label_text)
-            text_x = x_dim + (1.5 / scale)
-            text_y = (y0 + y1) * 0.5
+            if outside_placement:
+                text_x = x_dim + text_offset if x_dim < min_x else x_dim - text_offset
+            else:
+                text_x = x_dim + text_offset
+            text_y = _reserve_feature_label_position(
+                label_text,
+                text_x,
+                (y0 + y1) * 0.5,
+                text_size,
+                "middle",
+                used_label_y,
+                label_gap,
+                label_min_y,
+                label_max_y,
+                collision_boxes,
+            )
+            rotated_extent = max(text_size * 1.15, text_size * 0.58 * max(1, len(label_text)))
+            collision_boxes.append(
+                (
+                    text_x - text_size * 0.7,
+                    text_x + text_size * 0.7,
+                    text_y - rotated_extent * 0.55,
+                    text_y + rotated_extent * 0.55,
+                )
+            )
             parts.append(
                 f'<g fill="rgb(0,0,0)" stroke="none" font-size="{text_size:.3f}" '
                 f'font-family="ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace" '
@@ -3729,7 +3896,7 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
             edge_location_targets = list(main_holes)
 
     # Hole pitch dimension between outer main-hole centers.
-    if len(pattern_holes) >= 2:
+    if _allow("hole_pitch") and len(pattern_holes) >= 2:
         by_x = sorted(pattern_holes, key=lambda item: item["cx"])
         left_hole = by_x[0]
         right_hole = by_x[-1]
@@ -3873,8 +4040,28 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                 vert_text = format_de_number(vert_edge_span)
                 if vert_text not in used_dimension_labels:
                     used_dimension_labels.add(vert_text)
-                    vert_tx = edge_x + (1.5 / scale)
-                    vert_ty = (ey0 + ey1) * 0.5
+                    vert_tx = edge_x + max(5.0 / scale, label_gap * 1.1)
+                    vert_ty = _reserve_feature_label_position(
+                        vert_text,
+                        vert_tx,
+                        (ey0 + ey1) * 0.5,
+                        text_size,
+                        "middle",
+                        used_label_y,
+                        label_gap,
+                        min_y,
+                        max_y,
+                        collision_boxes,
+                    )
+                    rotated_extent = max(text_size * 1.15, text_size * 0.58 * max(1, len(vert_text)))
+                    collision_boxes.append(
+                        (
+                            vert_tx - text_size * 0.7,
+                            vert_tx + text_size * 0.7,
+                            vert_ty - rotated_extent * 0.55,
+                            vert_ty + rotated_extent * 0.55,
+                        )
+                    )
                     parts.append(
                         f'<g fill="rgb(0,0,0)" stroke="none" font-size="{text_size:.3f}" '
                         f'font-family="ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace" '
@@ -3909,7 +4096,7 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                     )
                 )
             pitch_drawn = True
-    if (not pitch_drawn) and hole_pitch and hole_pitch > 0:
+    if _allow("hole_pitch") and (not pitch_drawn) and hole_pitch and hole_pitch > 0:
         bbox = feature_payload.get("bbox_mm") or {}
         longest_axis = str(feature_payload.get("longest_axis", ""))
         longest_len = _optional_float(bbox.get(longest_axis)) or _optional_float(feature_payload.get("hole_pitch_mm")) or 1.0
@@ -3975,7 +4162,7 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                 )
             )
 
-    if edge_location_targets:
+    if edge_location_targets and (_allow("hole_location_x") or _allow("hole_location_y")):
         min_h_span = max(1.0, 4.0 / scale)
         horizontal_candidate = None
         horizontal_key = None
@@ -3992,7 +4179,7 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                 if horizontal_key is None or key < horizontal_key:
                     horizontal_key = key
                     horizontal_candidate = ("right", circle)
-        if horizontal_candidate:
+        if _allow("hole_location_x") and horizontal_candidate:
             _draw_edge_location_dimension("H", horizontal_candidate[0], horizontal_candidate[1])
 
         min_v_span = max(1.0, 4.0 / scale)
@@ -4011,14 +4198,14 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                 if vertical_key is None or key < vertical_key:
                     vertical_key = key
                     vertical_candidate = ("bottom", circle)
-        if vertical_candidate:
+        if _allow("hole_location_y") and vertical_candidate:
             _draw_edge_location_dimension("V", vertical_candidate[0], vertical_candidate[1])
 
     # Diameter annotation for dominant hole size.
     hole_dia = _optional_float(feature_payload.get("hole_diameter_mm"))
     if (hole_dia is None or hole_dia <= 0) and main_radius > 0:
         hole_dia = max(0.0, main_radius * 2.0)
-    if hole_dia and hole_dia > 0:
+    if _allow("hole_diameter") and hole_dia and hole_dia > 0:
         if pattern_holes:
             cx_mean = sum(float(circle["cx"]) for circle in pattern_holes) / len(pattern_holes)
             cy_mean = sum(float(circle["cy"]) for circle in pattern_holes) / len(pattern_holes)
@@ -4045,11 +4232,25 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                 "r": max(0.8, 2.0 / scale),
             }
             dia_text = f"\u00D8 {format_de_number(hole_dia)}"
-        sx = target["cx"] + target["r"] * 0.7
-        sy = target["cy"] - target["r"] * 0.7
-        kx = sx + (8.0 / scale)
-        ky = sy - (6.0 / scale)
-        ex = min(max_x - (2.0 / scale), kx + (14.0 / scale))
+        center_x = (min_x + max_x) * 0.5
+        center_y = (min_y + max_y) * 0.5
+        dir_x = -1.0 if float(target["cx"]) <= center_x else 1.0
+        if outside_placement:
+            # The top and left bands are already occupied by the location
+            # dimensions in flat-pattern mode. Bias the diameter callout into
+            # the opposite vertical half so the text does not float between
+            # unrelated dimensions.
+            dir_y = 1.0 if float(target["cy"]) <= center_y else -1.0
+        else:
+            dir_y = -1.0 if float(target["cy"]) <= center_y else 1.0
+        sx = target["cx"] + dir_x * target["r"] * 0.55
+        sy = target["cy"] + dir_y * target["r"] * 0.55
+        leader_dx = (4.0 / scale) if outside_placement else (5.0 / scale)
+        leader_dy = (3.0 / scale) if outside_placement else (4.0 / scale)
+        text_dx = (5.5 / scale) if outside_placement else (8.0 / scale)
+        kx = sx + dir_x * leader_dx
+        ky = sy + dir_y * leader_dy
+        ex = kx + dir_x * text_dx
         ey = ky
         parts.append(
             f'<g fill="none" stroke="rgb(0, 0, 0)" stroke-width="{dim_stroke:.4f}" stroke-linecap="butt">'
@@ -4059,17 +4260,18 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
         )
         collision_boxes.append(_line_collision_box(sx, sy, kx, ky, line_pad))
         collision_boxes.append(_line_collision_box(kx, ky, ex, ey, line_pad))
-        text_x = ex + (1.0 / scale)
+        anchor = "end" if dir_x < 0 else "start"
+        text_x = ex - (1.0 / scale) if dir_x < 0 else ex + (1.0 / scale)
         text_y = _reserve_feature_label_position(
             dia_text,
             text_x,
-            ey - (1.2 / scale),
+            ey - (0.8 / scale) if dir_y < 0 else ey + (0.8 / scale),
             text_size,
-            "start",
+            anchor,
             used_label_y,
             label_gap,
-            min_y,
-            max_y,
+            label_min_y,
+            label_max_y,
             collision_boxes,
         )
         if dia_text not in used_dimension_labels:
@@ -4080,7 +4282,7 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                     text_x,
                     text_y,
                     text_size,
-                    anchor="start",
+                    anchor=anchor,
                 )
             )
 
@@ -4116,7 +4318,7 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
                         thread_label = candidate_label
                 else:
                     thread_label = candidate_label
-    if thread_label:
+    if _allow("thread_callout") and thread_label:
         if thread_circle is None:
             thread_circle = {
                 "cx": min_x + (max_x - min_x) * 0.55,
@@ -4164,7 +4366,7 @@ def build_feature_dimension_svg(svg_group, svg_bounds, feature_payload, scale, s
             )
     # Bend radius annotation (sheet metal only)
     bend_r = _optional_float(feature_payload.get("bend_radius_mm"))
-    if bend_r and bend_r > 0:
+    if _allow("bend_radius") and bend_r and bend_r > 0:
         bend_text = f"R{format_de_number(bend_r)}"
         if bend_text not in used_dimension_labels:
             used_dimension_labels.add(bend_text)
@@ -4232,7 +4434,7 @@ def build_page_svg(template_path, meta, views_svg, annotation_lines, annotation_
         annotation_lines = [""]
     text_style = (
         "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-        "font-size: 3.8px; font-style: normal; font-weight: normal;"
+        "font-size: 4.2px; font-style: normal; font-weight: normal;"
     )
     annotation_chunks = []
     for index, line in enumerate(annotation_lines[:10]):
@@ -4248,11 +4450,11 @@ def build_page_svg(template_path, meta, views_svg, annotation_lines, annotation_
     tolerance_value = str(meta.get("general_tolerance", DEFAULT_GENERAL_TOLERANCE)).strip()
     title_info_style_label = (
         "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-        "font-size: 3.0px; font-style: normal; font-weight: normal;"
+        "font-size: 3.4px; font-style: normal; font-weight: normal;"
     )
     title_info_style_value = (
         "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-        "font-size: 3.6px; font-style: normal; font-weight: normal;"
+        "font-size: 4.0px; font-style: normal; font-weight: normal;"
     )
     is_first_angle = "1." in projection_value or "first" in projection_value.lower()
     info_rows = [
@@ -4315,6 +4517,7 @@ def build_flat_pattern_overlay(
     flat_pattern_mode,
     unfold_result=None,
     sheet_metal_subtype=None,
+    dim_plan=None,
 ):
     if layout_profile != "sheet_metal":
         return "", None
@@ -4341,21 +4544,28 @@ def build_flat_pattern_overlay(
 
     text_style = (
         "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-        "font-size: 3.0px; font-style: normal; font-weight: normal;"
+        "font-size: 3.4px; font-style: normal; font-weight: normal;"
     )
     dim_style = (
         "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-        "font-size: 2.6px; font-style: normal; font-weight: normal;"
+        "font-size: 3.0px; font-style: normal; font-weight: normal;"
     )
     title_x = flat_cx - area_w / 2
     title_y = flat_cy - area_h / 2 - 4.0
 
     flat_pattern = (feature_payload or {}).get("flat_pattern")
+    flat_view_plan = get_dimension_plan_view(dim_plan, "FlatPattern")
+    flat_dim_types = feature_dimension_types_for_view("FlatPattern", dim_plan=dim_plan)
+    planned_flat_length = get_dimension_plan_dim_value(flat_view_plan, "flat_length")
+    planned_flat_width = get_dimension_plan_dim_value(flat_view_plan, "flat_width")
+    planned_hole_diameter = get_dimension_plan_dim_value(flat_view_plan, "hole_diameter")
 
     # ---------- Priority 1: Real SheetMetal Unfold (SVG contour from addon) ----------
     if unfold_result and unfold_result.get("ok") and unfold_result.get("outline_svg"):
-        fl = float(unfold_result["flat_length_mm"])
-        fw = float(unfold_result["flat_width_mm"])
+        fl_model = float(unfold_result["flat_length_mm"])
+        fw_model = float(unfold_result["flat_width_mm"])
+        fl = planned_flat_length if planned_flat_length and planned_flat_length > 0 else fl_model
+        fw = planned_flat_width if planned_flat_width and planned_flat_width > 0 else fw_model
         k_used = float(((feature_payload or {}).get("flat_pattern") or {}).get("k_factor_used") or 0.40)
 
         outline_svg = unfold_result["outline_svg"]
@@ -4433,13 +4643,52 @@ def build_flat_pattern_overlay(
             print(f"[drawform] ABWICKLUNG: fl={fl:.1f} fw={fw:.1f} ob=({ob_x1:.1f},{ob_y1:.1f},{ob_w:.1f},{ob_h:.1f}) part=({pb_x1:.1f},{pb_y1:.1f},{pb_x2:.1f},{pb_y2:.1f}) outline=({outline_x1:.1f},{outline_y1:.1f},{outline_w:.1f},{outline_h:.1f})")
 
         parts: list[str] = []
+        flat_line_profile = iso128_line_profile(draw_scale)
+        flat_stroke_width = float(flat_line_profile.get("visible", compute_stroke_width(draw_scale)))
+        feature_payload_for_flat = dict(feature_payload or {})
+        if planned_hole_diameter and planned_hole_diameter > 0:
+            feature_payload_for_flat["hole_diameter_mm"] = planned_hole_diameter
+        styled_outline_svg = apply_iso128_geometry_style(outline_svg, flat_line_profile)
+        outline_with_line_profile = re.sub(
+            r"<g\s",
+            '<g vector-effect="non-scaling-stroke" data-layer="geometry-visible" ',
+            styled_outline_svg,
+            count=1,
+        )
+        if outline_with_line_profile == styled_outline_svg:
+            outline_with_line_profile = (
+                f'<g vector-effect="non-scaling-stroke" data-layer="geometry-visible">'
+                f"{styled_outline_svg}</g>"
+            )
+        centerline_svg, centerline_count = build_centerline_svg(
+            outline_only_svg,
+            draw_scale,
+            flat_stroke_width,
+            limit=30,
+            line_profile=flat_line_profile,
+        )
+        feature_dimension_svg = ""
+        feature_callout_count = 0
+        if flat_dim_types:
+            feature_dimension_svg = build_feature_dimension_svg(
+                outline_only_svg,
+                (pb_x1, pb_x2, pb_y1, pb_y2),
+                feature_payload_for_flat,
+                draw_scale,
+                flat_stroke_width,
+                line_profile=flat_line_profile,
+                allowed_dim_types=flat_dim_types,
+                outside_placement=True,
+            )
+            feature_callout_count = feature_dimension_svg.count("<text")
 
         # Render the real outline SVG (bend lines are already embedded in outline_svg
         # as styled <g class="bend-lines"> elements from step_unfold.py)
         parts.append(
-            f'<g transform="translate({tx:.3f},{ty:.3f}) scale({draw_scale:.6f})" '
-            f'fill="none" stroke="rgb(0,0,0)" stroke-width="{0.35 / draw_scale:.4f}">'
-            f'{outline_svg}'
+            f'<g transform="translate({tx:.3f},{ty:.3f}) scale({draw_scale:.6f})">'
+            f'{outline_with_line_profile}'
+            f'{centerline_svg}'
+            f'{feature_dimension_svg}'
             f'</g>'
         )
 
@@ -4635,10 +4884,15 @@ def build_flat_pattern_overlay(
             "dim_v_endpoints": [round(outline_y1, 2), round(outline_y2, 2)],
             "dim_h_label_mm": round(dim_h_mm, 2),
             "dim_v_label_mm": round(dim_v_mm, 2),
-            "model_fl_mm": round(fl, 2),
-            "model_fw_mm": round(fw, 2),
+            "model_fl_mm": round(fl_model, 2),
+            "model_fw_mm": round(fw_model, 2),
+            "plan_fl_mm": round(planned_flat_length, 2) if planned_flat_length else None,
+            "plan_fw_mm": round(planned_flat_width, 2) if planned_flat_width else None,
             "bend_count": bend_count,
             "bend_annotations": len(bend_lines_data),
+            "centerline_count": int(centerline_count),
+            "feature_callout_count": int(feature_callout_count),
+            "plan_dimension_types": sorted(flat_dim_types),
             "drawing_area": [round(margin, 2), round(margin, 2),
                              round(margin + avail_draw_w, 2), round(draw_bottom, 2)],
         }
@@ -4668,8 +4922,10 @@ def build_flat_pattern_overlay(
     # ---------- Priority 2: Mathematical fallback (simple geometry only) ----------
     if (flat_pattern and flat_pattern.get("flat_length_mm") and flat_pattern.get("flat_width_mm")
             and not flat_pattern.get("complex_geometry")):
-        fl = float(flat_pattern["flat_length_mm"])
-        fw = float(flat_pattern["flat_width_mm"])
+        fl_model = float(flat_pattern["flat_length_mm"])
+        fw_model = float(flat_pattern["flat_width_mm"])
+        fl = planned_flat_length if planned_flat_length and planned_flat_length > 0 else fl_model
+        fw = planned_flat_width if planned_flat_width and planned_flat_width > 0 else fw_model
         complex_geom = bool(flat_pattern.get("complex_geometry"))
         k_used = flat_pattern.get("k_factor_used")
 
@@ -4840,10 +5096,15 @@ def build_flat_pattern_overlay(
                                round(rect_x + rect_w, 2), round(rect_y + rect_h, 2)],
             "dim_h_label_mm": round(fl, 2),
             "dim_v_label_mm": round(fw, 2),
-            "model_fl_mm": round(fl, 2),
-            "model_fw_mm": round(fw, 2),
+            "model_fl_mm": round(fl_model, 2),
+            "model_fw_mm": round(fw_model, 2),
+            "plan_fl_mm": round(planned_flat_length, 2) if planned_flat_length else None,
+            "plan_fw_mm": round(planned_flat_width, 2) if planned_flat_width else None,
             "bend_count": bend_count,
             "bend_annotations": bend_count,
+            "centerline_count": 0,
+            "feature_callout_count": 0,
+            "plan_dimension_types": sorted(flat_dim_types),
             "flange_dims": [],
         }
         return "\n".join(parts) + "\n" + "\n".join(note_parts), abwicklung_meta
@@ -4876,15 +5137,15 @@ def build_flat_pattern_overlay(
 
         title_bold_style = (
             "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-            "font-size: 4.0px; font-style: normal; font-weight: bold; fill: #000;"
+            "font-size: 4.4px; font-style: normal; font-weight: bold; fill: #000;"
         )
         subtitle_style = (
             "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-            "font-size: 2.8px; font-style: normal; font-weight: normal; fill: #555;"
+            "font-size: 3.2px; font-style: normal; font-weight: normal; fill: #555;"
         )
         note_item_style = (
             "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-            "font-size: 2.8px; font-style: normal; font-weight: normal; fill: #000;"
+            "font-size: 3.2px; font-style: normal; font-weight: normal; fill: #000;"
         )
         fb_note_parts = [
             f'<text x="{title_x:.1f}" y="{title_y:.1f}" style="{title_bold_style}">ABWICKLUNG</text>',
@@ -4978,7 +5239,10 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
     feature_block = report.get("features", {})
     hole_count = int(_optional_float(feature_block.get("hole_count")) or 0)
     if hole_count > 0:
-        has_diameter_callout = any(item["text"].startswith("\u00D8") for item in dim_texts)
+        has_diameter_callout = any(
+            re.match(r"^\s*(?:\d+\s*[xX\u00D7]\s*)?\u00D8\s*\d", item["text"])
+            for item in dim_texts
+        )
         if not has_diameter_callout:
             issues.append("Fehlende Lochdurchmesserangabe (\u00D8).")
         centerline_total = int(_optional_float((report.get("quality", {}) or {}).get("centerline_total")) or 0)
@@ -5039,21 +5303,34 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
 
 
 def format_scale(scale_value):
-    scale_candidates = [
-        (20, "20:1"),
-        (10, "10:1"),
-        (5, "5:1"),
-        (2, "2:1"),
-        (1, "1:1"),
-        (0.5, "1:2"),
-        (0.2, "1:5"),
-        (0.1, "1:10"),
-        (0.05, "1:20"),
-        (0.02, "1:50"),
-        (0.01, "1:100"),
-    ]
-    closest = min(scale_candidates, key=lambda item: abs(item[0] - scale_value))
+    closest = min(SCALE_CANDIDATES, key=lambda item: abs(item[0] - scale_value))
     return closest[1]
+
+
+def _format_scale_component(value):
+    text = f"{float(value):.2f}".rstrip("0").rstrip(".")
+    return text.replace(".", ",")
+
+
+def format_actual_scale_label(scale_value, *, standard_tolerance=0.005):
+    """Render the truthful title-block scale label for the final view scale."""
+    try:
+        numeric_scale = float(scale_value)
+    except (TypeError, ValueError):
+        return "auto"
+    if numeric_scale <= 0:
+        return "auto"
+
+    closest_value, closest_label = min(
+        SCALE_CANDIDATES, key=lambda item: abs(item[0] - numeric_scale)
+    )
+    tolerance = max(standard_tolerance, abs(closest_value) * standard_tolerance)
+    if abs(closest_value - numeric_scale) <= tolerance:
+        return closest_label
+
+    if numeric_scale >= 1.0:
+        return f"{_format_scale_component(numeric_scale)}:1"
+    return f"1:{_format_scale_component(1.0 / numeric_scale)}"
 
 
 def main():
@@ -5066,6 +5343,7 @@ def main():
     raw_meta = read_metadata(meta_path)
     raw_meta.setdefault("input_path", input_path)  # used for part name extraction
     meta = normalize_export_metadata(raw_meta)
+    requested_scale_label = str(meta.get("scale") or "auto")
 
     log(f"FreeCAD version: {App.Version()[0]}.{App.Version()[1]}.{App.Version()[2]}")
     doc = App.newDocument("DrawformDrawing")
@@ -5547,8 +5825,7 @@ def main():
                 log(f"ALIGN Left: paper_h={left_paper_h:.2f}, old_cy={left_item['cy']:.2f}, new_cy={new_left_cy:.2f}")
                 left_item["cy"] = new_left_cy
 
-    if not meta.get("scale") or str(meta.get("scale")).lower() == "auto":
-        meta["scale"] = format_scale(ortho_scale)
+    meta["scale"] = format_actual_scale_label(ortho_scale)
     
     def compute_view_bounds(item, scale):
         """Compute the bounding box of a view in paper coordinates."""
@@ -5629,10 +5906,47 @@ def main():
             scale_reduction = min(scale_factor_w, scale_factor_h, 1.0)
             
             if scale_reduction < 1.0:
-                log(f"BOUNDS: Reducing scale by factor {scale_reduction:.3f}")
-                # This is a simplified approach - in production would need to recalculate positions
-                # For now, just log the warning
-                log("BOUNDS: Scale reduction not yet implemented - views may be clipped")
+                # Iteratively reduce scale until views fit (dimension padding
+                # contains fixed-size elements that don't shrink linearly).
+                for _pass in range(3):
+                    safety = 0.96
+                    reduction = scale_reduction * safety
+                    log(f"BOUNDS: Pass {_pass+1} - reducing scale by factor {reduction:.3f}")
+                    ortho_scale *= reduction
+                    for item in view_data:
+                        if item["name"] == "Iso":
+                            item["scale"] = item.get("scale", ortho_scale) * reduction
+                    # Recompute bbox and re-center in drawing area
+                    all_left, all_top, all_right, all_bottom = compute_all_views_bbox()
+                    views_cx = (all_left + all_right) / 2
+                    views_cy = (all_top + all_bottom) / 2
+                    draw_cx = (draw_left + draw_right) / 2
+                    draw_cy = (draw_top + draw_bottom) / 2
+                    recenter_dx = draw_cx - views_cx
+                    recenter_dy = draw_cy - views_cy
+                    if abs(recenter_dx) > 0.01 or abs(recenter_dy) > 0.01:
+                        for item in view_data:
+                            item["cx"] += recenter_dx
+                            item["cy"] += recenter_dy
+                    all_left, all_top, all_right, all_bottom = compute_all_views_bbox()
+                    log(f"BOUNDS: After pass {_pass+1}: left={all_left:.2f}, top={all_top:.2f}, right={all_right:.2f}, bottom={all_bottom:.2f}")
+                    # Check if views now fit
+                    if (all_left >= draw_left - 0.5 and all_right <= draw_right + 0.5
+                            and all_top >= draw_top - 0.5 and all_bottom <= draw_bottom + 0.5):
+                        log(f"BOUNDS: Views fit after pass {_pass+1}")
+                        break
+                    # Recompute reduction for next pass
+                    views_w = all_right - all_left
+                    views_h = all_bottom - all_top
+                    avail_w = draw_right - draw_left
+                    avail_h = draw_bottom - draw_top
+                    scale_reduction = min(
+                        avail_w / views_w if views_w > 0 else 1.0,
+                        avail_h / views_h if views_h > 0 else 1.0,
+                        1.0,
+                    )
+                # Update title block scale label after effective fit correction.
+                meta["scale"] = format_actual_scale_label(ortho_scale)
 
     # === JSON REPORT FOR AUTOMATED TESTING ===
     def build_report():
@@ -5647,6 +5961,8 @@ def main():
             "view_layout_variant": layout_variant,
             "sheet_metal_subtype": sheet_metal_subtype,
             "flat_pattern_mode": flat_pattern_mode,
+            "scale_requested": requested_scale_label,
+            "scale_label": str(meta.get("scale") or "auto"),
             "complexity_score": comp,
             "safe_mode_applied": safe_mode,
             "degrade_steps": degrade_steps,
@@ -5665,6 +5981,7 @@ def main():
             },
             "features": {
                 "ok": bool(feature_payload.get("ok")),
+                "rotational_profile": feature_payload.get("rotational_profile"),
                 "hole_count": feature_payload.get("hole_count"),
                 "hole_diameter_mm": feature_payload.get("hole_diameter_mm"),
                 "hole_pitch_mm": feature_payload.get("hole_pitch_mm"),
@@ -5903,6 +6220,11 @@ def main():
             _show_features = view_requests_feature_dimensions(name, dim_plan=dim_plan) if dim_plan else (feature_view_name == name)
 
             if _show_features:
+                allowed_feature_dim_types = (
+                    feature_dimension_types_for_view(name, dim_plan=dim_plan)
+                    if dim_plan
+                    else None
+                )
                 feature_dimension_svg = build_feature_dimension_svg(
                     item["svg"],
                     svg_bounds,
@@ -5910,6 +6232,7 @@ def main():
                     scale,
                     stroke_width,
                     line_profile=line_profile,
+                    allowed_dim_types=allowed_feature_dim_types,
                 )
                 if feature_dimension_svg:
                     dimension_svg = f"{dimension_svg}{feature_dimension_svg}"
@@ -5972,15 +6295,23 @@ def main():
         flat_pattern_mode=flat_pattern_mode,
         unfold_result=unfold_result,
         sheet_metal_subtype=sheet_metal_subtype,
+        dim_plan=dim_plan,
     )
     if flat_pattern_overlay:
         view_groups.append(flat_pattern_overlay)
+    if abwicklung_meta:
+        dim_tracking["dim_text_count"] += int(abwicklung_meta.get("feature_callout_count", 0) or 0)
+        if int(abwicklung_meta.get("feature_callout_count", 0) or 0) > 0:
+            dim_tracking["feature_dim_present"] = True
 
     report = build_report()
     if dim_plan:
         report["dimension_plan"] = dim_plan
     if abwicklung_meta:
         report["abwicklung"] = abwicklung_meta
+        report["quality"]["centerline_total"] = int(
+            _optional_float(report["quality"].get("centerline_total")) or 0
+        ) + int(_optional_float(abwicklung_meta.get("centerline_count")) or 0)
     if (
         should_promote_to_a2(report, dim_x, dim_y, dim_z, requested_sheet=requested_sheet)
         and sheet_resolved != "A2"
