@@ -125,8 +125,8 @@ Typische Faelle:
 ### Routing-Regeln
 
 - `FAST-PATH` => `Agent_planner.md` in `LIGHT` mode -> `Agent_builder.md` -> `Agent_critic.md` in `LIGHT` mode -> `Agent_report.md`
-- `FULL-PATH` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_critic.md` -> `Agent_regression.md` -> `Agent_report.md`
-- `LONG-RUN` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_critic.md` -> `Agent_regression.md` -> iterative `Agent_builder.md` / `Agent_critic.md` / `Agent_regression.md` cycles as needed -> `Agent_report.md`
+- `FULL-PATH` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_artifact_steward.md` -> `Agent_critic.md` -> `Agent_regression.md` -> `Agent_report.md`
+- `LONG-RUN` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_artifact_steward.md` -> `Agent_critic.md` -> `Agent_regression.md` -> iterative `Agent_builder.md` / `Agent_artifact_steward.md` / `Agent_critic.md` / `Agent_regression.md` cycles as needed -> `Agent_report.md`
 
 ## Run Context und Persistenz
 
@@ -134,6 +134,7 @@ Typische Faelle:
 
 Lange oder komplexe Laeufe duerfen ihren Zustand nicht nur im Chat behalten.
 Ab `FULL-PATH` muss derselbe Laufkontext ueber Planner, Builder, Critic, Regression und Report hinweg explizit gefuehrt werden.
+Der Laufstatus ist logisch ein Single-Writer-Artefakt; derselbe `run_state.json` darf nicht parallel aus veralteten Stage-Staenden fortgeschrieben werden.
 
 ### Standardpfad
 
@@ -147,6 +148,7 @@ Im Artefaktordner muss ein `run_state.json` gefuehrt oder mindestens vorbereitet
 Der minimale Inhalt ist:
 
 - `run_id`
+- `revision`
 - `iteration`
 - `path_type`
 - `target_case`
@@ -204,8 +206,8 @@ Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain
 7. Ursache im Code oder in der Regel-Logik nennen.
 8. Gezielt verbessern.
 9. Neu rendern oder exportieren.
-10. Regression ueber betroffene Benchmark-Faelle oder Geometrieklassen pruefen.
-11. `run_state.json` oder aequivalenten Laufstatus aktualisieren.
+10. Artifact Steward synchronisiert aktuelle Artefakte und `run_state.json`.
+11. Regression ueber betroffene Benchmark-Faelle oder Geometrieklassen pruefen.
 12. Iteration dokumentieren.
 
 ### LONG-RUN
@@ -340,6 +342,7 @@ Im `FAST-PATH` ist ein vollstaendiges Scoring nur dann entbehrlich, wenn der Cri
 
 - Planner analysiert die bestehende Logik, initialisiert den Laufkontext und erstellt den Verbesserungsplan.
 - Builder setzt nur den naechsten sinnvollen Schritt oder die naechsten eng zusammenhaengenden Schritte um.
+- Artifact Steward synchronisiert `run_state.json`, Artefaktpfade, Iterationsvergleich und Command-Evidenz.
 - Critic bewertet das Ergebnis streng, fachlich und visuell anhand der aktuellen Artefakte.
 - Regression prueft Seiteneffekte auf andere Benchmark-Faelle und bewertet den Release-Risiko-Status.
 - Report dokumentiert Iteration, Risiken, Entscheidungen, Laufstatus und den naechsten konkreten Schritt.
@@ -350,6 +353,7 @@ Empfohlener Ablauf: `Planner -> Builder -> Critic -> Regression -> Report`
 
 - `Agent_planner.md`
 - `Agent_builder.md`
+- `Agent_artifact_steward.md`
 - `Agent_critic.md`
 - `Agent_regression.md`
 - `Agent_report.md`

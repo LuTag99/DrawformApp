@@ -1,103 +1,88 @@
-# Copilot Instructions — DrawformApp
+# Copilot Instructions - DrawformApp
 
 ## Architecture
 
 Two decoupled parts share one repo:
 
-- **Frontend** (`src/`): React 19 + TypeScript SPA (Vite 7). Glassmorphism "iOS 26 Glass Look" UI. Routes: `/` (Dashboard), `/analyzer`, `/reconstruct`, `/projects`, `/export`, `/profile`, plus auth pages. Entry: `src/main.tsx` → `BrowserRouter` → `AuthProvider` → `App`.
-- **Backend** (`server/`): FastAPI service. Key endpoints: `POST /api/export` (STEP → PDF), `POST /api/export-dxf` (STEP → DXF flat pattern), `POST /api/analyze` (CAD/image feature analysis), `POST /api/reconstruct` (5-photo → STL → STEP), `GET /api/logs/last`. Internally shells out to FreeCAD's Python for geometry processing via `subprocess.run`.
+- Frontend (`src/`): React 19 + TypeScript SPA on Vite 7. Main routes are `/`, `/analyzer`, `/reconstruct`, `/projects`, `/export`, `/profile`, plus auth pages. Entry path: `src/main.tsx` -> `BrowserRouter` -> `AuthProvider` -> `App`.
+- Backend (`server/`): FastAPI service in `server/main.py`. Primary endpoints are `/api/export`, `/api/export-dxf`, `/api/analyze`, `/api/reconstruct`, `/api/health`, and `/api/logs/last`. Geometry work is delegated to FreeCAD subprocess scripts in `server/freecad/`.
 
-Vite proxies `/api` → `http://localhost:8000` in dev (`vite.config.ts`). In production the frontend is static files served alongside or behind a reverse proxy to the backend.
+Vite proxies `/api` to `http://localhost:8000` in dev via `vite.config.ts`.
+
+## Working Contract
+
+- Read `AGENTS.md` first for path selection and quality gates.
+- Use `FAST-PATH` only for changes without meaningful drawing-quality or benchmark impact.
+- Use `FULL-PATH` for drawing logic, heuristics, scoring, benchmark behavior, and agent workflow changes.
+- Use `LONG-RUN` when the work must be stable across repeated runs or is release-facing.
+- From `FULL-PATH` onward, keep a shared `RUN CONTEXT` with one `run_id`, exact commands, and artifacts under `server/_debug/agent_runs/<run_id>/`.
+- Treat `run_state.json` as a single-writer artifact and use stage / iteration / revision guards when advancing a run.
+- Use `server/orchestration/orchestrator.py` and the `Agent_artifact_steward.md` role as the first-class run-state / artifact sync skeleton.
+
+## Current Reality Checks
+
+As verified locally on 2026-03-20:
+
+- `server/sample_catalog.py` currently resolves `20` baseline samples, `28` real samples, and `48` total.
+- `server/freecad/step_to_pdf.py` is currently about `7.8k` lines and remains the highest-risk hotspot.
+- `server/.venv/Scripts/python.exe test_views.py --sample-set baseline --single complex_bracket --stability-runs 2` fails against the current golden baseline due to paper-size drift.
+- `server/.venv/Scripts/python.exe run_quality_gate.py --iterations 1 --stability-runs 2` fails.
+- Inside that quality-gate run, DSE tests, sample catalog tests, norm profile tests, and API endpoint tests pass.
+- The failing steps are `View regression` and `View stability loop`; baseline status in that run was `10/20` passed.
+
+Do not repeat older blanket claims such as "baseline 20/20 is green" without rerunning the current suite.
 
 ## Key Data Flows
 
-1. **STEP → PDF Export**: `ExportPage` → `exportService.requestPdfExport()` → `POST /api/export` (multipart) → `main.py` → FreeCAD subprocess → returns `application/pdf`. Blob URL shown in iframe preview.
-2. **STEP → DXF Export**: `ExportPage` → `exportService.requestDxfExport()` → `POST /api/export-dxf` → returns DXF flat pattern as `application/octet-stream`.
-3. **AI Insights**: `DashboardPage` → `aiService.fetchAiInsight()` → OpenAI API (`gpt-4.1-mini`) directly from browser. Falls back to hardcoded German insights if `VITE_OPENAI_API_KEY` is missing. **Security note:** Key is bundled in the browser; use a server-side proxy for production.
-4. **Analyzer Jobs**: `analyzerService.ts` manages jobs in `localStorage` with pub/sub (`subscribeToJobs`). On subscribe it calls `refreshJobsFromBackend()` → `GET /api/analyze` to sync with server. Uploads go to `POST /api/analyze`. Polling via `setInterval` every 1200ms. Falls back to a local worker simulation if the backend is unavailable.
-5. **Reconstruct Jobs**: `reconstructService.ts` — `POST /api/reconstruct` (multipart: 5 photos + dimensions). Status polling via `GET /api/reconstruct/{id}` every 1500ms. Download via `GET /api/reconstruct/{id}/download?type=stl|step|pdf`.
-6. **Auth**: Entirely `localStorage`-based (`AuthProvider` → `AuthContext`). Credentials (incl. password in cleartext) stored in `drawform-auth` key. Designed to be replaced with real OAuth/JWT later.
+1. STEP -> PDF export: `ExportPage` -> `exportService.requestPdfExport()` -> `POST /api/export` -> `server/main.py` -> feature probe + DSE -> FreeCAD renderer `server/freecad/step_to_pdf.py` -> PDF response.
+2. STEP -> DXF export: `ExportPage` -> `exportService.requestDxfExport()` -> `POST /api/export-dxf`.
+3. Analyzer jobs: `analyzerService.ts` persists jobs in `localStorage`, syncs from `GET /api/analyze`, uploads to `POST /api/analyze`, polls `GET /api/analyze/{job_id}`, and falls back to a local worker simulation if the backend is unavailable.
+4. Reconstruction jobs: `reconstructService.ts` posts 5 photos to `POST /api/reconstruct`, polls `GET /api/reconstruct/{job_id}`, and downloads via `GET /api/reconstruct/{job_id}/download`.
+5. AI insights: `aiService.ts` calls the OpenAI Chat Completions API directly from the browser when `VITE_OPENAI_API_KEY` is present.
+6. Auth: `AuthProvider.tsx` keeps credentials and session state in `localStorage`.
+
+## Important Files
+
+- `server/main.py`: FastAPI app, validation, DSE orchestration, subprocess control
+- `server/freecad/step_to_pdf.py`: main drawing renderer, current monolith hotspot
+- `server/freecad/step_feature_probe.py`: geometry feature extraction
+- `server/freecad/step_unfold.py`: sheet-metal unfold subprocess
+- `server/rules/dimension_strategy.py`: `select_layout_profile_standalone()`, `build_dimension_plan()`, `apply_overrides()`
+- `server/test_views.py`: view regression and drawing-quality checks
+- `server/run_quality_gate.py`: unit + regression + stability runner
+- `server/orchestration/orchestrator.py`: run-state CLI for agent workflow orchestration
+- `server/orchestration/artifacts.py`: artifact sync helpers for active target cases
+- `server/_debug/agent_runs/`: persistent artifact folders for `FULL-PATH` and `LONG-RUN` work
+- `src/services/exportService.ts`: PDF and DXF requests
+- `src/services/analyzerService.ts`: backend-backed analyzer store with local fallback
+- `src/services/reconstructService.ts`: reconstruction polling/download flow
+- `src/providers/AuthProvider.tsx`: local auth stub
 
 ## Dev Commands
 
 ```powershell
-npm run dev          # Vite dev server on :5173 (proxies /api → :8000)
-npm run build        # tsc -b && vite build → dist/
-npm run lint         # ESLint
+npm run dev
+npm run build
+npm run lint
 
-# Backend (separate terminal)
-cd server; .venv\Scripts\Activate.ps1
-$env:FREECAD_PYTHON="C:\Program Files\FreeCAD 1.0\bin\python.exe"
-uvicorn main:app --reload --port 8000
-
-# Docker alternative (from repo root)
-docker compose up --build
-```
-
-## Backend Testing
-
-```powershell
 cd server
-
-# Unit tests
-python -m unittest test_norm_profile
-python -m unittest test_sample_catalog
-python -m unittest test_api_endpoints
-python -m unittest tests.test_dimension_strategy -v   # DSE: 35 tests
-
-# View regression (golden baseline)
-python test_views.py --sample-set baseline   # 20 baseline parts
-python test_views.py --sample-set all        # all 48 parts (baseline + real)
-python test_views.py --sample-set all --update-golden   # refresh baseline
-
-# Quality gate
-python run_quality_gate.py --stability-runs 2
+.venv\Scripts\python.exe -m unittest tests.test_dimension_strategy
+.venv\Scripts\python.exe -m unittest test_sample_catalog
+.venv\Scripts\python.exe -m unittest test_norm_profile.py
+.venv\Scripts\python.exe -m unittest test_api_endpoints.py
+.venv\Scripts\python.exe test_views.py --sample-set baseline
+.venv\Scripts\python.exe test_views.py --sample-set baseline --single complex_bracket --stability-runs 2
+.venv\Scripts\python.exe run_quality_gate.py --iterations 1 --stability-runs 2
 ```
 
-Sample STEP files are in `server/_samples/` (baseline: `*.stp`; real: `Sheetmetals/`, `milling parts/`). Debug SVGs, PNG previews, and JSON reports go to `server/_debug/`.
+Prefer the project `.venv` for backend commands.
 
-## Conventions & Patterns
+## Working Rules
 
-- **Language**: UI text, comments, and AI prompts are in **German**. Code identifiers and docs are English. Maintain this split.
-- **Styling**: No CSS framework — custom CSS with CSS custom properties (`globals.css`). Use `--bg-card`, `--glass-border`, `--accent-primary`, `--gradient-accent`, etc. Apply `glass-panel` class for glassmorphism cards. Use `clsx` for conditional classnames.
-- **Components**: Shared UI in `src/components/` (`GradientButton`, `InputField`, `SectionHeader`, `StatWidget`, `AiBackground`). Pages in `src/pages/<feature>/`. One component per file, named export matching filename.
-- **State**: No Redux/Zustand. React Context for auth (`providers/AuthContext.ts` + `AuthProvider.tsx`), localStorage pub/sub for analyzer and reconstruct jobs, local `useState` elsewhere.
-- **Services**: `src/services/` holds API clients. Each service is a plain module with exported async functions — no classes. `exportService` → FastAPI export endpoints; `aiService` → OpenAI; `analyzerService` → `/api/analyze` with localStorage cache and fallback; `reconstructService` → `/api/reconstruct`.
-- **Icons**: `react-icons/hi2` (Heroicons v2 outline). Import individual icons, e.g. `HiOutlineArrowUpTray`.
-- **Backend**: `server/main.py` is the FastAPI app. `server/freecad/step_to_pdf.py` runs inside FreeCAD's embedded Python (imports `FreeCAD`, `Part`, `TechDraw`). These are separate Python environments — don't mix dependencies.
-- **Known frontend issues**: `<InputField>` label not linked to input via `htmlFor`/`id`; password stored in cleartext in localStorage; `VITE_OPENAI_API_KEY` is browser-visible. Fix before production.
-
-## Environment Variables
-
-| Variable | Where | Required | Purpose |
-|---|---|---|---|
-| `VITE_OPENAI_API_KEY` | Frontend `.env.local` | No | OpenAI dashboard insights |
-| `FREECAD_PYTHON` | Backend shell | Yes | Path to FreeCAD's `python.exe` |
-| `DRAWFORM_DEBUG_DIR` | Backend (set by `main.py`) | Auto | Debug SVG/log output dir |
-| `DRAWFORM_META` | Backend (set by `main.py`) | Auto | Temp metadata JSON path |
-
-## FreeCAD Pipeline (`server/freecad/step_to_pdf.py`)
-
-This is the most complex file (~3600 lines). It runs inside FreeCAD's Python, not the venv. Key flow:
-1. Read `DimensionPlan` from `meta["dimension_plan"]` (generated by DSE in `main.py`)
-2. Load STEP → `Part.Shape`; compute bounding box, feature probe, layout profile
-3. Generate 4 TechDraw views (Front, Top, Left, Iso) + optional Abwicklung column for Biegeteile
-4. Render dimensions **from the plan** (plan-driven); falls back to hardcoded logic if no plan present
-5. Assemble A3/A2 SVG with ISO 7200 title block from `server/templates/`
-6. Convert SVG → PDF via `svglib` + `reportlab`
-
-When modifying this file, test with `python test_views.py --sample-set all` and check output in `server/_debug/`.
-
-## Dimension Strategy Engine (DSE)
-
-The DSE runs in `main.py` **before** the FreeCAD subprocess and produces a `DimensionPlan` JSON that controls what gets dimensioned.
-
-```
-main.py → run_feature_probe() → select_layout_profile_standalone() → build_dimension_plan()
-       → writes features + dimension_plan to meta.json
-       → FreeCAD subprocess reads plan → plan-driven rendering
-```
-
-Key files: `server/rules/dimension_plan_schema.py`, `server/rules/dimension_strategy.py`.
-LLM overrides: structured JSON (`add`/`remove`/`modify`), logged in `plan.overrides_applied`.
-Detail levels: `1` = manufacturing-minimal, `2` = inspection-ready, `3` = customer-spec.
+- UI copy is German. Keep code identifiers and most technical docs in English.
+- For drawing-quality work, inspect `server/_debug/*_debug.svg`, `*_preview.png`, and `*_report.json` before claiming success.
+- For `FULL-PATH` and `LONG-RUN`, also persist the latest artifacts and a `run_state.json` under `server/_debug/agent_runs/<run_id>/`.
+- Do not describe the analyzer as "local-only". It has a real backend path plus a local fallback.
+- Do not claim the current view baseline is green unless you have rerun it.
+- Treat `step_to_pdf.py` edits as high-risk. Re-run at least a targeted `test_views.py` case after touching it.
+- `VITE_OPENAI_API_KEY` is browser-visible and auth credentials are stored in `localStorage`; these are known MVP shortcuts, not production-safe designs.
