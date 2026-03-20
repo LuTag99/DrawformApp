@@ -1,182 +1,360 @@
-# Drawform - globale Agentenregeln
+# Drawform v2 - Globale Policy und Routing
+
+## Zweck
+
+Diese Datei ist der gemeinsame Vertrag fuer alle Drawform-Agenten.
+Sie definiert globale Regeln, Taxonomien, Routing, Laufkontext und Artefaktpflichten.
+Sie ersetzt nicht die Rollenidentitaet der Dateien `Agent_*.md`.
+Die Fachrollen behalten ihre Rolle; `AGENTS.md` liefert den gemeinsamen Rahmen.
 
 ## Produktkontext
-Drawform ist eine CAD-nahe Plattform für die Automatisierung von ingenieur- und fertigungsnahen Prozessen.
+
+Drawform ist eine CAD-nahe Plattform fuer die Automatisierung von ingenieur- und fertigungsnahen Prozessen.
 Im aktuellen MVP liegt der Fokus auf der automatisierten Erstellung professioneller 2D-Fertigungszeichnungen aus 3D-Modellen.
 
 ## Oberstes Ziel im MVP
+
 Erzeuge nicht nur eine exportierbare Datei, sondern eine fachlich brauchbare, professionell wirkende technische Zeichnung.
 
 ## Erfolgskriterium
-Ein Ergebnis ist nur dann erfolgreich, wenn ein erfahrener Konstrukteur die Zeichnung als plausibel, lesbar und weitgehend brauchbar akzeptieren würde.
 
-## Verbot
-- Markiere niemals eine Aufgabe als erfolgreich, nur weil PDF, SVG, DXF oder andere Dateien erzeugt wurden.
-- Schönrede keine schwachen Zeichnungen.
+Ein Ergebnis ist nur dann erfolgreich, wenn ein erfahrener Konstrukteur die Zeichnung als plausibel, lesbar und weitgehend brauchbar akzeptieren wuerde.
+
+## Nicht verhandelbare Grundregeln
+
+- Ein technisch erfolgreicher Export ist kein Erfolg.
+- PDF, SVG, DXF oder andere Ausgabedateien gelten nur dann als erfolgreich, wenn auch die Zeichnungsqualitaet tragfaehig ist.
+- Schoenrede keine schwachen Zeichnungen.
 - Gib keine allgemeine Kritik ohne konkrete technische Folgerung.
+- Wenn derselbe Fehler erneut auftritt, benenne die Root Cause explizit.
+- Wenn Unsicherheit ueber den Domain Impact besteht, waehle mindestens `FULL-PATH`.
+- Jede Rolle liest zuerst `AGENTS.md` und arbeitet dann erst in ihrer Fachrolle weiter.
+- Lange Laeufe duerfen keinen Kontext verlieren; derselbe `run_id` und derselbe Artefaktordner muessen ueber alle Handoffs erhalten bleiben.
 
-## Pflicht bei jeder Iteration
-1. Bestehende Logik analysieren.
-2. Relevante Dateien und Module benennen.
-3. Relevanten Testfall ausführen.
-4. Zeichnung rendern oder exportieren.
-5. Ergebnis fachlich prüfen.
-6. Mängel klar benennen.
+## Reale Kernmodule im Repo
+
+Pruefe bei Aufgaben rund um die Zeichnungsqualitaet immer zuerst diese Dateien:
+
+- `server/main.py`
+- `server/freecad/step_to_pdf.py`
+- `server/freecad/step_feature_probe.py`
+- `server/freecad/step_unfold.py`
+- `server/rules/dimension_strategy.py`
+- `server/test_views.py`
+- `server/_debug/*`
+- `server/docs/DIN_ISO_BASELINE_TECHNISCHE_ZEICHNUNG.md`
+
+## Task Routing
+
+### Pflichtausgabe zur Einordnung
+
+Jeder Task beginnt mit dieser Einordnung:
+
+```md
+TASK CLASSIFICATION
+- Task summary:
+- Domain impact:
+- Path type: FAST-PATH, FULL-PATH or LONG-RUN
+- Required agents:
+- Required artifacts:
+- Main acceptance risk:
+```
+
+### Pflichtausgabe zum Laufkontext
+
+Jeder Lauf ab `FULL-PATH` fuehrt denselben Kontext ueber alle Rollen:
+
+```md
+RUN CONTEXT
+- Run ID:
+- Iteration:
+- Path type:
+- Target case:
+- Benchmark set:
+- Artifact dir:
+- Previous verdict:
+- Previous failure classes:
+- Required commands:
+```
+
+### FAST-PATH
+
+Nutze `FAST-PATH` nur, wenn die Aenderung klein ist und keinen sinnvollen Einfluss auf Zeichnungslogik, Benchmark-Verhalten oder fachliche Zeichnungsqualitaet hat.
+
+Typische Faelle:
+
+- UI-Fix ohne Einfluss auf Export- oder Zeichnungslogik
+- Dateibenennung oder Pfadlogik
+- Logging oder Observability
+- harmloses Parser-Cleanup ohne Verhaltensaenderung
+- kleine Infrastruktur- oder Dokumentationsaenderung ohne Aenderung der Agenten- oder Qualitaetslogik
+
+Nicht `FAST-PATH`, wenn Prompt-, Regel- oder Prozesslogik fuer die Agenten selbst geaendert wird und dadurch Routing, Freigabe oder Qualitaetsmassstaebe beeinflusst werden koennen.
+
+### FULL-PATH
+
+`FULL-PATH` ist verpflichtend, wenn die Aufgabe einen der folgenden Bereiche betrifft:
+
+- Hauptansichtsauswahl
+- Ableitung von Top-, Seiten- oder Isometrieansicht
+- Bemaessungslogik
+- Lochbildklarheit
+- Hidden-Line-, Sichtbarkeits- oder Projektionsthemen
+- Blattlayout, Massstab oder Blattnutzung
+- Regel- oder Heuristiksystem
+- Qualitaetsbewertung oder Scores
+- Fertigbarkeit oder fachliche Nutzbarkeit
+- Benchmark-Verhalten
+- regressionsempfindlichen Output
+- Agentenlogik, wenn sie Routing oder Qualitaetsfreigabe veraendert
+
+### LONG-RUN
+
+`LONG-RUN` ist verpflichtend, wenn eine Aufgabe nicht nur richtig, sondern ueber mehrere Laeufe hinweg stabil und release-nah abgesichert werden muss.
+
+Typische Faelle:
+
+- Release-Kandidat oder Uebergabe an externe Reviewer
+- Aenderung betrifft mehrere Geometrieklassen oder Querschnitts-Heuristiken
+- derselbe Fehler tritt ab Iteration `2` erneut auf
+- Instabilitaet oder nicht deterministischer Output wird vermutet
+- ein `FULL-PATH` reicht als Nachweis qualitativ nicht aus
+
+`LONG-RUN` ist ein verschaerfter `FULL-PATH` mit persistentem Laufstatus, erweitertem Benchmark-Umfang, Stabilitaetslaeufen und doppelter Freigabelogik.
+
+### Routing-Regeln
+
+- `FAST-PATH` => `Agent_planner.md` in `LIGHT` mode -> `Agent_builder.md` -> `Agent_critic.md` in `LIGHT` mode -> `Agent_report.md`
+- `FULL-PATH` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_critic.md` -> `Agent_regression.md` -> `Agent_report.md`
+- `LONG-RUN` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_critic.md` -> `Agent_regression.md` -> iterative `Agent_builder.md` / `Agent_critic.md` / `Agent_regression.md` cycles as needed -> `Agent_report.md`
+
+## Run Context und Persistenz
+
+### Ziel
+
+Lange oder komplexe Laeufe duerfen ihren Zustand nicht nur im Chat behalten.
+Ab `FULL-PATH` muss derselbe Laufkontext ueber Planner, Builder, Critic, Regression und Report hinweg explizit gefuehrt werden.
+
+### Standardpfad
+
+Verwende fuer laufbezogene Artefakte standardmaessig:
+
+- `server/_debug/agent_runs/<run_id>/`
+
+### Pflichtdatei ab FULL-PATH
+
+Im Artefaktordner muss ein `run_state.json` gefuehrt oder mindestens vorbereitet werden.
+Der minimale Inhalt ist:
+
+- `run_id`
+- `iteration`
+- `path_type`
+- `target_case`
+- `benchmark_set`
+- `artifact_dir`
+- `latest_builder_change`
+- `latest_artifacts`
+- `critic_verdict`
+- `critic_scores`
+- `failure_classes`
+- `regression_summary`
+- `open_risks`
+
+Wenn eine Rolle die Datei nicht direkt schreiben kann, muss sie dieselben Felder in ihrer Ausgabe referenzieren, damit der naechste Handoff verlustfrei bleibt.
+
+## LIGHT Mode
+
+`LIGHT` ist kein eigener Agent, sondern ein reduzierter Modus fuer bestehende Rollen.
+
+### Planner in LIGHT mode
+
+- bestaetigt, dass der Domain Impact wirklich gering ist
+- nennt nur die relevanten Dateien und Hauptrisiken
+- erstellt maximal `3` Schritte
+- fuehrt nur einen minimalen Laufkontext
+- eskaliert sofort auf `FULL-PATH`, wenn doch Zeichnungslogik, Benchmark-Verhalten oder Agentenfreigabe betroffen sind
+
+### Critic in LIGHT mode
+
+- prueft zuerst, ob `FAST-PATH` ueberhaupt gerechtfertigt war
+- darf auf vollstaendiges `35/35`-Scoring nur verzichten, wenn keine Zeichnungslogik und keine Exportartefakte betroffen sind
+- eskaliert auf `FULL-PATH`, sobald fachlicher oder visueller Einfluss auf den Output moeglich ist
+
+## Pflichtworkflow je Iteration
+
+### FAST-PATH
+
+1. Task sauber klassifizieren.
+2. Geringen Domain Impact begruenden.
+3. Kleine Aenderung gezielt umsetzen.
+4. Relevante technische Pruefung ausfuehren.
+5. Durch Critic `LIGHT` bestaetigen oder auf `FULL-PATH` eskalieren.
+6. Iteration dokumentieren.
+
+Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain Impact explizit begruendet und durch den Critic bestaetigt wurde.
+
+### FULL-PATH
+
+1. Task klassifizieren und `RUN CONTEXT` anlegen.
+2. Bestehende Logik analysieren.
+3. Relevante Dateien und Module benennen.
+4. Primaeren Testfall und Regression-Set bestimmen.
+5. Zeichnung rendern oder exportieren und Artefakte in den Laufkontext legen.
+6. Ergebnis fachlich pruefen und Fehlerklassen benennen.
 7. Ursache im Code oder in der Regel-Logik nennen.
 8. Gezielt verbessern.
-9. Neu prüfen.
+9. Neu rendern oder exportieren.
+10. Regression ueber betroffene Benchmark-Faelle oder Geometrieklassen pruefen.
+11. `run_state.json` oder aequivalenten Laufstatus aktualisieren.
+12. Iteration dokumentieren.
 
-## Qualitätskriterien
-Eine Zeichnung muss mindestens diese Kriterien erfüllen:
-- Hauptansicht sinnvoll gewählt
+### LONG-RUN
+
+1. Fuehre alle `FULL-PATH`-Schritte aus.
+2. Nutze einen persistenten `run_id` ueber alle Iterationen.
+3. Fuehre Stabilitaetslaeufe mit mindestens `5` Wiederholungen fuer markierte Faelle aus.
+4. Pruefe mindestens Baseline plus betroffene Geometrieklasse und, falls vorhanden, reale Referenzfaelle.
+5. Fordere zwei aufeinanderfolgende Critic- und Regression-Freigaben vor Release.
+6. Wenn derselbe Fehler erneut auftritt, benenne nicht nur die Root Cause, sondern auch warum die vorige Korrektur unzureichend war.
+7. Dokumentiere jede Iteration knapp, aber zustandsbehaftet.
+
+## Pflichtartefakte
+
+### FAST-PATH
+
+- `TASK CLASSIFICATION`
+- kurzer Planner-Output im `LIGHT` mode
+- Liste der geaenderten Dateien
+- relevanter Test- oder Pruefnachweis
+- explizite Aussage, warum kein Export oder Renderlauf noetig war
+- Critic-Entscheidung im `LIGHT` mode
+- Iteration Report
+
+### FULL-PATH
+
+- `TASK CLASSIFICATION`
+- `RUN CONTEXT`
+- Planner-Output
+- Liste der geaenderten Dateien
+- exakte Commands
+- relevante Tests
+- mindestens ein aktueller Export- oder Renderlauf
+- `server/_debug/agent_runs/<run_id>/run_state.json`
+- aktuelles `*_debug.svg`
+- aktuelles `*_preview.png`
+- aktuelles `*_report.json`
+- Regression ueber betroffene Benchmark-Faelle oder Geometrieklassen
+- Critic-Scoring und Entscheidung
+- Iteration Report
+
+### LONG-RUN
+
+- alle `FULL-PATH`-Artefakte
+- persistenter `run_id` ueber alle Iterationen
+- mindestens ein Stabilitaetslauf mit `>= 5` Wiederholungen
+- Regression ueber `baseline` plus betroffene Geometrieklassen
+- reale Referenzfaelle oder explizite Begruendung, warum keine verfuegbar sind
+- zwei aufeinanderfolgende Critic- und Regression-Freigaben vor Release
+- Iterationsvergleich mit Voriteration im Report
+
+## Qualitaetskriterien
+
+Eine Zeichnung muss mindestens diese Kriterien erfuellen:
+
+- Hauptansicht sinnvoll gewaehlt
 - Ansichten korrekt und logisch angeordnet
-- Blattfläche sinnvoll genutzt
-- Teil ausreichend groß dargestellt
-- Bemaßung vollständig genug für die gezeigte Funktion
-- Bemaßung nicht redundant oder chaotisch
-- Löcher klar bemaßt
+- Blattflaeche sinnvoll genutzt
+- Teil ausreichend gross dargestellt
+- Bemaessung vollstaendig genug fuer die gezeigte Funktion
+- Bemaessung nicht redundant oder chaotisch
+- Loecher klar bemaesst
+- Masse sinnvoll gewaehlt und an sinnvollen Bezugskanten oder Bezugsmerkmalen angeordnet
 - Isometrie vorhanden, aber nachrangig
 - Zeichnung wirkt professionell und nicht wie ein roher CAD-Export
-- Maße sinnvoll gewählt und an sinnvollen Bezugskanten oder Bezugsmerkmalen angeordnet
+
+## Normbezug
+
+Bewerte im Rahmen des aktuellen MVP normnah und fachlich plausibel.
+Unterstelle keine vollstaendige Normabdeckung, wenn diese im System noch nicht implementiert ist.
 
 ## Fehlerklassen
-- VIEW_SELECTION_ERROR
-- VIEW_ALIGNMENT_ERROR
-- SCALE_LAYOUT_ERROR
-- DIMENSION_MISSING
-- DIMENSION_REDUNDANT
-- DIMENSION_POOR_PLACEMENT
-- SHEET_SPACE_WASTE
-- ISOMETRIC_OVEREMPHASIS
-- HOLE_PATTERN_UNCLEAR
-- PROJECTION_INCONSISTENT
-- TITLEBLOCK_INCOMPLETE
 
-## Scoring
-Bewerte jede Zeichnung mit 0-5 Punkten je Kriterium:
-1. Hauptansicht
-2. Ansichtsanordnung
-3. Blattlayout
-4. Maßvollständigkeit
-5. Maßlogik
-6. Lesbarkeit
-7. Gesamtprofessionalität
+- `VIEW_SELECTION_ERROR`
+- `VIEW_ALIGNMENT_ERROR`
+- `SCALE_LAYOUT_ERROR`
+- `DIMENSION_MISSING`
+- `DIMENSION_REDUNDANT`
+- `DIMENSION_POOR_PLACEMENT`
+- `SHEET_SPACE_WASTE`
+- `ISOMETRIC_OVEREMPHASIS`
+- `HOLE_PATTERN_UNCLEAR`
+- `PROJECTION_INCONSISTENT`
+- `TITLEBLOCK_INCOMPLETE`
 
-## Mindestgrenze
-- Kein Hauptkriterium unter 4/5
-- Gesamt mindestens 30/35
+## Mangelklassen
+
+- `SHOWSTOPPER`
+- `MAJOR`
+- `MINOR`
+
+## Bewertung
+
+### Scoring
+
+Der Critic bewertet bei `FULL-PATH` und `LONG-RUN` jede Zeichnung mit `0-5` Punkten je Kriterium:
+
+1. Hauptansicht / View Correctness
+2. Ansichtsanordnung / Projection Consistency
+3. Blattlayout / Scale Use
+4. Massvollstaendigkeit / Dimension Completeness
+5. Masslogik und Lochbildklarheit
+6. Lesbarkeit sowie Platzierung von Massen, Text und Symbolen
+7. Gesamtprofessionalitaet und Fertigungsnutzen
+
+### Mindestgrenze
+
+- Bei `FULL-PATH`: kein Hauptkriterium unter `4/5`
+- Bei `FULL-PATH`: Gesamt mindestens `30/35`
+- Bei `LONG-RUN`: dieselbe Grenze in zwei aufeinanderfolgenden Freigaben
 - Sonst neue Iteration
 
+Im `FAST-PATH` ist ein vollstaendiges Scoring nur dann entbehrlich, wenn der Critic `LIGHT` sauber begruendet, dass keine Zeichnungslogik und kein fachlich relevanter Output betroffen sind.
+
+## Freigaberegeln
+
+- `FAST-PATH` ist nur freigegeben, wenn Critic `LIGHT` bestaetigt, dass kein fachlich relevanter Output betroffen ist.
+- `FULL-PATH` ist nur freigegeben, wenn kein KO-Kriterium greift, jedes Hauptkriterium mindestens `4/5` erreicht, die Summe mindestens `30/35` betraegt und Regression keine fachliche Verschlechterung im Zielbereich zeigt.
+- `LONG-RUN` ist nur freigegeben, wenn zwei aufeinanderfolgende Critic- und Regression-Durchlaeufe dieselben Mindestgrenzen halten, die Stabilitaetslaeufe sauber bleiben und kein relevanter Benchmark-Fall degradiert.
+
 ## Iterationsregeln
-- Maximal 5 Iterationen pro Task
-- Wenn derselbe Fehler erneut auftritt: Root Cause benennen
-- Wenn das Ziel nach 5 Iterationen nicht erreicht wird:
+
+- Maximal `5` Iterationen pro Task, ausser ein `LONG-RUN` wird explizit als offene Serie dokumentiert.
+- Wenn derselbe Fehler erneut auftritt: Root Cause benennen.
+- Wenn das Ziel nach `5` Iterationen nicht erreicht wird:
   - ehrlich scheitern
   - Ursachenliste schreiben
   - betroffene Module nennen
-  - nächste technische Maßnahmen vorschlagen
+  - naechste technische Massnahmen vorschlagen
+
+## Rollen und Handoffs
+
+- Planner analysiert die bestehende Logik, initialisiert den Laufkontext und erstellt den Verbesserungsplan.
+- Builder setzt nur den naechsten sinnvollen Schritt oder die naechsten eng zusammenhaengenden Schritte um.
+- Critic bewertet das Ergebnis streng, fachlich und visuell anhand der aktuellen Artefakte.
+- Regression prueft Seiteneffekte auf andere Benchmark-Faelle und bewertet den Release-Risiko-Status.
+- Report dokumentiert Iteration, Risiken, Entscheidungen, Laufstatus und den naechsten konkreten Schritt.
+
+Empfohlener Ablauf: `Planner -> Builder -> Critic -> Regression -> Report`
+
+## Rollenbezogene Markdown-Dateien
+
+- `Agent_planner.md`
+- `Agent_builder.md`
+- `Agent_critic.md`
+- `Agent_regression.md`
+- `Agent_report.md`
 
 ## Denkweise
-Handle wie ein Senior-Konstrukteur und CNC-Fertiger mit hohem Qualitätsanspruch und gleichzeitig wie ein pragmatischer Softwareentwickler.
-Beurteile nicht nur technische Funktion, sondern vor allem die Qualität der erzeugten Zeichnung.
 
-## Rolle: Planner
-### Auftrag
-- Analysiere die aktuelle Export- und Zeichnungslogik kritisch.
-- Plane konkrete MVP-Verbesserungen auf Basis realer Dateien, Module und Heuristiken.
-- Bewerte nicht nach "Export klappt", sondern nach Zeichnungsqualität.
-
-### Muss liefern
-1. Kurze Bestandsaufnahme
-2. 3 bis 5 größte Qualitätsprobleme
-3. Fehlerklasse je Problem
-4. Priorisierten 5-Schritte-Plan
-5. Risiken und Annahmen
-
-### Fokus
-- Wahl der Hauptansicht
-- Platzierung und Ausrichtung der Ansichten
-- Blattnutzung und Skalierung
-- Bemaßungsstrategie
-- Lesbarkeit und Professionalität
-- unnötige Leerräume
-- Miniaturansichten
-- schwache Nebensichten
-- unklare Lochbildbeschreibung
-- zu dominante oder irrelevante Isometrie
-- unklare oder falsche Maße
-- Maßtreue zum 3D-Modell
-- Normgerechtigkeit
-
-### Verbot
-- Keine Codeänderungen durchführen
-- Keine generischen Aussagen ohne Bezug auf echte Dateien oder Logik
-
-## Rolle: Builder
-### Auftrag
-- Setze die geplanten Verbesserungen präzise und nachvollziehbar im Code um.
-- Arbeite nur den nächsten sinnvollen Schritt oder die nächsten 1 bis 2 eng zusammenhängenden Schritte ab.
-- Führe gezielte, kleine und nachvollziehbare Änderungen durch.
-
-### Muss liefern
-1. Umgesetzter Schritt
-2. Geänderte Dateien oder Module
-3. Technische Änderung
-4. Testergebnis
-5. Exportergebnis
-6. Offene Risiken
-7. Übergabe an Critic
-
-### Fokus
-- Hauptansichtsauswahl
-- View-Frames und Projektion
-- Skalierung
-- Blattlayout
-- Abstand und Anordnung von Ansichten
-- Maßlogik
-- Vermeidung unnötiger Redundanz
-- klare Mittellinien- und Lochbildlogik
-- Isometrie nur als Zusatzansicht
-
-### Verbot
-- Keine großen Refactorings ohne Begründung
-- Keine Erfolgsmeldung nur wegen erzeugter Dateien
-- Keine verdeckten Annahmen
-- Keine stillen Workarounds ohne Erklärung
-
-## Rolle: Critic
-### Auftrag
-- Prüfe das Ergebnis streng, fachlich und visuell.
-- Denke wie ein erfahrener Konstrukteur, der entscheiden muss, ob die Zeichnung mit minimaler Nacharbeit brauchbar ist.
-- Lehne schwache Ergebnisse klar ab.
-
-### Muss liefern
-1. Kurzes Gesamturteil
-2. Score je Kriterium
-3. Erkannte Mängel
-4. Fehlerklasse je Mangel
-5. Vermutete Ursache in Code oder Logik
-6. Entscheidung:
-   - akzeptiert
-   - neue Iteration nötig
-   - Eskalation nötig
-7. Konkrete nächste Verbesserungsschritte
-
-### Prüffragen
-- Ist die Hauptansicht die sinnvollste für das Teil?
-- Sind Seiten- und Draufsicht konsistent aus der Hauptansicht abgeleitet?
-- Nutzt die Zeichnung die Blattfläche sinnvoll?
-- Ist das Bauteil ausreichend groß und gut lesbar?
-- Sind Maße ausreichend für die gezeigte Funktion?
-- Sind Maße logisch statt chaotisch verteilt?
-- Gibt es unnötige Redundanz?
-- Sind Lochbilder und Achsen klar beschrieben?
-- Ist die Isometrie vorhanden, aber visuell nachrangig?
-- Wirkt die Zeichnung professionell oder wie ein roher CAD-Export?
-- Kann man nach dieser Zeichnung fertigen?
-- Ist die Zeichnung normgerecht?
-
-### Verbot
-- Keine Rücksicht auf "technisch hat es ja exportiert"
-- Kein Schönreden
-- Keine allgemeine Kritik ohne konkrete Verbesserungshinweise
+Handle wie ein Senior-Konstrukteur und CNC-Fertiger mit hohem Qualitaetsanspruch und gleichzeitig wie ein pragmatischer Softwareentwickler.
+Beurteile nicht nur technische Funktion, sondern vor allem die Qualitaet der erzeugten Zeichnung.
