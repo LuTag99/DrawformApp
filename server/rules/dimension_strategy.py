@@ -76,6 +76,153 @@ def _action_rule_map(kb: dict, feature: str, context: dict) -> Dict[str, str]:
     return mapping
 
 
+_VIEW_FALLBACK_ORDER = ("Front", "Top", "Left", "FlatPattern", "Iso")
+_DIMENSION_PRIMARY_VIEWS: Dict[str, tuple[str, ...]] = {
+    "overall_length": ("Front", "Top", "Left"),
+    "overall_height": ("Front", "Left", "Top"),
+    "overall_depth": ("Top", "Left", "Front"),
+    "hole_diameter": ("Front", "Top", "Left"),
+    "hole_pitch": ("Front", "Top", "Left"),
+    "hole_location_x": ("Front", "Top", "Left"),
+    "hole_location_y": ("Front", "Top", "Left"),
+    "thread_callout": ("Front", "Left", "Top"),
+    "bend_radius": ("Front", "Left", "Top"),
+    "flat_length": ("FlatPattern", "Front", "Top"),
+    "flat_width": ("FlatPattern", "Front", "Left"),
+    "pocket_depth": ("Left", "Front", "Top"),
+    "pocket_location": ("Front", "Top", "Left"),
+    "step_height": ("Left", "Front", "Top"),
+}
+
+
+def _rule_by_id(kb: dict, feature: str, context: dict) -> Dict[str, dict]:
+    return {
+        str(rule.get("id")): rule
+        for rule in select_applicable_rules(kb, feature=feature, context=context)
+        if isinstance(rule, dict) and rule.get("id")
+    }
+
+
+def _collect_policy_hints(kb: dict) -> Dict[str, Any]:
+    hints: Dict[str, Any] = {}
+    view_rules = _rule_by_id(kb, "view_selection", {})
+    dim_rules = _rule_by_id(kb, "dimension", {})
+    section_rules = _rule_by_id(kb, "section_view", {})
+    layout_rules = _rule_by_id(kb, "drawing_layout", {})
+    detail_rules = _rule_by_id(kb, "detail_view", {})
+    centerline_rules = _rule_by_id(kb, "centerline", {})
+    hole_pattern_rules = _rule_by_id(kb, "hole_pattern", {})
+
+    front_rule = view_rules.get("front_view_information_priority")
+    if front_rule:
+        hints["front_view_rule_id"] = front_rule["id"]
+        for action in front_rule.get("actions", []):
+            if action.get("parameter") == "front_view":
+                hints["front_view_strategy"] = action.get("rule")
+            if action.get("parameter") == "hidden_edge_load" and str(action.get("value")).lower() == "low":
+                hints["prefer_low_hidden_edge_load"] = True
+
+    front_tie_break_rule = view_rules.get("front_view_tie_break_function_before_axis_order")
+    if front_tie_break_rule:
+        hints["front_view_tie_break_rule_id"] = front_tie_break_rule["id"]
+        hints["prefer_functional_front_tie_break"] = True
+
+    addl_rule = view_rules.get("additional_views_only_as_needed")
+    if addl_rule:
+        hints["additional_views_rule_id"] = addl_rule["id"]
+        hints["limit_additional_views"] = True
+
+    view_dim_rule = dim_rules.get("dimension_in_most_descriptive_view")
+    if view_dim_rule:
+        hints["dimension_view_rule_id"] = view_dim_rule["id"]
+        hints["prefer_true_shape_view_for_dimensions"] = True
+
+    chain_rule = dim_rules.get("avoid_closed_dimension_chains")
+    if chain_rule:
+        hints["dimension_chain_rule_id"] = chain_rule["id"]
+        hints["avoid_closed_dimension_chains"] = True
+
+    section_pref_rule = section_rules.get("section_preferred_over_hidden_edge_clutter")
+    if section_pref_rule:
+        hints["section_clutter_rule_id"] = section_pref_rule["id"]
+        hints["prefer_section_over_hidden_edge_clutter"] = True
+
+    layout_density_rule = layout_rules.get("dimension_density_requires_layout_escalation")
+    if layout_density_rule:
+        hints["layout_density_rule_id"] = layout_density_rule["id"]
+        hints["split_dimensions_before_crowding"] = True
+        hints["escalate_layout_for_dimension_density"] = True
+
+    detail_view_rule = detail_rules.get("detail_view_for_small_or_dense_features")
+    if detail_view_rule:
+        hints["detail_view_rule_id"] = detail_view_rule["id"]
+        hints["prefer_detail_views_for_dense_features"] = True
+
+    centerline_rule = centerline_rules.get("symmetric_features_reference_centerlines")
+    if centerline_rule:
+        hints["centerline_reference_rule_id"] = centerline_rule["id"]
+        hints["prefer_centerline_as_reference"] = True
+
+    hole_pattern_rule = hole_pattern_rules.get("hole_pattern_prefer_coordinate_dimensioning")
+    if hole_pattern_rule:
+        hints["hole_pattern_coordinate_rule_id"] = hole_pattern_rule["id"]
+        hints["prefer_coordinate_dimensioning_for_patterns"] = True
+
+    return hints
+
+
+def _dimension_semantic_key(dim: DimensionItem) -> tuple[Any, ...]:
+    return (
+        dim.dim_type,
+        dim.value_mm,
+        dim.label,
+    )
+
+
+def _dimension_policy_rank(view_name: str, dim: DimensionItem) -> tuple[int, int, int, int]:
+    preferred = _DIMENSION_PRIMARY_VIEWS.get(dim.dim_type, _VIEW_FALLBACK_ORDER)
+    try:
+        preferred_rank = preferred.index(view_name)
+    except ValueError:
+        preferred_rank = len(preferred)
+    view_rank = _VIEW_FALLBACK_ORDER.index(view_name) if view_name in _VIEW_FALLBACK_ORDER else len(_VIEW_FALLBACK_ORDER)
+    priority_rank = 0 if dim.priority == "must" else 1
+    return (preferred_rank, priority_rank, dim.detail_level, view_rank)
+
+
+def _apply_dimension_policies(views: List[ViewPlan], policy_hints: Dict[str, Any]) -> List[ViewPlan]:
+    if not policy_hints:
+        return views
+
+    enforce_single_view = bool(
+        policy_hints.get("avoid_closed_dimension_chains")
+        or policy_hints.get("prefer_true_shape_view_for_dimensions")
+    )
+    if not enforce_single_view:
+        return views
+
+    grouped: Dict[tuple[Any, ...], List[tuple[ViewPlan, DimensionItem]]] = {}
+    for view in views:
+        for dim in view.dimensions:
+            grouped.setdefault(_dimension_semantic_key(dim), []).append((view, dim))
+
+    keep_ids: set[int] = set()
+    for dim_key, items in grouped.items():
+        dim_type = str(dim_key[0] or "")
+        if len(items) == 1 or dim_type not in _DIMENSION_PRIMARY_VIEWS:
+            keep_ids.update(id(dim) for _view, dim in items)
+            continue
+        chosen_view, chosen_dim = min(
+            items,
+            key=lambda item: _dimension_policy_rank(item[0].view_name, item[1]),
+        )
+        keep_ids.add(id(chosen_dim))
+
+    for view in views:
+        view.dimensions = [dim for dim in view.dimensions if id(dim) in keep_ids]
+    return views
+
+
 def _bbox_dims(fp: dict) -> Dict[str, float]:
     """Extract X/Y/Z dimensions from feature payload bbox_mm."""
     bbox = fp.get("bbox_mm") or {}
@@ -84,34 +231,6 @@ def _bbox_dims(fp: dict) -> Dict[str, float]:
         "Y": float(bbox.get("Y", 0)),
         "Z": float(bbox.get("Z", 0)),
     }
-
-
-def _preferred_flat_pattern_hole_diameter(fp: dict) -> Optional[float]:
-    """Prefer a true round-hole diameter over slot-end radii on flat patterns."""
-    hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
-    unique_diameters = sorted(
-        {
-            round(float(value), 5)
-            for value in (fp.get("hole_diameters_mm") or [])
-            if _opt_float(value) is not None and float(value) > 0.0
-        }
-    )
-    if not unique_diameters:
-        return hole_diameter
-    if len(unique_diameters) == 1:
-        return unique_diameters[0]
-
-    smallest = float(unique_diameters[0])
-    largest = float(unique_diameters[-1])
-
-    # The feature probe currently counts slot semicircle ends as holes.
-    # For the flat pattern, a clearly larger diameter is the safer choice.
-    if largest >= smallest * 1.4:
-        return largest
-
-    if hole_diameter is not None:
-        return hole_diameter
-    return largest
 
 
 def _looks_like_turning_part(fp: dict, dims: Dict[str, float]) -> bool:
@@ -169,6 +288,29 @@ def _looks_like_turning_part(fp: dict, dims: Dict[str, float]) -> bool:
     return all(span <= center_tol for span in transverse_spans)
 
 
+def _looks_like_compact_flat_milling_part(
+    fp: dict,
+    dims: Dict[str, float],
+    measured_t: float | None,
+) -> bool:
+    """Guard compact plates from the weak sheet-metal fallback."""
+    if not isinstance(fp, dict):
+        return False
+
+    flat_ratio = _opt_float(fp.get("flat_ratio"))
+    if flat_ratio is not None and flat_ratio >= 0.35:
+        return True
+
+    sorted_dims = sorted((max(0.0, float(value)) for value in dims.values()), reverse=True)
+    if len(sorted_dims) < 3 or sorted_dims[1] <= 0.0:
+        return False
+
+    longest, mid_dim, thickness = sorted_dims[:3]
+    plan_aspect = longest / max(mid_dim, 1e-6)
+    thickness_ratio = thickness / max(mid_dim, 1e-6)
+    return plan_aspect <= 1.35 and thickness_ratio >= 0.08
+
+
 # ---------------------------------------------------------------------------
 # Layout profile (pure-python, no FreeCAD dependency)
 # ---------------------------------------------------------------------------
@@ -201,6 +343,9 @@ def select_layout_profile_standalone(
     # false bend/flat-pattern signals in the lightweight probe.
     if _looks_like_turning_part(fp, dims):
         return "turning"
+
+    if _looks_like_compact_flat_milling_part(fp, dims, measured_t):
+        return "milling"
 
     # Tier 1: Face-type geometry + thickness guard
     if fp.get("is_sheet_metal_by_faces") is True and measured_t is not None and measured_t <= 5.0:
@@ -364,11 +509,8 @@ def _plan_sheet_metal(
     mid_val = sorted_axes[1][1] if len(sorted_axes) > 1 else 0
 
     # Knowledge-base rule lookups — runtime traceability for rule_id fields
-    hole_count_ctx = int(fp.get("hole_count") or 0)
     kb = _get_kb()
     outer_map   = _action_rule_map(kb, "outer_contour", {"view_kind": "orthographic"})
-    hole_map    = _action_rule_map(kb, "hole", {"visible": True})
-    pattern_map = _action_rule_map(kb, "hole_pattern", {"count": hole_count_ctx})
     outer_rule  = outer_map.get("overall_length") or outer_map.get("overall_height")
 
     # 3D folded views — always present
@@ -396,29 +538,16 @@ def _plan_sheet_metal(
                 _dim("flat_width", "FlatPattern", axis="V", value_mm=fw)
             )
 
-        # Hole positions on flat pattern
-        hole_count = int(fp.get("hole_count") or 0)
-        if hole_count >= 1:
-            hole_diameter = _preferred_flat_pattern_hole_diameter(fp)
-            if hole_diameter is not None:
-                flat_dims.append(
-                    _dim("hole_diameter", "FlatPattern", value_mm=hole_diameter,
-                         label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}",
-                         rule_id=hole_map.get("diameter"))
-                )
-            if hole_count >= 2:
-                flat_dims.append(
-                    _dim("hole_location_x", "FlatPattern", axis="H",
-                         rule_id=pattern_map.get("position_from_datums"))
-                )
-                flat_dims.append(
-                    _dim("hole_location_y", "FlatPattern", axis="V",
-                         rule_id=pattern_map.get("position_from_datums"))
-                )
-
-    # Bend radius — as reference on front view, not over-dimensioned
+    # Bend radius only belongs on real bent parts. Flat laser-cut plates often
+    # contain cylindrical hole walls that the feature probe reports as a
+    # candidate radius, but they should not create a bend callout.
+    flat_pattern = fp.get("flat_pattern") or {}
+    if isinstance(unfold_result, dict) and unfold_result.get("ok") is True:
+        has_real_bends = int(unfold_result.get("bend_count") or 0) > 0
+    else:
+        has_real_bends = int(flat_pattern.get("bend_count") or 0) > 0
     bend_radius = _opt_float(fp.get("bend_radius_mm"))
-    if bend_radius is not None and bend_radius > 0:
+    if has_real_bends and bend_radius is not None and bend_radius > 0:
         front_dims.append(
             _dim("bend_radius", "Front", value_mm=bend_radius,
                  label=f"R{_fmt(bend_radius)}",
@@ -674,6 +803,8 @@ def build_dimension_plan(
     """
     detail_level = max(1, min(3, detail_level))
     fp = feature_payload if isinstance(feature_payload, dict) else {}
+    kb = _get_kb()
+    policy_hints = _collect_policy_hints(kb)
 
     datum_system = _infer_datum_system(fp)
 
@@ -688,6 +819,7 @@ def build_dimension_plan(
     for view in views:
         view.dimensions = [d for d in view.dimensions if d.detail_level <= detail_level]
 
+    views = _apply_dimension_policies(views, policy_hints)
     views = _deduplicate(views)
 
     process_notes = _collect_process_notes(fp, layout_profile, unfold_result, detail_level)
@@ -699,6 +831,7 @@ def build_dimension_plan(
         datum_system=datum_system,
         views=views,
         process_notes=process_notes,
+        policy_hints=policy_hints,
     )
 
     if overrides:

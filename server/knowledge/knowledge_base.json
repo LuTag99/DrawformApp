@@ -1,7 +1,7 @@
 {
-  "version": "0.2.0",
+  "version": "0.2.1",
   "region": "DE-AT",
-  "updated_at": "2026-03-03",
+  "updated_at": "2026-03-18",
   "quality_policy": {
     "minimum_source_tier": "tier_2",
     "minimum_independent_reviewers": 2,
@@ -203,6 +203,15 @@
       "verified_on": "2026-02-16"
     },
     {
+      "id": "manufacturing_drawings_literature_review_2026_03",
+      "tier": "tier_2",
+      "kind": "internal_literature_review",
+      "title": "Drawform literature review: manufacturing drawings",
+      "path": "server/knowledge/LITERATURE_FERTIGUNGSZEICHNUNGEN_2026_03.md",
+      "owner": "Drawform",
+      "verified_on": "2026-03-17"
+    },
+    {
       "id": "shopfloor_feedback",
       "tier": "tier_3",
       "kind": "manufacturing_feedback",
@@ -353,6 +362,161 @@
       "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-03" }
     },
     {
+      "id": "front_view_information_priority",
+      "feature": "view_selection",
+      "priority": "must",
+      "actions": [
+        { "type": "select_view", "parameter": "front_view", "rule": "maximize_shape_information" },
+        { "type": "prefer", "parameter": "hidden_edge_load", "value": "low" }
+      ],
+      "note": "Choose the front view that best explains form and principal dimensions. Additional views should improve clarity rather than add hidden-edge clutter.",
+      "source_refs": ["din_iso_baseline_drawform", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-17" }
+    },
+    {
+      "id": "additional_views_only_as_needed",
+      "feature": "view_selection",
+      "priority": "must_not",
+      "actions": [
+        { "type": "forbid", "parameter": "unnecessary_additional_views" }
+      ],
+      "note": "Limit orthographic views to the minimum set required for unambiguous definition and complete dimensioning.",
+      "source_refs": ["din_iso_baseline_drawform", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-17" }
+    },
+    {
+      "id": "dimension_in_most_descriptive_view",
+      "feature": "dimension",
+      "priority": "must",
+      "actions": [
+        { "type": "validate_placement", "rule": "dimension_in_view_of_true_shape" }
+      ],
+      "note": "Place dimensions in the view where the geometry is most clearly recognizable, not in a secondary or distorted projection.",
+      "source_refs": ["iso_129_1_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-17" }
+    },
+    {
+      "id": "avoid_closed_dimension_chains",
+      "feature": "dimension",
+      "priority": "must_not",
+      "actions": [
+        { "type": "forbid", "dimension": "closed_dimension_chain_without_reference" }
+      ],
+      "note": "Avoid closed dimension chains unless one dimension is explicitly treated as a derived or reference value.",
+      "source_refs": ["iso_129_1_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-17" }
+    },
+    {
+      "id": "repeated_features_need_count_and_pitch",
+      "feature": "repeated_feature",
+      "priority": "must",
+      "actions": [
+        { "type": "add_dimension", "dimension": "feature_count" },
+        { "type": "add_dimension", "dimension": "pitch_or_spacing" },
+        { "type": "add_dimension", "dimension": "total_span_or_pattern_reference" }
+      ],
+      "note": "Repeated holes, slots, or similar features should be defined by count plus pitch/spacing and a clear reference or total span.",
+      "source_refs": ["iso_129_1_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "metrology_lead"], "last_reviewed": "2026-03-17" }
+    },
+    {
+      "id": "section_views_hide_hidden_edges",
+      "feature": "section_view",
+      "priority": "must_not",
+      "actions": [
+        { "type": "forbid", "render": "hidden_edges_in_section" }
+      ],
+      "note": "Do not show hidden edges in section views unless they are necessary to explain a function-critical condition.",
+      "source_refs": ["iso_128_series", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-17" }
+    },
+    {
+      "id": "longitudinal_section_exclusions",
+      "feature": "section_view",
+      "priority": "must_not",
+      "actions": [
+        { "type": "forbid", "render": "longitudinal_section_for_shafts_fasteners_ribs" }
+      ],
+      "note": "Do not section shafts, bolts, screws, pins, ribs, or similar elements longitudinally in normal cases.",
+      "source_refs": ["iso_128_series", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-17" }
+    },
+    {
+      "id": "front_view_tie_break_function_before_axis_order",
+      "feature": "view_selection",
+      "priority": "should",
+      "actions": [
+        { "type": "prefer", "parameter": "functional_surface_visibility", "value": "high" },
+        { "type": "prefer", "parameter": "machining_or_mounting_face_as_front", "value": true },
+        { "type": "tie_break", "parameter": "front_view", "rule": "functional_before_default_axis_order" }
+      ],
+      "note": "If candidate front views explain the shape equally well, prefer the one that exposes functional, machining, or mounting faces before falling back to a generic axis-order tie-break.",
+      "source_refs": ["din_iso_baseline_drawform", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-18" }
+    },
+    {
+      "id": "section_preferred_over_hidden_edge_clutter",
+      "feature": "section_view",
+      "priority": "should",
+      "actions": [
+        { "type": "prefer", "parameter": "representation", "value": "section_or_partial_section" },
+        { "type": "prefer", "parameter": "decision_basis", "value": "internal_clarity_over_hidden_edges" }
+      ],
+      "note": "When an auxiliary view would mainly consist of hidden edges, prefer a full, half, or partial section that explains the interior more clearly.",
+      "source_refs": ["iso_128_series", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-18" }
+    },
+    {
+      "id": "hole_pattern_prefer_coordinate_dimensioning",
+      "feature": "hole_pattern",
+      "priority": "should",
+      "actions": [
+        { "type": "prefer", "dimension": "position_from_datums" },
+        { "type": "prefer", "dimension": "pitch_or_spacing" },
+        { "type": "forbid", "dimension": "pairwise_chain_dimensioning_for_pattern" }
+      ],
+      "note": "Dense or repeated hole patterns should be tied back to datums and pitch references instead of being defined by pairwise chain dimensions.",
+      "source_refs": ["iso_129_1_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "metrology_lead"], "last_reviewed": "2026-03-18" }
+    },
+    {
+      "id": "dimension_density_requires_layout_escalation",
+      "feature": "drawing_layout",
+      "priority": "must",
+      "actions": [
+        { "type": "prefer", "parameter": "dimension_distribution", "value": "split_across_views_before_crowding" },
+        { "type": "escalate", "parameter": "layout", "value": "detail_view_scale_or_sheet_upgrade" },
+        { "type": "forbid", "parameter": "dimension_overcrowding", "value": true }
+      ],
+      "note": "If dimensions no longer fit clearly, the drawing must escalate by redistributing dimensions, adding detail views, adjusting scale, or moving to a larger sheet rather than compressing the same view further.",
+      "source_refs": ["iso_129_1_catalog", "iso_5455_catalog", "iso_5457_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-18" }
+    },
+    {
+      "id": "detail_view_for_small_or_dense_features",
+      "feature": "detail_view",
+      "priority": "should",
+      "actions": [
+        { "type": "prefer", "parameter": "detail_view_trigger", "value": "small_dense_or_callout_heavy_feature" },
+        { "type": "prefer", "parameter": "scale", "value": "enlarged" }
+      ],
+      "note": "Use enlarged detail views for small, dense, or callout-heavy functional features when the main view would become visually overloaded.",
+      "source_refs": ["iso_5455_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-18" }
+    },
+    {
+      "id": "symmetric_features_reference_centerlines",
+      "feature": "centerline",
+      "priority": "should",
+      "actions": [
+        { "type": "add_symbol", "symbol": "centerline", "location": "symmetric_or_round_features" },
+        { "type": "prefer", "parameter": "dimension_reference", "value": "centerline_or_axis" }
+      ],
+      "note": "Symmetric and rotational features should be referenced to centerlines or axes instead of being dimensioned through improvised chain dimensions.",
+      "source_refs": ["iso_128_series", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-18" }
+    },
+    {
       "id": "edge_state_indication",
       "feature": "edge",
       "priority": "should",
@@ -370,9 +534,45 @@
       "actions": [
         { "type": "add_symbol", "symbol": "surface_roughness", "location": "critical_surfaces_or_general_note" }
       ],
-      "note": "ISO 1302 / ISO 21920-1: Surface texture must be indicated where functionally relevant. General default Ra in title block notes. Specific Ra on critical surfaces (sealing, bearing).",
-      "source_refs": ["iso_1302_catalog", "din_iso_baseline_drawform"],
-      "quality": { "status": "draft", "reviewers": ["design_lead"], "last_reviewed": "2026-03-03" }
+      "note": "ISO 1302 / ISO 21920-1: Surface texture should be indicated only where functionally relevant. Use a general default in notes for broad process intent and specific Ra/Rz callouts on bearing, sealing, sliding, or fit-critical surfaces.",
+      "source_refs": ["iso_1302_catalog", "din_iso_baseline_drawform", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-17" }
+    },
+    {
+      "id": "hole_callout_complete_for_special_holes",
+      "feature": "hole",
+      "priority": "should",
+      "actions": [
+        { "type": "add_callout", "dimension": "counterbore_or_countersink_if_present" },
+        { "type": "add_callout", "dimension": "depth_if_blind" }
+      ],
+      "note": "Blind, counterbored, countersunk, and stepped holes need explicit callout data beyond a simple diameter.",
+      "source_refs": ["iso_129_1_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-17" }
+    },
+    {
+      "id": "thread_callout_complete",
+      "feature": "thread",
+      "priority": "should",
+      "actions": [
+        { "type": "add_callout", "dimension": "handedness_if_left_hand" },
+        { "type": "add_callout", "dimension": "usable_thread_length_when_blind" },
+        { "type": "add_callout", "dimension": "pitch_if_not_coarse_default" }
+      ],
+      "note": "Thread callouts should include LH/RH when needed, useful thread length for blind holes, and pitch where it is not the default coarse series.",
+      "source_refs": ["iso_261_965_series", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-17" }
+    },
+    {
+      "id": "fit_system_prefer_hole_basis",
+      "feature": "fit_selection",
+      "priority": "should",
+      "actions": [
+        { "type": "prefer", "parameter": "fit_system", "value": "hole_basis" }
+      ],
+      "note": "Prefer the hole-basis system unless function, tooling, or established manufacturing practice clearly favors shaft-basis.",
+      "source_refs": ["iso_286_series", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-17" }
     },
     {
       "id": "paper_format_iso_5457",
@@ -394,9 +594,9 @@
       "actions": [
         { "type": "add_symbol", "symbol": "weld_joint_per_iso_2553" }
       ],
-      "note": "ISO 2553: Weld joints must be indicated with standardized symbols on reference line. Include: joint type, throat/leg size, process number if needed.",
-      "source_refs": ["iso_2553_catalog"],
-      "quality": { "status": "draft", "reviewers": ["design_lead"], "last_reviewed": "2026-03-03" }
+      "note": "ISO 2553: Weld joints must be indicated with standardized symbols on the reference line. Include joint type, arrow/opposite side, a/z size, continuity or pitch, and process data if needed.",
+      "source_refs": ["iso_2553_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-17" }
     },
     {
       "id": "gdt_feature_control_frame",
@@ -406,9 +606,9 @@
       "actions": [
         { "type": "add_tolerance_frame", "format": "per ISO 1101 with datum references per ISO 5459" }
       ],
-      "note": "ISO 1101 + ISO 5459: Functional features (bearing surfaces, sealing faces, mating faces) should have explicit GD&T with datum references. ISO 8015 independence principle applies.",
-      "source_refs": ["iso_1101_catalog", "iso_5459_catalog", "iso_8015_catalog"],
-      "quality": { "status": "draft", "reviewers": ["design_lead"], "last_reviewed": "2026-03-03" }
+      "note": "ISO 1101 + ISO 5459: Functional features should use explicit feature control frames with datum references. Frame order is symbol, tolerance value, then datum letters; ISO 8015 independence principle applies unless otherwise stated.",
+      "source_refs": ["iso_1101_catalog", "iso_5459_catalog", "iso_8015_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "metrology_lead"], "last_reviewed": "2026-03-17" }
     },
     {
       "id": "dimension_accuracy_vs_geometry",

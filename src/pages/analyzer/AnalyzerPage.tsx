@@ -115,7 +115,13 @@ export function AnalyzerPage() {
         URL.revokeObjectURL(filePreview);
         setFilePreview(null);
       }
-      setStatus({ type: 'success', message: 'Analyse-Job an Backend-Worker gesendet.' });
+      setStatus({
+        type: job.executionMode === 'local_fallback' ? 'error' : 'success',
+        message:
+          job.executionMode === 'local_fallback'
+            ? 'Backend nicht erreichbar. Lokale Simulation aktiv; Ergebnisse sind nicht backend-verifiziert.'
+            : 'Analyse-Job an Backend-Worker gesendet.',
+      });
       setActiveJobId(job.id);
     } catch (error) {
       setStatus({
@@ -346,6 +352,11 @@ function JobCard({ job, active, onSelect }: { job: AnalyzerJob; active: boolean;
             {view}
           </span>
         ))}
+        {job.executionMode === 'local_fallback' && (
+          <span className="chip chip--ghost" style={{ fontSize: '0.75rem' }}>
+            Lokale Simulation
+          </span>
+        )}
       </div>
       <div className="job-card__footer">
         <span>
@@ -394,6 +405,11 @@ function DimensionPreview({ job }: { job: AnalyzerJob | undefined }) {
         </div>
         <span className={`job-card__status job-card__status--${job.status}`}>{statusLabel}</span>
       </div>
+      {job.executionMode === 'local_fallback' && (
+        <div className="status-banner status-banner--error" style={{ marginTop: '1rem' }}>
+          Backend nicht erreichbar. Diese Analyse stammt aus einer lokalen Simulation und ist nicht freigegeben.
+        </div>
+      )}
       {job.result ? (
         <>
           <div className="dimension-meta">

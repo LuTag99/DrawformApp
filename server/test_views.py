@@ -83,6 +83,8 @@ EXPECTED = {
         "longest_axis": "X",  # Cube, any axis is fine
         "is_flat": False,
         "alignment_ok": True,
+        "dse_check": True,
+        "part_type": "milling",
     },
     "rechteck": {
         "longest_axis": "Y",  # 300mm is Y
@@ -90,6 +92,8 @@ EXPECTED = {
         "alignment_ok": True,
         "front_width_gt_height": True,  # 300mm should be horizontal (wider than tall)
         "top_rotation_deg": 270,  # Asymmetric details must keep canonical orientation
+        "dse_check": True,
+        "part_type": "milling",
     },
     "cylinder": {
         "longest_axis": "Z",  # 80mm length
@@ -121,6 +125,8 @@ EXPECTED = {
         "min_hole_count": 6,
         "min_dim_text_count": 2,
         "feature_dims_required": True,
+        "dse_check": True,
+        "part_type": "milling",
     },
     "sheet_metal": {
         "longest_axis": "X",  # 200mm
@@ -129,24 +135,31 @@ EXPECTED = {
         "front_width_gt_height": True,  # 200x100 rectangle
         "min_dim_text_count": 2,
         "has_abwicklung": False,  # Laserteil (0 bends) — no Abwicklung
+        "dse_check": True,
     },
     "l_shape": {
         "longest_axis": "X",  # 100mm (tied with Y)
         "is_flat": False,
         "alignment_ok": True,
         "top_rotation_deg": 180,
+        "dse_check": True,
+        "part_type": "milling",
     },
     "angle_profile": {
         "longest_axis": "X",  # 150mm
         "is_flat": False,
         "alignment_ok": True,
         "front_width_gt_height": True,  # Length horizontal
+        "dse_check": True,
+        "part_type": "milling",
     },
     "tall_thin": {
         "longest_axis": "Z",  # 200mm
         "is_flat": False,
         "alignment_ok": True,
         "front_width_gt_height": True,  # 200mm should be horizontal
+        "dse_check": True,
+        "part_type": "milling",
     },
     "slot_plate": {
         "longest_axis": "X",  # 120mm
@@ -155,28 +168,37 @@ EXPECTED = {
         # Slot has 2 semicircular ends; one end arc may round to exactly 50% and
         # be rejected by FP tolerance → reliably detect at least 1 slot feature.
         "min_hole_count": 1,
+        "dse_check": True,
     },
     "bracket": {
         "longest_axis": "X",
         "is_flat": False,
         "alignment_ok": True,
         "min_hole_count": 2,
+        "dse_check": True,
+        "part_type": "milling",
     },
     "housing": {
         "longest_axis": "X",
         "is_flat": False,
         "alignment_ok": True,
+        "dse_check": True,
+        "part_type": "milling",
     },
     "t_profile": {
         "longest_axis": "Y",
         "is_flat": False,
         "alignment_ok": True,
         "top_rotation_deg": 270,
+        "dse_check": True,
+        "part_type": "milling",
     },
     "rect_part": {
         "longest_axis": "X",
         "is_flat": False,
         "alignment_ok": True,
+        "dse_check": True,
+        "part_type": "milling",
     },
     "feature_test_part": {
         "longest_axis": "X",
@@ -188,6 +210,7 @@ EXPECTED = {
         "min_bend_radius_mm": 4.0,
         "min_centerline_count": 2,
         "has_abwicklung": False,  # Laserteil (0 bends) — no Abwicklung
+        "dse_check": True,
     },
     "complex_bracket": {
         "longest_axis": "X",
@@ -201,6 +224,8 @@ EXPECTED = {
         "stability_check": True,
         "min_dim_text_count": 3,
         "feature_dims_required": True,
+        "dse_check": True,
+        "part_type": "milling",
     },
     "flanged_manifold": {
         "longest_axis": "X",
@@ -215,6 +240,8 @@ EXPECTED = {
         "min_bend_radius_mm": 20.0,
         "min_centerline_count": 4,
         "stability_check": True,
+        "dse_check": True,
+        "part_type": "milling",
     },
     "stepped_shaft": {
         "longest_axis": "X",
@@ -238,6 +265,8 @@ EXPECTED = {
         "min_hole_pitch_mm": 120.0,
         "min_centerline_count": 4,
         "stability_check": True,
+        "dse_check": True,
+        "part_type": "milling",
     },
     "mounting_panel_complex": {
         "longest_axis": "X",
@@ -250,6 +279,7 @@ EXPECTED = {
         "stability_check": True,
         "min_dim_text_count": 3,
         "feature_dims_required": True,
+        "dse_check": True,
     },
 }
 
@@ -525,6 +555,9 @@ def check_layout_quality(report: dict) -> tuple[bool, list[str]]:
         issues.append("Views do not fully fit into drawing area.")
     if scale_reduction_needed and not fits:
         issues.append("Layout required scale reduction but views still do not fit.")
+    overlap_pairs = list(quality.get("view_overlap_pairs") or [])
+    if overlap_pairs:
+        issues.append("Views overlap: " + ", ".join(overlap_pairs))
 
     return len(issues) == 0, issues
 
@@ -621,6 +654,47 @@ def check_dim_quality(report: dict, expected: dict) -> tuple[bool, list[str]]:
 
     if not dm.get("labels_in_bounds", True):
         issues.append("labels_in_bounds: some dimension labels outside drawing area")
+    if not dm.get("dimension_graphics_in_bounds", True):
+        issues.append("dimension_graphics_in_bounds: some dimension graphics outside drawing area")
+    label_out_of_bounds = list(dm.get("label_out_of_bounds_views") or [])
+    if label_out_of_bounds:
+        issues.append(
+            "dimension_labels_outside_drawing_area: " + ", ".join(sorted(label_out_of_bounds))
+        )
+    dimension_out_of_bounds = list(dm.get("dimension_out_of_bounds_views") or [])
+    if dimension_out_of_bounds:
+        issues.append(
+            "dimension_graphics_outside_drawing_area: " + ", ".join(sorted(dimension_out_of_bounds))
+        )
+
+    outside_preferred = list(dm.get("outside_preferred_feature_views") or [])
+    if outside_preferred:
+        issues.append(
+            "feature_dims_outside: preferred outside placement missing in "
+            + ", ".join(sorted(outside_preferred))
+        )
+    strict_dim_arrangement = bool(expected.get("strict_dim_arrangement"))
+    if strict_dim_arrangement:
+        overall_geom_overlap = list(dm.get("overall_geom_overlap_views") or [])
+        if overall_geom_overlap:
+            issues.append(
+                "overall_dims_overlap_geometry: " + ", ".join(sorted(overall_geom_overlap))
+            )
+        feature_geom_overlap = list(dm.get("feature_geom_overlap_views") or [])
+        if feature_geom_overlap:
+            issues.append(
+                "feature_dims_overlap_geometry: " + ", ".join(sorted(feature_geom_overlap))
+            )
+        feature_overall_overlap = list(dm.get("feature_overall_overlap_views") or [])
+        if feature_overall_overlap:
+            issues.append(
+                "feature_dims_overlap_overall: " + ", ".join(sorted(feature_overall_overlap))
+            )
+    text_overlap_views = list(dm.get("text_overlap_views") or [])
+    if text_overlap_views:
+        issues.append(
+            "dimension_text_overlap: " + ", ".join(sorted(text_overlap_views))
+        )
 
     return len(issues) == 0, issues
 
@@ -924,6 +998,8 @@ def check_abwicklung(report: dict, expected: dict) -> tuple[bool, list[str]]:
     if flange_dims:
         x_flanges = [f for f in flange_dims if f.get("axis") == "x"]
         y_flanges = [f for f in flange_dims if f.get("axis") == "y"]
+        flange_dim_line_y = _float_or_none(abw.get("flange_dim_line_y"))
+        flange_dim_line_x = _float_or_none(abw.get("flange_dim_line_x"))
         if x_flanges and dim_h > 0:
             flange_sum = sum(f.get("label_mm", 0) for f in x_flanges)
             if abs(flange_sum - dim_h) > max(dim_h * 0.05, 1.0):
@@ -933,6 +1009,11 @@ def check_abwicklung(report: dict, expected: dict) -> tuple[bool, list[str]]:
                     issues.append(
                         f"X-flange sum ({flange_sum:.1f}) != horizontal dim ({dim_h:.1f})"
                     )
+            if flange_dim_line_y is not None:
+                if flange_dim_line_y <= bounds[3] + 0.5:
+                    issues.append("X-flange dimension line is not outside the flat-pattern outline")
+                if _float_or_none(abw.get("dim_h_line_y")) is not None and dim_h_eps and flange_dim_line_y >= float(abw.get("dim_h_line_y")) - 0.5:
+                    issues.append("Horizontal overall dimension is not placed outside the X-flange dimensions")
         if y_flanges and dim_v > 0:
             flange_sum = sum(f.get("label_mm", 0) for f in y_flanges)
             if abs(flange_sum - dim_v) > max(dim_v * 0.05, 1.0):
@@ -942,13 +1023,25 @@ def check_abwicklung(report: dict, expected: dict) -> tuple[bool, list[str]]:
                     issues.append(
                         f"Y-flange sum ({flange_sum:.1f}) != vertical dim ({dim_v:.1f})"
                     )
+            if flange_dim_line_x is not None:
+                if flange_dim_line_x <= bounds[2] + 0.5:
+                    issues.append("Y-flange dimension line is not outside the flat-pattern outline")
+                if _float_or_none(abw.get("dim_v_line_x")) is not None and flange_dim_line_x >= float(abw.get("dim_v_line_x")) - 0.5:
+                    issues.append("Vertical overall dimension is not placed outside the Y-flange dimensions")
 
-    # 6. Bend annotations count should match bend count
+    # 6. Bend edges must still be represented, but bend legends are disallowed
     bend_count = abw.get("bend_count", 0)
-    bend_annotations = abw.get("bend_annotations", 0)
-    if bend_count > 0 and bend_annotations != bend_count:
+    bend_line_count = abw.get("bend_line_count")
+    if bend_line_count is None:
+        bend_line_count = abw.get("bend_annotations", bend_count)
+    if bend_count > 0 and bend_line_count != bend_count:
         issues.append(
-            f"Bend annotation mismatch: {bend_annotations} annotations for {bend_count} bends"
+            f"Bend line mismatch: {bend_line_count} visible bend lines for {bend_count} bends"
+        )
+    bend_legend_count = int(abw.get("bend_legend_count", 0) or 0)
+    if bend_legend_count > 0:
+        issues.append(
+            f"Abwicklung contains {bend_legend_count} bend legend texts although only outer/bend-edge dimensions are allowed"
         )
 
     # 7. Outline should be within drawing area
@@ -959,6 +1052,15 @@ def check_abwicklung(report: dict, expected: dict) -> tuple[bool, list[str]]:
             issues.append("Abwicklung outline extends beyond drawing area (horizontal)")
         if bounds[1] < da_y1 - 1.0 or bounds[3] > da_y2 + 1.0:
             issues.append("Abwicklung outline extends beyond drawing area (vertical)")
+    render_bounds = abw.get("render_bounds") or {}
+    if len(drawing_area) == 4 and isinstance(render_bounds, dict):
+        da_x1, da_y1, da_x2, da_y2 = drawing_area
+        if _float_or_none(render_bounds.get("left")) is not None and _float_or_none(render_bounds.get("right")) is not None:
+            if float(render_bounds["left"]) < da_x1 - 1.0 or float(render_bounds["right"]) > da_x2 + 1.0:
+                issues.append("Abwicklung dimensions extend beyond drawing area (horizontal)")
+        if _float_or_none(render_bounds.get("top")) is not None and _float_or_none(render_bounds.get("bottom")) is not None:
+            if float(render_bounds["top"]) < da_y1 - 1.0 or float(render_bounds["bottom"]) > da_y2 + 1.0:
+                issues.append("Abwicklung dimensions extend beyond drawing area (vertical)")
 
     # 8. Min bend count expectation
     min_bends = expected.get("abwicklung_min_bend_count")

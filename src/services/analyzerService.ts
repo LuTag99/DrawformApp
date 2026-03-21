@@ -38,6 +38,7 @@ export interface AnalyzerResult {
 }
 
 export type AnalyzerStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type AnalyzerExecutionMode = 'backend' | 'local_fallback';
 
 export interface AnalyzerJob {
   id: string;
@@ -48,6 +49,7 @@ export interface AnalyzerJob {
   metadata: AnalyzerMetadata;
   preview?: string;
   sourceType: 'image' | 'cad';
+  executionMode: AnalyzerExecutionMode;
   result?: AnalyzerResult;
   error?: string;
 }
@@ -87,7 +89,19 @@ function readJobs(): AnalyzerJob[] {
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed as AnalyzerJob[];
+      const jobs: AnalyzerJob[] = [];
+      parsed.forEach((entry) => {
+        const normalized = normalizeServerJob(entry);
+        const record = asRecord(entry);
+        if (!normalized) {
+          return;
+        }
+        jobs.push({
+          ...normalized,
+          preview: typeof record?.preview === 'string' ? record.preview : normalized.preview,
+        });
+      });
+      return jobs;
     }
     return [];
   } catch (error) {
@@ -204,6 +218,8 @@ function normalizeServerJob(value: unknown): AnalyzerJob | null {
     return null;
   }
   const sourceType = raw.sourceType === 'image' ? 'image' : 'cad';
+  const executionMode: AnalyzerExecutionMode =
+    raw.executionMode === 'local_fallback' ? 'local_fallback' : 'backend';
   const result = normalizeResult(raw.result);
   return {
     id: raw.id,
@@ -213,6 +229,7 @@ function normalizeServerJob(value: unknown): AnalyzerJob | null {
     size: Number(raw.size) || 0,
     metadata: normalizeMetadata(raw.metadata),
     sourceType,
+    executionMode,
     result,
     error: typeof raw.error === 'string' ? raw.error : undefined,
   };
@@ -497,6 +514,7 @@ function generateLocalResult(job: AnalyzerJob): AnalyzerResult {
   if (job.metadata.notes) {
     recommendations.push(`Notiz uebernommen: ${job.metadata.notes.slice(0, 120)}`);
   }
+  recommendations.push('Lokale Simulation aktiv: Ergebnis ist nicht backend-verifiziert.');
 
   return {
     summary: `Fallback-Worker analysierte ${activeViews.join(', ')} und leitete ${measurements.length} Masse ab.`,
@@ -560,6 +578,7 @@ export async function createAnalysisJob(
     metadata,
     preview,
     sourceType: detectSourceType(file),
+    executionMode: 'backend',
   };
   const jobs = readJobs();
   jobs.unshift(localJob);
@@ -579,8 +598,16 @@ export async function createAnalysisJob(
     return merged;
   } catch (error) {
     console.warn('Analyzer backend unavailable, using local fallback.', error);
-    triggerLocalWorker(localJob.id);
-    return localJob;
+    const fallbackJob =
+      updateJob(localJob.id, (job) => ({
+        ...job,
+        executionMode: 'local_fallback',
+      })) ?? {
+        ...localJob,
+        executionMode: 'local_fallback',
+      };
+    triggerLocalWorker(fallbackJob.id);
+    return fallbackJob;
   }
 }
 

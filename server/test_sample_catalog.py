@@ -14,8 +14,8 @@ class SampleCatalogTests(unittest.TestCase):
         real = resolve_sample_set("real")
         all_items = resolve_sample_set("all")
         self.assertEqual(len(baseline), 20)
-        self.assertEqual(len(real), 14)
-        self.assertEqual(len(all_items), 34)
+        self.assertEqual(len(real), 28)
+        self.assertEqual(len(all_items), 48)
 
     def test_real_set_is_deduplicated(self) -> None:
         real = resolve_sample_set("real")

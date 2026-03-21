@@ -5,6 +5,37 @@ export interface ExportResult {
   blobUrl?: string;
 }
 
+export interface PdfExportOptions {
+  title?: string;
+  drawingNo?: string;
+  revision?: string;
+  author?: string;
+  company?: string;
+  scale?: string;
+  standard?: string;
+  projection?: string;
+  generalTolerance?: string;
+  unit?: string;
+  sheet?: string;
+  kFactor?: string;
+  detailLevel?: number;
+}
+
+export interface DxfExportOptions {
+  kFactor?: string;
+}
+
+function appendOptionalField(formData: FormData, key: string, value: string | number | undefined) {
+  if (value === undefined) {
+    return;
+  }
+  const normalized = String(value).trim();
+  if (!normalized) {
+    return;
+  }
+  formData.append(key, normalized);
+}
+
 function getFileNameFromDisposition(value: string | null, fallback: string) {
   if (!value) {
     return fallback;
@@ -32,10 +63,26 @@ async function readErrorMessage(response: Response) {
   return text || `Export failed (${response.status})`;
 }
 
-export async function requestPdfExport(file: File): Promise<ExportResult> {
+export async function requestPdfExport(
+  file: File,
+  options: PdfExportOptions = {},
+): Promise<ExportResult> {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('format', 'pdf');
+  appendOptionalField(formData, 'title', options.title);
+  appendOptionalField(formData, 'drawing_no', options.drawingNo);
+  appendOptionalField(formData, 'revision', options.revision);
+  appendOptionalField(formData, 'author', options.author);
+  appendOptionalField(formData, 'company', options.company);
+  appendOptionalField(formData, 'scale', options.scale);
+  appendOptionalField(formData, 'standard', options.standard);
+  appendOptionalField(formData, 'projection', options.projection);
+  appendOptionalField(formData, 'general_tolerance', options.generalTolerance);
+  appendOptionalField(formData, 'unit', options.unit);
+  appendOptionalField(formData, 'sheet', options.sheet);
+  appendOptionalField(formData, 'k_factor', options.kFactor);
+  appendOptionalField(formData, 'detail_level', options.detailLevel);
   try {
     const response = await fetch('/api/export', {
       method: 'POST',
@@ -74,9 +121,13 @@ export async function requestPdfExport(file: File): Promise<ExportResult> {
   }
 }
 
-export async function requestDxfExport(file: File): Promise<ExportResult> {
+export async function requestDxfExport(
+  file: File,
+  options: DxfExportOptions = {},
+): Promise<ExportResult> {
   const formData = new FormData();
   formData.append('file', file);
+  appendOptionalField(formData, 'k_factor', options.kFactor);
   try {
     const response = await fetch('/api/export-dxf', {
       method: 'POST',

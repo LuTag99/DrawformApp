@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import time
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,12 +18,25 @@ import main
 class ApiEndpointTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(main.app)
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.previous_analyzer_jobs_path = main.ANALYZER_JOBS_PATH
+        self.previous_reconstruct_jobs_path = main.RECONSTRUCT_JOBS_PATH
+        temp_root = Path(self.temp_dir.name)
+        main.ANALYZER_JOBS_PATH = temp_root / "analyzer_jobs.json"
+        main.RECONSTRUCT_JOBS_PATH = temp_root / "reconstruct_jobs.json"
         with main.ANALYZER_LOCK:
             main.ANALYZER_JOBS.clear()
+        with main.RECONSTRUCT_LOCK:
+            main.RECONSTRUCT_JOBS.clear()
 
     def tearDown(self) -> None:
         with main.ANALYZER_LOCK:
             main.ANALYZER_JOBS.clear()
+        with main.RECONSTRUCT_LOCK:
+            main.RECONSTRUCT_JOBS.clear()
+        main.ANALYZER_JOBS_PATH = self.previous_analyzer_jobs_path
+        main.RECONSTRUCT_JOBS_PATH = self.previous_reconstruct_jobs_path
+        self.temp_dir.cleanup()
 
     def test_export_endpoint_returns_pdf(self) -> None:
         async def fake_to_thread(func, *args, **kwargs):
@@ -99,6 +113,41 @@ class ApiEndpointTests(unittest.TestCase):
             self.assertEqual(list_response.status_code, 200, list_response.text)
             jobs = list_response.json()
             self.assertTrue(any(job.get("id") == job_id for job in jobs))
+            self.assertTrue(main.ANALYZER_JOBS_PATH.exists())
+
+    def test_analyze_job_is_persisted_to_disk(self) -> None:
+        with patch("main.ANALYZER_WORKER_DELAY_SECONDS", 0.0), patch(
+            "main.run_feature_probe", return_value=None
+        ):
+            response = self.client.post(
+                "/api/analyze",
+                files={"file": ("part.step", b"ISO-10303-21;", "application/step")},
+                data={"units": "mm", "scale": "1"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        job_id = response.json()["id"]
+        persisted = main.load_job_map(main.ANALYZER_JOBS_PATH)
+        self.assertIn(job_id, persisted)
+
+    def test_reconstruct_job_is_persisted_to_disk(self) -> None:
+        with patch("main._run_reconstruct_pipeline", return_value=None):
+            response = self.client.post(
+                "/api/reconstruct",
+                files={
+                    "front": ("front.png", b"front", "image/png"),
+                    "top": ("top.png", b"top", "image/png"),
+                    "left": ("left.png", b"left", "image/png"),
+                    "right": ("right.png", b"right", "image/png"),
+                    "back": ("back.png", b"back", "image/png"),
+                },
+                data={"part_name": "Bracket", "width_mm": "120", "height_mm": "80", "depth_mm": "25"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        job_id = response.json()["id"]
+        persisted = main.load_job_map(main.RECONSTRUCT_JOBS_PATH)
+        self.assertIn(job_id, persisted)
 
 
 if __name__ == "__main__":

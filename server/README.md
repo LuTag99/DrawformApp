@@ -112,11 +112,14 @@ Run full local quality gate (self-check loop):
 
 ```powershell
 cd server
-python run_quality_gate.py --stability-runs 2
-python run_quality_gate.py --stability-runs 2 --iterations 2
+python run_quality_gate.py --mode fast
+python run_quality_gate.py --mode full --stability-runs 2
+python run_quality_gate.py --mode full --stability-runs 2 --iterations 2
 ```
 
 `run_quality_gate.py` uses `server/.venv/Scripts/python.exe` automatically when available.
+`--mode fast` runs the Python unit/integration suite without view rendering.
+`--mode full` adds baseline view regression, stability loop, and checklist generation.
 
 ## Dimension Strategy Engine (DSE)
 

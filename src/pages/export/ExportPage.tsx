@@ -1,8 +1,33 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { HiOutlineArrowUpTray } from 'react-icons/hi2';
 import SectionHeader from '../../components/SectionHeader';
+import InputField from '../../components/InputField';
 import { GradientButton } from '../../components/GradientButton';
-import { requestPdfExport, requestDxfExport } from '../../services/exportService';
+import {
+  requestPdfExport,
+  requestDxfExport,
+  type PdfExportOptions,
+} from '../../services/exportService';
+
+const SCALE_OPTIONS = ['auto', '20:1', '10:1', '5:1', '2:1', '1:1', '1:2', '1:5', '1:10', '1:20', '1:50', '1:100'];
+const SHEET_OPTIONS = ['auto', 'A3', 'A2'];
+const DETAIL_LEVEL_OPTIONS = [
+  { value: '1', label: '1 - Fertigung minimal' },
+  { value: '2', label: '2 - Pruefbereit' },
+  { value: '3', label: '3 - Vollstaendige Hinweise' },
+];
+const STANDARD_OPTIONS = ['DIN EN ISO 128/129-1'];
+const PROJECTION_OPTIONS = ['1. Winkel (DIN EN ISO 5456-2)'];
+const TOLERANCE_OPTIONS = ['DIN ISO 2768-fH', 'DIN ISO 2768-mK', 'DIN ISO 2768-cL', 'ISO 22081 (allgemein)'];
+const DEFAULT_EXPORT_PROFILE: PdfExportOptions = {
+  scale: 'auto',
+  standard: 'DIN EN ISO 128/129-1',
+  projection: '1. Winkel (DIN EN ISO 5456-2)',
+  generalTolerance: 'DIN ISO 2768-mK',
+  unit: 'mm',
+  sheet: 'auto',
+  detailLevel: 1,
+};
 
 export function ExportPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -21,6 +46,7 @@ export function ExportPage() {
   const [dxfUrl, setDxfUrl] = useState<string | null>(null);
   const [dxfName, setDxfName] = useState<string | null>(null);
   const [dxfStatus, setDxfStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [exportProfile, setExportProfile] = useState<PdfExportOptions>(DEFAULT_EXPORT_PROFILE);
 
   useEffect(() => {
     return () => {
@@ -40,6 +66,13 @@ export function ExportPage() {
 
   const onSelectFile = () => {
     fileInputRef.current?.click();
+  };
+
+  const updateExportProfile = <Key extends keyof PdfExportOptions>(key: Key, value: PdfExportOptions[Key]) => {
+    setExportProfile((current) => ({
+      ...current,
+      [key]: value,
+    }));
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -89,7 +122,7 @@ export function ExportPage() {
       return null;
     });
     try {
-      const result = await requestPdfExport(selectedFile);
+      const result = await requestPdfExport(selectedFile, exportProfile);
       setStatus({
         type: result.success ? 'success' : 'error',
         message: result.message,
@@ -118,7 +151,7 @@ export function ExportPage() {
       return null;
     });
     try {
-      const result = await requestDxfExport(selectedFile);
+      const result = await requestDxfExport(selectedFile, { kFactor: exportProfile.kFactor });
       setDxfStatus({ type: result.success ? 'success' : 'error', message: result.message });
       if (result.success && result.blobUrl) {
         setDxfUrl(result.blobUrl);
@@ -266,6 +299,96 @@ export function ExportPage() {
               PDF (A3/A2 Auto)
             </button>
             <span className="chip chip--ghost">Top + Front + Left + Iso</span>
+            <span className="chip chip--ghost">Einheit mm</span>
+          </div>
+        </div>
+        <div className="glass-panel--soft" style={{ padding: '1rem', borderRadius: 24 }}>
+          <div
+            style={{
+              display: 'grid',
+              gap: '1rem',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            }}
+          >
+            <InputField
+              label="Titel"
+              value={exportProfile.title ?? ''}
+              placeholder="Bauteilzeichnung"
+              onChange={(event) => updateExportProfile('title', event.target.value)}
+            />
+            <InputField
+              label="Zeichnungsnummer"
+              value={exportProfile.drawingNo ?? ''}
+              placeholder="DF-0001"
+              onChange={(event) => updateExportProfile('drawingNo', event.target.value)}
+            />
+            <InputField
+              label="Revision"
+              value={exportProfile.revision ?? ''}
+              placeholder="A"
+              onChange={(event) => updateExportProfile('revision', event.target.value)}
+            />
+            <InputField
+              label="Autor"
+              value={exportProfile.author ?? ''}
+              placeholder="Drawform"
+              onChange={(event) => updateExportProfile('author', event.target.value)}
+            />
+            <InputField
+              label="Firma"
+              value={exportProfile.company ?? ''}
+              placeholder="Drawform"
+              onChange={(event) => updateExportProfile('company', event.target.value)}
+            />
+            <InputField
+              label="K-Faktor"
+              type="number"
+              min="0.1"
+              max="0.8"
+              step="0.01"
+              value={exportProfile.kFactor ?? ''}
+              placeholder="optional"
+              onChange={(event) => updateExportProfile('kFactor', event.target.value)}
+            />
+            <SelectField
+              label="Massstab"
+              value={exportProfile.scale ?? 'auto'}
+              options={SCALE_OPTIONS}
+              onChange={(event) => updateExportProfile('scale', event.target.value)}
+            />
+            <SelectField
+              label="Blatt"
+              value={exportProfile.sheet ?? 'auto'}
+              options={SHEET_OPTIONS}
+              onChange={(event) => updateExportProfile('sheet', event.target.value)}
+            />
+            <SelectField
+              label="Standard"
+              value={exportProfile.standard ?? STANDARD_OPTIONS[0]}
+              options={STANDARD_OPTIONS}
+              onChange={(event) => updateExportProfile('standard', event.target.value)}
+            />
+            <SelectField
+              label="Projektion"
+              value={exportProfile.projection ?? PROJECTION_OPTIONS[0]}
+              options={PROJECTION_OPTIONS}
+              onChange={(event) => updateExportProfile('projection', event.target.value)}
+            />
+            <SelectField
+              label="Allgemeintoleranz"
+              value={exportProfile.generalTolerance ?? TOLERANCE_OPTIONS[1]}
+              options={TOLERANCE_OPTIONS}
+              onChange={(event) => updateExportProfile('generalTolerance', event.target.value)}
+            />
+            <SelectField
+              label="Detail-Level"
+              value={String(exportProfile.detailLevel ?? 1)}
+              options={DETAIL_LEVEL_OPTIONS.map((item) => item.value)}
+              optionLabels={Object.fromEntries(
+                DETAIL_LEVEL_OPTIONS.map((item) => [item.value, item.label]),
+              )}
+              onChange={(event) => updateExportProfile('detailLevel', Number(event.target.value))}
+            />
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -376,3 +499,30 @@ export function ExportPage() {
 }
 
 export default ExportPage;
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+  optionLabels,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (event: React.ChangeEvent<HTMLSelectElement>) => void;
+  optionLabels?: Record<string, string>;
+}) {
+  return (
+    <div className="form-field">
+      <label>{label}</label>
+      <select className="input-control" value={value} onChange={onChange}>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {optionLabels?.[option] ?? option}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}

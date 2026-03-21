@@ -30,6 +30,20 @@ This guide explains where rule data should come from and how to keep quality hig
 - Track recurring defects caused by ambiguous or missing dimensions.
 - Promote a finding to a rule only after 2-person review.
 
+## 1b. Secondary engineering literature
+
+Use textbooks, handbooks, and internal PDF libraries such as
+`server/knowledge/Literatur` to capture practical drawing heuristics that are
+often only implicit in standards metadata.
+
+- Do not treat secondary literature as a replacement for `tier_1` norm truth.
+- Distill literature first into an internal review artifact with exact file and
+  page references.
+- When literature and `tier_1` sources disagree, `tier_1` wins.
+- Prefer approving production rules only when literature-backed findings are
+  paired with an official standard catalog entry or an approved internal
+  baseline.
+
 ## 2. What to collect for each rule
 
 Each rule in `knowledge_base.json` must include:
@@ -38,17 +52,25 @@ Each rule in `knowledge_base.json` must include:
 - `quality.reviewers`: at least two independent reviewers.
 - `quality.last_reviewed`: date of latest review.
 
+For operational drawing heuristics, collect these in addition:
+- trigger context
+- explicit tie-break order
+- escalation action if the preferred representation no longer fits the sheet
+- fallback behavior if two candidates remain equivalent
+
 ## 3. Data ingestion workflow
 
 1. Add or update source in `sources` with `verified_on` date.
-2. Add or update rule in `rules` with traceable `source_refs`.
-3. Run validator:
+2. For literature sources, first create or refresh an internal review artifact
+with page-level traceability.
+3. Add or update rule in `rules` with traceable `source_refs`.
+4. Run validator:
 - `python server/knowledge/validate_knowledge_base.py`
-4. Run drawing regression:
+5. Run drawing regression:
 - `python server/test_views.py`
-5. Review visual checklist for complex parts:
+6. Review visual checklist for complex parts:
 - `server/_debug/PDF_REVIEW_CHECKLIST.md`
-6. If accepted, update baseline:
+7. If accepted, update baseline:
 - `python server/test_views.py --update-golden`
 
 ## 4. Quality gates

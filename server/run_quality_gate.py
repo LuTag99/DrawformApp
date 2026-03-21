@@ -39,12 +39,62 @@ def resolve_python(explicit: str | None) -> str:
     return sys.executable
 
 
+def build_steps(
+    py: str,
+    *,
+    mode: str,
+    update_golden: bool,
+    stability_runs: int,
+) -> list[tuple[str, list[str], Path]]:
+    steps: list[tuple[str, list[str], Path]] = [
+        ("Python unit discovery", [py, "-m", "unittest", "discover"], ROOT),
+    ]
+
+    if mode == "fast":
+        return steps
+
+    if update_golden:
+        steps.append(
+            (
+                "Update golden baseline",
+                [py, "test_views.py", "--update-golden"],
+                ROOT,
+            )
+        )
+
+    steps.extend(
+        [
+            ("View regression", [py, "test_views.py", "--sample-set", "baseline"], ROOT),
+            (
+                "View stability loop",
+                [
+                    py,
+                    "test_views.py",
+                    "--sample-set",
+                    "baseline",
+                    "--stability-runs",
+                    str(max(1, stability_runs)),
+                ],
+                ROOT,
+            ),
+            ("Generate PDF review checklist", [py, "generate_pdf_review_checklist.py"], ROOT),
+        ]
+    )
+    return steps
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Run Drawform quality checks.")
     parser.add_argument(
         "--python",
         default=None,
         help="Python executable used for subprocess runs (defaults to local .venv if present).",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("fast", "full"),
+        default="full",
+        help="fast = unit/integration checks only, full = fast + view regression + stability + checklist.",
     )
     parser.add_argument(
         "--update-golden",
@@ -70,38 +120,12 @@ def main(argv=None) -> int:
     args = parse_args(argv)
     py = resolve_python(args.python)
     print(f"[quality-gate] Python: {py}")
-
-    steps: list[tuple[str, list[str], Path]] = [
-        ("Norm profile unit tests", [py, "-m", "unittest", "test_norm_profile.py"], ROOT),
-        ("API endpoint tests", [py, "-m", "unittest", "test_api_endpoints.py"], ROOT),
-    ]
-
-    if args.update_golden:
-        steps.append(
-            (
-                "Update golden baseline",
-                [py, "test_views.py", "--update-golden"],
-                ROOT,
-            )
-        )
-
-    steps.extend(
-        [
-            ("View regression", [py, "test_views.py", "--sample-set", "baseline"], ROOT),
-            (
-                "View stability loop",
-                [
-                    py,
-                    "test_views.py",
-                    "--sample-set",
-                    "baseline",
-                    "--stability-runs",
-                    str(max(1, args.stability_runs)),
-                ],
-                ROOT,
-            ),
-            ("Generate PDF review checklist", [py, "generate_pdf_review_checklist.py"], ROOT),
-        ]
+    print(f"[quality-gate] Mode: {args.mode}")
+    steps = build_steps(
+        py,
+        mode=args.mode,
+        update_golden=args.update_golden,
+        stability_runs=args.stability_runs,
     )
 
     failed = 0

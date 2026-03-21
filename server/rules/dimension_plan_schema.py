@@ -78,4 +78,5 @@ class DimensionPlan(BaseModel):
     datum_system: DatumSystem = Field(default_factory=DatumSystem)
     views: list[ViewPlan] = []
     process_notes: list[ProcessNote] = []
+    policy_hints: dict = Field(default_factory=dict)
     overrides_applied: list[dict] = []

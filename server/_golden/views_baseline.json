@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-28T11:26:05+00:00",
+  "generated_at": "2026-03-10T18:51:07+00:00",
   "parts": {
     "10x10x10": {
       "alignment": {
@@ -17,7 +17,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 3,
+        "view_count": 4
+      },
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -38,8 +44,8 @@
             65.5
           ],
           "paper_size": [
-            67.44,
-            67.44
+            82.09,
+            82.09
           ],
           "rotation_deg": 0
         },
@@ -49,8 +55,8 @@
             176.5
           ],
           "paper_size": [
-            71.53,
-            82.59
+            80.75,
+            93.24
           ],
           "rotation_deg": 0
         },
@@ -60,8 +66,8 @@
             65.5
           ],
           "paper_size": [
-            67.44,
-            67.44
+            82.09,
+            82.09
           ],
           "rotation_deg": 0
         },
@@ -71,8 +77,8 @@
             176.5
           ],
           "paper_size": [
-            67.44,
-            67.44
+            82.09,
+            82.09
           ],
           "rotation_deg": 0
         }
@@ -94,7 +100,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 3,
+        "view_count": 4
+      },
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -115,8 +127,8 @@
             65.5
           ],
           "paper_size": [
-            136.73,
-            36.46
+            160.28,
+            42.74
           ],
           "rotation_deg": 90
         },
@@ -126,19 +138,19 @@
             176.5
           ],
           "paper_size": [
-            91.85,
-            60.01
+            107.67,
+            70.34
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
             310.0,
-            60.94
+            60.16
           ],
           "paper_size": [
-            36.46,
-            27.35
+            42.74,
+            32.06
           ],
           "rotation_deg": 0
         },
@@ -148,8 +160,8 @@
             176.5
           ],
           "paper_size": [
-            136.73,
-            27.35
+            160.28,
+            32.06
           ],
           "rotation_deg": 0
         }
@@ -171,7 +183,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 7,
+        "view_count": 4
+      },
       "features": {
         "bend_radius_mm": 4.0,
         "hole_count": 2,
@@ -192,8 +210,8 @@
             65.5
           ],
           "paper_size": [
-            94.51,
-            63.0
+            120.91,
+            80.6
           ],
           "rotation_deg": 90
         },
@@ -203,8 +221,8 @@
             176.5
           ],
           "paper_size": [
-            83.53,
-            69.93
+            106.87,
+            89.47
           ],
           "rotation_deg": 0
         },
@@ -214,8 +232,8 @@
             65.5
           ],
           "paper_size": [
-            63.0,
-            63.0
+            80.6,
+            80.6
           ],
           "rotation_deg": 0
         },
@@ -225,8 +243,8 @@
             176.5
           ],
           "paper_size": [
-            94.51,
-            63.0
+            120.91,
+            80.6
           ],
           "rotation_deg": 0
         }
@@ -248,7 +266,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 7,
+        "view_count": 4
+      },
       "features": {
         "bend_radius_mm": 6.0,
         "hole_count": 8,
@@ -269,8 +293,8 @@
             65.5
           ],
           "paper_size": [
-            115.7,
-            75.73
+            123.15,
+            80.6
           ],
           "rotation_deg": 90
         },
@@ -280,19 +304,19 @@
             176.5
           ],
           "paper_size": [
-            101.52,
-            84.38
+            108.05,
+            89.81
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
             310.0,
-            64.62
+            64.38
           ],
           "paper_size": [
-            75.73,
-            73.63
+            80.6,
+            78.37
           ],
           "rotation_deg": 0
         },
@@ -302,8 +326,8 @@
             176.5
           ],
           "paper_size": [
-            115.7,
-            73.63
+            123.15,
+            78.37
           ],
           "rotation_deg": 0
         }
@@ -325,12 +349,18 @@
         "longest_axis": "Z",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "turning",
+        "process_note_count": 1,
+        "total_dim_count": 2,
+        "view_count": 4
+      },
       "features": {
-        "bend_radius_mm": 25.0,
-        "hole_count": 2,
-        "hole_diameter_mm": 50.0,
-        "hole_pitch_mm": 80.0,
+        "bend_radius_mm": null,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
         "ok": true
       },
       "quality": {
@@ -346,8 +376,8 @@
             65.5
           ],
           "paper_size": [
-            100.81,
-            63.0
+            125.46,
+            78.41
           ],
           "rotation_deg": 0
         },
@@ -357,8 +387,8 @@
             176.5
           ],
           "paper_size": [
-            129.23,
-            99.07
+            106.85,
+            91.02
           ],
           "rotation_deg": 0
         },
@@ -368,19 +398,19 @@
             65.5
           ],
           "paper_size": [
-            100.81,
-            63.0
+            125.46,
+            78.41
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            91.1,
+            86.48,
             176.5
           ],
           "paper_size": [
-            63.0,
-            63.0
+            78.41,
+            78.41
           ],
           "rotation_deg": 0
         }
@@ -402,7 +432,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "sheet_metal",
+        "process_note_count": 4,
+        "total_dim_count": 8,
+        "view_count": 5
+      },
       "features": {
         "bend_radius_mm": 5.1,
         "hole_count": 5,
@@ -414,50 +450,50 @@
         "centerline_total": 5,
         "fits_inside_drawing_area": true,
         "overflow_max_mm": 0.0,
-        "scale_reduction_needed": false
+        "scale_reduction_needed": true
       },
       "views": {
         "Front": {
           "center": [
-            110.0,
-            65.5
+            138.84,
+            66.66
           ],
           "paper_size": [
-            110.83,
-            59.68
+            181.94,
+            97.97
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            310.0,
-            176.5
+            350.71,
+            199.04
           ],
           "paper_size": [
-            65.56,
-            74.4
+            57.4,
+            65.13
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            310.0,
-            65.5
+            286.93,
+            66.66
           ],
           "paper_size": [
-            12.79,
-            59.68
+            20.99,
+            97.97
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            110.0,
-            176.5
+            138.84,
+            182.78
           ],
           "paper_size": [
-            110.83,
-            12.79
+            181.94,
+            20.99
           ],
           "rotation_deg": 270
         }
@@ -479,7 +515,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "sheet_metal",
+        "process_note_count": 2,
+        "total_dim_count": 8,
+        "view_count": 5
+      },
       "features": {
         "bend_radius_mm": 5.0,
         "hole_count": 7,
@@ -496,45 +538,45 @@
       "views": {
         "Front": {
           "center": [
-            110.0,
-            65.5
+            86.29,
+            78.29
           ],
           "paper_size": [
-            74.8,
-            74.8
+            116.59,
+            116.59
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            310.0,
-            176.5
+            218.2,
+            193.5
           ],
           "paper_size": [
-            43.64,
-            53.5
+            36.27,
+            44.48
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            310.0,
-            65.5
+            177.09,
+            78.29
           ],
           "paper_size": [
-            7.48,
-            74.8
+            11.66,
+            116.59
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            110.0,
-            176.5
+            86.29,
+            191.26
           ],
           "paper_size": [
-            74.8,
-            7.48
+            116.59,
+            11.66
           ],
           "rotation_deg": 90
         }
@@ -556,7 +598,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 8,
+        "view_count": 4
+      },
       "features": {
         "bend_radius_mm": 55.0,
         "hole_count": 11,
@@ -577,8 +625,8 @@
             65.5
           ],
           "paper_size": [
-            119.65,
-            62.67
+            153.59,
+            80.45
           ],
           "rotation_deg": 90
         },
@@ -588,8 +636,8 @@
             176.5
           ],
           "paper_size": [
-            132.5,
-            99.9
+            109.94,
+            93.24
           ],
           "rotation_deg": 0
         },
@@ -599,8 +647,8 @@
             65.5
           ],
           "paper_size": [
-            62.67,
-            62.67
+            80.45,
+            80.45
           ],
           "rotation_deg": 0
         },
@@ -610,8 +658,8 @@
             176.5
           ],
           "paper_size": [
-            119.65,
-            62.67
+            153.59,
+            80.45
           ],
           "rotation_deg": 0
         }
@@ -633,7 +681,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 3,
+        "view_count": 4
+      },
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -654,8 +708,8 @@
             65.5
           ],
           "paper_size": [
-            85.29,
-            42.65
+            127.51,
+            63.76
           ],
           "rotation_deg": 90
         },
@@ -665,19 +719,19 @@
             176.5
           ],
           "paper_size": [
-            67.85,
-            78.35
+            80.75,
+            93.24
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
             310.0,
-            76.16
+            81.44
           ],
           "paper_size": [
-            42.65,
-            63.97
+            63.76,
+            95.64
           ],
           "rotation_deg": 0
         },
@@ -687,8 +741,8 @@
             176.5
           ],
           "paper_size": [
-            85.29,
-            63.97
+            127.51,
+            95.64
           ],
           "rotation_deg": 0
         }
@@ -710,7 +764,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 3,
+        "view_count": 4
+      },
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -731,8 +791,8 @@
             65.5
           ],
           "paper_size": [
-            67.44,
-            33.72
+            95.73,
+            47.87
           ],
           "rotation_deg": 90
         },
@@ -742,8 +802,8 @@
             176.5
           ],
           "paper_size": [
-            53.65,
-            72.27
+            69.21,
+            93.24
           ],
           "rotation_deg": 0
         },
@@ -753,8 +813,8 @@
             65.5
           ],
           "paper_size": [
-            67.44,
-            33.72
+            95.73,
+            47.87
           ],
           "rotation_deg": 270
         },
@@ -764,8 +824,8 @@
             176.5
           ],
           "paper_size": [
-            67.44,
-            67.44
+            95.73,
+            95.73
           ],
           "rotation_deg": 180
         }
@@ -787,7 +847,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "sheet_metal",
+        "process_note_count": 2,
+        "total_dim_count": 8,
+        "view_count": 5
+      },
       "features": {
         "bend_radius_mm": 8.0,
         "hole_count": 11,
@@ -799,50 +865,50 @@
         "centerline_total": 15,
         "fits_inside_drawing_area": true,
         "overflow_max_mm": 0.0,
-        "scale_reduction_needed": false
+        "scale_reduction_needed": true
       },
       "views": {
         "Front": {
           "center": [
-            110.0,
-            65.5
+            152.64,
+            69.26
           ],
           "paper_size": [
-            106.4,
-            59.85
+            180.32,
+            101.43
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            310.0,
-            176.5
+            338.35,
+            198.91
           ],
           "paper_size": [
-            58.54,
-            70.45
+            52.92,
+            63.68
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            310.0,
-            65.5
+            286.92,
+            69.26
           ],
           "paper_size": [
-            3.99,
-            59.85
+            6.76,
+            101.43
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            110.0,
-            176.5
+            152.64,
+            181.15
           ],
           "paper_size": [
-            106.4,
-            3.99
+            180.32,
+            6.76
           ],
           "rotation_deg": 270
         }
@@ -864,7 +930,13 @@
         "longest_axis": "Y",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "sheet_metal",
+        "process_note_count": 4,
+        "total_dim_count": 8,
+        "view_count": 5
+      },
       "features": {
         "bend_radius_mm": 16.155,
         "hole_count": 2,
@@ -885,8 +957,8 @@
             65.5
           ],
           "paper_size": [
-            130.81,
-            21.8
+            156.29,
+            26.05
           ],
           "rotation_deg": 90
         },
@@ -896,8 +968,8 @@
             176.5
           ],
           "paper_size": [
-            34.29,
-            97.68
+            31.96,
+            91.02
           ],
           "rotation_deg": 0
         },
@@ -907,8 +979,8 @@
             65.5
           ],
           "paper_size": [
-            43.6,
-            21.8
+            52.1,
+            26.05
           ],
           "rotation_deg": 270
         },
@@ -918,8 +990,8 @@
             176.5
           ],
           "paper_size": [
-            130.81,
-            43.6
+            156.29,
+            52.1
           ],
           "rotation_deg": 270
         }
@@ -941,7 +1013,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 3,
+        "view_count": 4
+      },
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -962,8 +1040,8 @@
             65.5
           ],
           "paper_size": [
-            105.01,
-            21.0
+            159.39,
+            31.88
           ],
           "rotation_deg": 90
         },
@@ -973,19 +1051,19 @@
             176.5
           ],
           "paper_size": [
-            66.83,
-            77.16
+            80.75,
+            93.24
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
             310.0,
-            86.5
+            97.38
           ],
           "paper_size": [
-            21.0,
-            63.0
+            31.88,
+            95.64
           ],
           "rotation_deg": 0
         },
@@ -995,8 +1073,8 @@
             176.5
           ],
           "paper_size": [
-            105.01,
-            63.0
+            159.39,
+            95.64
           ],
           "rotation_deg": 0
         }
@@ -1018,12 +1096,18 @@
         "longest_axis": "Z",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "turning",
+        "process_note_count": 1,
+        "total_dim_count": 2,
+        "view_count": 4
+      },
       "features": {
-        "bend_radius_mm": 15.0,
-        "hole_count": 3,
-        "hole_diameter_mm": 25.0,
-        "hole_pitch_mm": 100.0,
+        "bend_radius_mm": null,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
         "ok": true
       },
       "quality": {
@@ -1039,8 +1123,8 @@
             65.5
           ],
           "paper_size": [
-            130.81,
-            39.24
+            156.29,
+            46.89
           ],
           "rotation_deg": 0
         },
@@ -1050,8 +1134,8 @@
             176.5
           ],
           "paper_size": [
-            109.21,
-            75.45
+            103.6,
+            74.6
           ],
           "rotation_deg": 0
         },
@@ -1061,19 +1145,19 @@
             65.5
           ],
           "paper_size": [
-            130.81,
-            39.24
+            156.29,
+            46.89
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            64.22,
+            55.3,
             176.5
           ],
           "paper_size": [
-            39.24,
-            39.24
+            46.89,
+            46.89
           ],
           "rotation_deg": 0
         }
@@ -1095,7 +1179,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "sheet_metal",
+        "process_note_count": 1,
+        "total_dim_count": 4,
+        "view_count": 5
+      },
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -1107,50 +1197,50 @@
         "centerline_total": 0,
         "fits_inside_drawing_area": true,
         "overflow_max_mm": 0.0,
-        "scale_reduction_needed": false
+        "scale_reduction_needed": true
       },
       "views": {
         "Front": {
           "center": [
-            110.0,
-            65.5
+            148.85,
+            66.53
           ],
           "paper_size": [
-            144.19,
-            72.09
+            194.34,
+            97.17
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            310.0,
-            176.5
+            348.21,
+            199.86
           ],
           "paper_size": [
-            77.61,
-            88.96
+            55.79,
+            63.95
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            310.0,
-            65.5
+            295.85,
+            66.53
           ],
           "paper_size": [
-            2.16,
-            72.09
+            2.92,
+            97.17
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            110.0,
-            176.5
+            148.85,
+            178.86
           ],
           "paper_size": [
-            144.19,
-            2.16
+            194.34,
+            2.92
           ],
           "rotation_deg": 90
         }
@@ -1172,7 +1262,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "sheet_metal",
+        "process_note_count": 2,
+        "total_dim_count": 6,
+        "view_count": 5
+      },
       "features": {
         "bend_radius_mm": 8.0,
         "hole_count": 1,
@@ -1183,51 +1279,51 @@
       "quality": {
         "centerline_total": 1,
         "fits_inside_drawing_area": true,
-        "overflow_max_mm": 0.0,
-        "scale_reduction_needed": false
+        "overflow_max_mm": 0.162,
+        "scale_reduction_needed": true
       },
       "views": {
         "Front": {
           "center": [
-            110.0,
-            65.5
+            140.77,
+            65.48
           ],
           "paper_size": [
-            118.48,
-            59.24
+            191.84,
+            95.92
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            310.0,
-            176.5
+            353.89,
+            199.79
           ],
           "paper_size": [
-            67.02,
-            74.97
+            57.88,
+            64.74
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            310.0,
-            65.5
+            293.81,
+            65.48
           ],
           "paper_size": [
-            7.9,
-            59.24
+            12.79,
+            95.92
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            110.0,
-            176.5
+            140.77,
+            179.74
           ],
           "paper_size": [
-            118.48,
-            7.9
+            191.84,
+            12.79
           ],
           "rotation_deg": 90
         }
@@ -1249,12 +1345,18 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "turning",
+        "process_note_count": 1,
+        "total_dim_count": 2,
+        "view_count": 4
+      },
       "features": {
-        "bend_radius_mm": 32.0,
-        "hole_count": 7,
-        "hole_diameter_mm": 36.0,
-        "hole_pitch_mm": 250.0,
+        "bend_radius_mm": null,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
         "ok": true
       },
       "quality": {
@@ -1270,8 +1372,8 @@
             65.5
           ],
           "paper_size": [
-            130.81,
-            33.49
+            156.29,
+            40.01
           ],
           "rotation_deg": 90
         },
@@ -1281,8 +1383,8 @@
             176.5
           ],
           "paper_size": [
-            94.87,
-            62.71
+            96.13,
+            64.96
           ],
           "rotation_deg": 0
         },
@@ -1292,8 +1394,8 @@
             65.5
           ],
           "paper_size": [
-            33.49,
-            33.49
+            40.01,
+            40.01
           ],
           "rotation_deg": 0
         },
@@ -1303,8 +1405,8 @@
             176.5
           ],
           "paper_size": [
-            130.81,
-            33.49
+            156.29,
+            40.01
           ],
           "rotation_deg": 0
         }
@@ -1326,7 +1428,13 @@
         "longest_axis": "Y",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 3,
+        "view_count": 4
+      },
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -1347,8 +1455,8 @@
             65.5
           ],
           "paper_size": [
-            100.81,
-            63.0
+            128.97,
+            80.6
           ],
           "rotation_deg": 90
         },
@@ -1358,8 +1466,8 @@
             176.5
           ],
           "paper_size": [
-            53.46,
-            92.6
+            53.83,
+            93.24
           ],
           "rotation_deg": 0
         },
@@ -1369,8 +1477,8 @@
             65.5
           ],
           "paper_size": [
-            63.0,
-            63.0
+            80.6,
+            80.6
           ],
           "rotation_deg": 270
         },
@@ -1380,8 +1488,8 @@
             176.5
           ],
           "paper_size": [
-            100.81,
-            63.0
+            128.97,
+            80.6
           ],
           "rotation_deg": 270
         }
@@ -1403,7 +1511,13 @@
         "longest_axis": "Z",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 3,
+        "view_count": 4
+      },
       "features": {
         "bend_radius_mm": null,
         "hole_count": 0,
@@ -1424,8 +1538,8 @@
             65.5
           ],
           "paper_size": [
-            136.73,
-            6.84
+            160.28,
+            8.01
           ],
           "rotation_deg": 0
         },
@@ -1435,8 +1549,8 @@
             176.5
           ],
           "paper_size": [
-            76.14,
-            48.15
+            89.25,
+            56.44
           ],
           "rotation_deg": 0
         },
@@ -1446,19 +1560,19 @@
             65.5
           ],
           "paper_size": [
-            136.73,
-            6.84
+            160.28,
+            8.01
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            45.05,
+            33.87,
             176.5
           ],
           "paper_size": [
-            6.84,
-            6.84
+            8.01,
+            8.01
           ],
           "rotation_deg": 0
         }
@@ -1480,7 +1594,13 @@
         "longest_axis": "X",
         "method": "first_angle_projection"
       },
-      "dimension_plan_summary": null,
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 7,
+        "view_count": 4
+      },
       "features": {
         "bend_radius_mm": 5.0,
         "hole_count": 15,
@@ -1501,8 +1621,8 @@
             65.5
           ],
           "paper_size": [
-            133.86,
-            39.13
+            160.28,
+            46.85
           ],
           "rotation_deg": 90
         },
@@ -1512,19 +1632,19 @@
             176.5
           ],
           "paper_size": [
-            91.74,
-            90.8
+            94.21,
+            93.24
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
             310.0,
-            76.83
+            79.06
           ],
           "paper_size": [
-            39.13,
-            61.78
+            46.85,
+            73.98
           ],
           "rotation_deg": 0
         },
@@ -1534,8 +1654,8 @@
             176.5
           ],
           "paper_size": [
-            133.86,
-            61.78
+            160.28,
+            73.98
           ],
           "rotation_deg": 0
         }

@@ -87,13 +87,68 @@ def collect_circle_data(shape: Part.Shape, thickness_axis: str):
         bucket["diameters"].append(diameter)
         all_diameters.append(diameter)
 
-    unique_centers: list[tuple[App.Vector, float]] = []
+    circle_groups: list[dict[str, object]] = []
     for item in grouped.values():
         center = item["center"]
-        diameters = item["diameters"]
-        mean_diameter = float(sum(diameters) / max(len(diameters), 1))
-        unique_centers.append((center, mean_diameter))
-    return unique_centers, all_diameters
+        diameters = sorted({
+            round(float(diameter), 5)
+            for diameter in item["diameters"]
+            if float(diameter) > 1e-6
+        })
+        if not diameters:
+            continue
+        circle_groups.append(
+            {
+                "center": center,
+                "diameters": diameters,
+            }
+        )
+    return circle_groups, all_diameters
+
+
+def _transverse_axes(longest_axis: str) -> list[str]:
+    return [axis for axis in ("X", "Y", "Z") if axis != longest_axis]
+
+
+def _looks_like_rotational_profile(
+    circle_groups: list[dict[str, object]],
+    dims: dict[str, float],
+    longest_axis: str,
+    flat_ratio: float,
+    cylindrical_radii: list[float],
+) -> bool:
+    """Detect axisymmetric turning parts so outer profile circles are not misread as holes."""
+    if flat_ratio < 0.55 or len(circle_groups) < 2 or not cylindrical_radii:
+        return False
+
+    transverse_axes = _transverse_axes(longest_axis)
+    if len(transverse_axes) != 2:
+        return False
+
+    cross_dims = [max(0.0, float(dims.get(axis, 0.0))) for axis in transverse_axes]
+    cross_max = max(cross_dims) if cross_dims else 0.0
+    cross_min = min(cross_dims) if cross_dims else 0.0
+    if cross_max <= 0.0 or cross_min / cross_max < 0.85:
+        return False
+
+    max_circle_diameter = max(
+        max(group.get("diameters") or [0.0]) for group in circle_groups
+    )
+    if max_circle_diameter < cross_max * 0.75:
+        return False
+
+    center_tol = max(0.5, cross_max * 0.02)
+    for axis in transverse_axes:
+        coords = [
+            vec_axis_value(group["center"], axis)
+            for group in circle_groups
+            if isinstance(group.get("center"), App.Vector)
+        ]
+        if len(coords) != len(circle_groups):
+            return False
+        if max(coords) - min(coords) > center_tol:
+            return False
+    return True
 
 
 def collect_cylindrical_radii(shape: Part.Shape) -> list[float]:
@@ -427,12 +482,35 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
     flat_ratio = ordered_axes[2][1] / mid
     is_flat = flat_ratio < 0.3
 
-    unique_centers, all_diameters = collect_circle_data(shape, thickness_axis)
-    hole_count = len(unique_centers)
+    circle_groups, all_diameters = collect_circle_data(shape, thickness_axis)
+    face_types = classify_face_types(shape)
+    cylindrical_radii = collect_cylindrical_radii(shape)
+    rotational_profile = _looks_like_rotational_profile(
+        circle_groups,
+        dims,
+        longest_axis,
+        flat_ratio,
+        cylindrical_radii,
+    )
+    if rotational_profile:
+        hole_centers = []
+        effective_diameters = []
+    else:
+        hole_centers = []
+        for group in circle_groups:
+            center = group.get("center")
+            diameters = group.get("diameters") or []
+            if not isinstance(center, App.Vector) or not diameters:
+                continue
+            mean_diameter = float(sum(float(value) for value in diameters) / len(diameters))
+            hole_centers.append((center, mean_diameter))
+        effective_diameters = list(all_diameters)
+
+    hole_count = len(hole_centers)
 
     hole_diameter_mm = None
-    if all_diameters:
-        hole_diameter_mm = float(statistics.median(all_diameters))
+    if effective_diameters:
+        hole_diameter_mm = float(statistics.median(effective_diameters))
 
     hole_groups = [
         {
@@ -443,9 +521,9 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
             },
             "diameter_mm": round(float(diameter), 5),
         }
-        for center, diameter in unique_centers
+        for center, diameter in hole_centers
     ]
-    unique_diameters = sorted({round(float(diameter), 4) for _, diameter in unique_centers})
+    unique_diameters = sorted({round(float(diameter), 4) for _, diameter in hole_centers})
     thread_core_diameter_mm = None
     if len(unique_diameters) >= 2:
         smallest = float(min(unique_diameters))
@@ -457,7 +535,7 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
     # Suppress thread detection on thin sheet metal parts: a thread needs
     # minimum engagement depth ≈ nominal_diameter * 0.5. If measured wall
     # thickness is known and too thin, the "thread" is actually a through-hole.
-    measured_thickness_for_thread = measure_wall_thickness(shape)
+    measured_thickness_for_thread = None if rotational_profile else measure_wall_thickness(shape)
     if thread_label and measured_thickness_for_thread is not None:
         # Extract nominal diameter from thread label (e.g. "M8" -> 8.0)
         try:
@@ -471,24 +549,24 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
 
     hole_pitch_mm = None
     if hole_count >= 2:
-        positions = [vec_axis_value(center, longest_axis) for center, _ in unique_centers]
+        positions = [vec_axis_value(center, longest_axis) for center, _ in hole_centers]
         span = max(positions) - min(positions)
         if span > 1e-4:
             hole_pitch_mm = float(span)
 
-    cylindrical_radii = collect_cylindrical_radii(shape)
     bend_radius_mm = None
-    if cylindrical_radii:
+    if cylindrical_radii and not rotational_profile:
         thickness = max(ordered_axes[2][1], 1e-6)
         filtered = [radius for radius in cylindrical_radii if radius >= thickness * 0.5]
         candidates = filtered or cylindrical_radii
         bend_radius_mm = float(min(candidates))
 
     # Face-type classification for sheet metal detection
-    face_types = classify_face_types(shape)
     total_faces = max(face_types["total"], 1)
     plane_fraction = face_types["plane"] / total_faces
     is_sheet_metal_by_faces = (
+        not rotational_profile
+        and
         plane_fraction >= 0.60           # predominantly flat faces
         and face_types["cylinder"] >= 1  # at least one bend (cylinder face)
         and face_types["cone"] <= 2      # no complex machined surfaces
@@ -496,10 +574,12 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
     )
 
     # Actual wall thickness via anti-parallel plane face pair distances
-    measured_thickness_mm = measure_wall_thickness(shape)
+    measured_thickness_mm = None if rotational_profile else measured_thickness_for_thread
 
     # Flat pattern computation (for sheet metal parts)
-    flat_pattern = compute_flat_pattern(shape, thickness_axis, measured_thickness_mm, k_factor_override)
+    flat_pattern = None
+    if not rotational_profile:
+        flat_pattern = compute_flat_pattern(shape, thickness_axis, measured_thickness_mm, k_factor_override)
 
     return {
         "ok": True,
@@ -509,6 +589,7 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
         "thickness_axis": thickness_axis,
         "flat_ratio": round(flat_ratio, 5),
         "is_flat": is_flat,
+        "rotational_profile": rotational_profile,
         "hole_count": hole_count,
         "hole_diameter_mm": round(hole_diameter_mm, 5) if hole_diameter_mm else None,
         "hole_pitch_mm": round(hole_pitch_mm, 5) if hole_pitch_mm else None,

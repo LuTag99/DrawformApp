@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import datetime as dt
 import hashlib
 import json
@@ -9,6 +10,7 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -20,17 +22,25 @@ from uuid import uuid4
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
+from job_persistence import load_job_map, save_job_map
+
 ROOT = Path(__file__).resolve().parent
 FREECAD_SCRIPT = ROOT / "freecad" / "step_to_pdf.py"
 FREECAD_UNFOLD_SCRIPT = ROOT / "freecad" / "step_unfold.py"
 FREECAD_FEATURE_SCRIPT = ROOT / "freecad" / "step_feature_probe.py"
+JOB_STATE_DIR = ROOT / "_debug" / "job_state"
+ANALYZER_JOBS_PATH = Path(
+    os.getenv("DRAWFORM_ANALYZER_JOBS_PATH", str(JOB_STATE_DIR / "analyzer_jobs.json"))
+)
+RECONSTRUCT_JOBS_PATH = Path(
+    os.getenv("DRAWFORM_RECONSTRUCT_JOBS_PATH", str(JOB_STATE_DIR / "reconstruct_jobs.json"))
+)
 FREECAD_TIMEOUT_SECONDS = int(os.getenv("DRAWFORM_FREECAD_TIMEOUT_SECONDS", "180"))
 ANALYZER_WORKER_DELAY_SECONDS = float(os.getenv("DRAWFORM_ANALYZER_DELAY_SECONDS", "1.1"))
 ANALYZER_FREECAD_TIMEOUT_SECONDS = int(os.getenv("DRAWFORM_ANALYZER_FREECAD_TIMEOUT_SECONDS", "90"))
 ANALYZER_UNITS = {"mm", "cm", "inch"}
 ANALYZER_FEATURE_EXTENSIONS = {".step", ".stp", ".iges", ".igs", ".stl", ".brep"}
 
-ANALYZER_JOBS: Dict[str, Dict[str, Any]] = {}
 ANALYZER_LOCK = threading.Lock()
 
 EXPORT_DEFAULT_STANDARD = "DIN EN ISO 128/129-1"
@@ -71,6 +81,40 @@ app = FastAPI(title="Drawform Local API", version="0.1.0")
 
 class MetadataValidationError(ValueError):
     """Raised when export metadata violates the supported norm profile."""
+
+
+def _restore_job_map(path: Path, *, interruption_message: str) -> Dict[str, Dict[str, Any]]:
+    jobs = load_job_map(path)
+    if not jobs:
+        return {}
+
+    changed = False
+    for job in jobs.values():
+        if str(job.get("status") or "") in {"pending", "processing"}:
+            job["status"] = "failed"
+            job["error"] = job.get("error") or interruption_message
+            changed = True
+
+    if changed:
+        try:
+            save_job_map(path, jobs)
+        except OSError as error:
+            sys.stderr.write(f"[drawform] failed to persist restored jobs for {path}: {error}\n")
+
+    return jobs
+
+
+def _persist_job_map(path: Path, jobs: Dict[str, Dict[str, Any]]) -> None:
+    try:
+        save_job_map(path, jobs)
+    except OSError as error:
+        sys.stderr.write(f"[drawform] failed to persist jobs for {path}: {error}\n")
+
+
+ANALYZER_JOBS: Dict[str, Dict[str, Any]] = _restore_job_map(
+    ANALYZER_JOBS_PATH,
+    interruption_message="Backend restart interrupted the analyzer job.",
+)
 
 
 def resolve_freecad_cmd() -> Optional[Path]:
@@ -243,11 +287,13 @@ def build_metadata(
     unit: Optional[str] = None,
     sheet: Optional[str] = None,
     k_factor: Optional[float] = None,
+    detail_level: Optional[int] = None,
 ) -> Dict[str, Any]:
     today = dt.date.today().strftime("%d.%m.%Y")
     normalized_scale = _normalize_scale(scale)
     normalized_unit = _normalize_unit(unit)
     normalized_sheet = _normalize_sheet(sheet)
+    normalized_detail_level = max(1, min(3, int(detail_level))) if detail_level is not None else 1
     return {
         "title": _normalize_text(title, "Bauteilzeichnung", max_len=80, field_name="title"),
         "drawing_no": _normalize_drawing_no(drawing_no),
@@ -263,6 +309,7 @@ def build_metadata(
         "projection": _normalize_projection(projection),
         "general_tolerance": _normalize_general_tolerance(general_tolerance),
         "k_factor": float(k_factor) if k_factor is not None and 0.1 <= float(k_factor) <= 0.8 else None,
+        "detail_level": normalized_detail_level,
     }
 
 
@@ -467,7 +514,7 @@ def build_measurement_templates(source_type: str, file_name: str) -> list[Dict[s
         base[2]["label"] = "Featureabstand"
         base[2]["explanation"] = "Abstand visuell erkannter Merkmale."
     elif "slot" in lower_name:
-        base[2]["label"] = "Langlochabstand"
+        base[2]["label"] = "Langlochmaß"
     elif "sheet" in lower_name or "blech" in lower_name:
         base[3]["label"] = "Biegekante"
         base[3]["tolerance"] = "+/-0.10"
@@ -676,7 +723,9 @@ def update_analyzer_job(job_id: str, **changes: Any) -> Dict[str, Any]:
             raise KeyError(job_id)
         updated = {**current, **changes}
         ANALYZER_JOBS[job_id] = updated
-        return dict(updated)
+        snapshot = copy.deepcopy(ANALYZER_JOBS)
+    _persist_job_map(ANALYZER_JOBS_PATH, snapshot)
+    return dict(updated)
 
 
 def process_analyzer_job(job_id: str, payload: bytes):
@@ -763,11 +812,14 @@ async def create_analyzer_job(
         "size": len(payload),
         "metadata": metadata,
         "sourceType": source_type,
+        "executionMode": "backend",
         "result": None,
         "error": None,
     }
     with ANALYZER_LOCK:
         ANALYZER_JOBS[job_id] = job
+        snapshot = copy.deepcopy(ANALYZER_JOBS)
+    _persist_job_map(ANALYZER_JOBS_PATH, snapshot)
 
     background_tasks.add_task(process_analyzer_job, job_id, payload)
     return dict(job)
@@ -789,6 +841,7 @@ async def export_step_to_pdf(
     unit: Optional[str] = Form(None),
     sheet: Optional[str] = Form(None),
     k_factor: Optional[float] = Form(None),
+    detail_level: Optional[int] = Form(None),
 ) -> Response:
     if format.lower() != "pdf":
         raise HTTPException(status_code=400, detail="Only PDF is supported right now.")
@@ -814,6 +867,7 @@ async def export_step_to_pdf(
             unit=unit,
             sheet=sheet,
             k_factor=k_factor,
+            detail_level=detail_level,
         )
     except MetadataValidationError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -856,7 +910,7 @@ async def export_step_to_pdf(
                 )
                 export_meta["features"] = probe_result
                 export_meta["dimension_plan"] = dse_plan.model_dump()
-        except (ValueError, KeyError, TypeError) as exc:
+        except Exception as exc:
             import logging
             logging.getLogger("drawform.dse").warning("DSE failed (non-fatal): %s", exc)
 
@@ -994,7 +1048,10 @@ async def export_step_to_dxf(
 # Foto → STL → STEP → Zeichnung  (/api/reconstruct)
 # =========================================================================== #
 
-RECONSTRUCT_JOBS: Dict[str, Dict[str, Any]] = {}
+RECONSTRUCT_JOBS: Dict[str, Dict[str, Any]] = _restore_job_map(
+    RECONSTRUCT_JOBS_PATH,
+    interruption_message="Backend restart interrupted the reconstruct job.",
+)
 RECONSTRUCT_LOCK = threading.Lock()
 RECONSTRUCT_PIPELINE_SCRIPT = ROOT / "freecad" / "reconstruct_pipeline.py"
 RECONSTRUCT_STL_TO_STEP_SCRIPT = ROOT / "freecad" / "stl_to_step.py"
@@ -1014,7 +1071,9 @@ def _update_reconstruct_job(job_id: str, **changes: Any) -> Dict[str, Any]:
             raise KeyError(job_id)
         updated = {**current, **changes}
         RECONSTRUCT_JOBS[job_id] = updated
-        return dict(updated)
+        snapshot = copy.deepcopy(RECONSTRUCT_JOBS)
+    _persist_job_map(RECONSTRUCT_JOBS_PATH, snapshot)
+    return dict(updated)
 
 
 def _run_reconstruct_pipeline(
@@ -1236,6 +1295,8 @@ async def create_reconstruct_job(
     }
     with RECONSTRUCT_LOCK:
         RECONSTRUCT_JOBS[job_id] = job
+        snapshot = copy.deepcopy(RECONSTRUCT_JOBS)
+    _persist_job_map(RECONSTRUCT_JOBS_PATH, snapshot)
 
     background_tasks.add_task(_run_reconstruct_pipeline, job_id, image_files, dims)
     return dict(job)
