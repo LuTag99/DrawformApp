@@ -1,6 +1,6 @@
 # Semester 4 — Entwicklungsroadmap DrawformApp
 
-Stand: Feb 2026 | Basis: 20/20 Baseline-Tests bestehen, FreeCAD SheetMetal Unfold integriert
+Stand: Feb 2026 (aktualisiert Maerz 2026) | Basis: 20/20 Baseline-Tests bestehen (regeneriert 2026-03-21), FreeCAD SheetMetal Unfold integriert
 
 ---
 
@@ -86,7 +86,7 @@ Zeichnungsqualität jetzt → CI härten → Docker → Auth → Foto-Pipeline �
 | 3 | Abwicklungs-SVG normalisieren: `transform="scale(1,-1)"` aus FreeCAD-Output entfernen, Koordinaten direkt umrechnen | SVG-Koordinaten müssen konsistent sein |
 | 4 | GitHub CI: `SheetMetal addon fehlt in CI` dokumentieren + Test-Skip oder CI-Step zum Addon-Download | CI grün halten auch mit Unfold-Feature |
 
-**Meilenstein M1:** `python test_views.py --sample-set baseline` → 20/20. CI auf main grün. PDFs sehen professionell aus (Abnahme durch Sichtprüfung).
+**Meilenstein M1:** `python test_views.py --sample-set baseline` → 20/20 (erreicht 2026-03-21 nach Golden-Baseline-Regenerierung). CI auf main grün. PDFs sehen professionell aus (Abnahme durch Sichtprüfung).
 
 ---
 

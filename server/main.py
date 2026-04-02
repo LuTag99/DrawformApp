@@ -5,6 +5,7 @@ import copy
 import datetime as dt
 import hashlib
 import json
+import logging
 import os
 import random
 import re
@@ -20,9 +21,15 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from job_persistence import load_job_map, save_job_map
+from rules.dimension_strategy import (
+    build_dimension_plan,
+    select_layout_profile_standalone,
+)
 
 ROOT = Path(__file__).resolve().parent
 FREECAD_SCRIPT = ROOT / "freecad" / "step_to_pdf.py"
@@ -40,6 +47,7 @@ ANALYZER_WORKER_DELAY_SECONDS = float(os.getenv("DRAWFORM_ANALYZER_DELAY_SECONDS
 ANALYZER_FREECAD_TIMEOUT_SECONDS = int(os.getenv("DRAWFORM_ANALYZER_FREECAD_TIMEOUT_SECONDS", "90"))
 ANALYZER_UNITS = {"mm", "cm", "inch"}
 ANALYZER_FEATURE_EXTENSIONS = {".step", ".stp", ".iges", ".igs", ".stl", ".brep"}
+AI_INSIGHT_MAX_SUMMARY_CHARS = int(os.getenv("DRAWFORM_AI_INSIGHT_MAX_SUMMARY_CHARS", "2000"))
 
 ANALYZER_LOCK = threading.Lock()
 
@@ -78,9 +86,36 @@ TOLERANCE_2768_RE = re.compile(r"^din\s+iso\s+2768-([fmcv])([hkl])?$", re.IGNORE
 
 app = FastAPI(title="Drawform Local API", version="0.1.0")
 
+_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:4173",
+    # Production: add deployed frontend origin here, e.g.:
+    # os.getenv("DRAWFORM_FRONTEND_ORIGIN", ""),
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o for o in _CORS_ORIGINS if o],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+ANALYZER_MAX_FILE_BYTES = int(os.getenv("DRAWFORM_ANALYZER_MAX_FILE_BYTES", str(50 * 1024 * 1024)))  # 50 MB
+EXPORT_MAX_FILE_BYTES = int(os.getenv("DRAWFORM_EXPORT_MAX_FILE_BYTES", str(100 * 1024 * 1024)))  # 100 MB
+
 
 class MetadataValidationError(ValueError):
     """Raised when export metadata violates the supported norm profile."""
+
+
+class AiInsightRequest(BaseModel):
+    statusSummary: Optional[str] = None
+
+
+class AiInsightResponse(BaseModel):
+    narrative: str
+    chips: list[str]
 
 
 def _restore_job_map(path: Path, *, interruption_message: str) -> Dict[str, Dict[str, Any]]:
@@ -288,6 +323,7 @@ def build_metadata(
     sheet: Optional[str] = None,
     k_factor: Optional[float] = None,
     detail_level: Optional[int] = None,
+    include_flat_pattern: Optional[bool] = None,
 ) -> Dict[str, Any]:
     today = dt.date.today().strftime("%d.%m.%Y")
     normalized_scale = _normalize_scale(scale)
@@ -310,6 +346,7 @@ def build_metadata(
         "general_tolerance": _normalize_general_tolerance(general_tolerance),
         "k_factor": float(k_factor) if k_factor is not None and 0.1 <= float(k_factor) <= 0.8 else None,
         "detail_level": normalized_detail_level,
+        "include_flat_pattern": True if include_flat_pattern is None else bool(include_flat_pattern),
     }
 
 
@@ -746,6 +783,63 @@ def process_analyzer_job(job_id: str, payload: bytes):
             pass
 
 
+def _normalize_status_summary(value: Optional[str]) -> str:
+    summary = str(value or "").strip()
+    if len(summary) > AI_INSIGHT_MAX_SUMMARY_CHARS:
+        return summary[:AI_INSIGHT_MAX_SUMMARY_CHARS].rstrip()
+    return summary
+
+
+def _build_ai_insight(status_summary: Optional[str]) -> AiInsightResponse:
+    summary = _normalize_status_summary(status_summary)
+    summary_lc = summary.lower()
+
+    has_failure = any(
+        marker in summary_lc
+        for marker in ("fail", "failed", "error", "timeout", "rot", "regression")
+    )
+    has_green_gate = any(
+        marker in summary_lc
+        for marker in ("20/20", "46/46", "100 tests", "passed", "ok", "green", "gruen")
+    )
+    mentions_render = any(marker in summary_lc for marker in ("render", "baseline", "test_views"))
+
+    if has_failure:
+        return AiInsightResponse(
+            narrative=(
+                "Im Status stecken Warnsignale. Schliess zuerst rote Checks, Timeouts oder "
+                "Regressionen, bevor du weitere Funktionsaenderungen aufsetzt."
+            ),
+            chips=["Handlungsbedarf", "Regression", "Review"],
+        )
+
+    if has_green_gate and mentions_render:
+        return AiInsightResponse(
+            narrative=(
+                "Fast-Gate und Render-Hinweise wirken stabil. Halte die Baseline gruen und "
+                "ziehe bei Layout-Aenderungen weiter gezielte test_views-Faelle nach."
+            ),
+            chips=["Fast Gate gruen", "Baseline stabil", "Weiterbauen"],
+        )
+
+    if has_green_gate:
+        return AiInsightResponse(
+            narrative=(
+                "Die gemeldeten Checks wirken stabil. Nutze das lokale Fast-Gate als Pflichtlauf "
+                "und ziehe Render-Regressionen nur fuer wirklich output-relevante Aenderungen nach."
+            ),
+            chips=["Checks stabil", "Quality Gate", "Naechster Schritt"],
+        )
+
+    return AiInsightResponse(
+        narrative=(
+            "Die Pipeline laeuft stabil. Aktiviere feste Quality Gates, damit wiederkehrende "
+            "CAD- und Exportaufgaben kontrolliert weiterentwickelt werden."
+        ),
+        chips=["AI Ready", "Quality Gate", "Drawform"],
+    )
+
+
 @app.get("/api/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
@@ -757,6 +851,11 @@ def last_export_log() -> Response:
     if not log_path.exists():
         raise HTTPException(status_code=404, detail="No export log found yet.")
     return Response(content=log_path.read_text(encoding="utf-8"), media_type="text/plain")
+
+
+@app.post("/api/ai-insight", response_model=AiInsightResponse)
+def ai_insight(payload: AiInsightRequest) -> AiInsightResponse:
+    return _build_ai_insight(payload.statusSummary)
 
 
 @app.get("/api/analyze")
@@ -800,7 +899,9 @@ async def create_analyzer_job(
         "views": parse_views(views),
     }
     payload = await file.read()
-    await file.close()
+
+    if len(payload) > ANALYZER_MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large (max {ANALYZER_MAX_FILE_BYTES // (1024 * 1024)} MB).")
 
     job_id = uuid4().hex
     source_type = detect_source_type(file.filename, file.content_type)
@@ -842,6 +943,7 @@ async def export_step_to_pdf(
     sheet: Optional[str] = Form(None),
     k_factor: Optional[float] = Form(None),
     detail_level: Optional[int] = Form(None),
+    include_flat_pattern: Optional[str] = Form(None),
 ) -> Response:
     if format.lower() != "pdf":
         raise HTTPException(status_code=400, detail="Only PDF is supported right now.")
@@ -868,6 +970,7 @@ async def export_step_to_pdf(
             sheet=sheet,
             k_factor=k_factor,
             detail_level=detail_level,
+            include_flat_pattern=None if include_flat_pattern is None else include_flat_pattern not in ("0", "false", "False"),
         )
     except MetadataValidationError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -880,7 +983,9 @@ async def export_step_to_pdf(
         )
 
     data = await file.read()
-    await file.close()
+
+    if len(data) > EXPORT_MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large (max {EXPORT_MAX_FILE_BYTES // (1024 * 1024)} MB).")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_root = Path(tmpdir)
@@ -892,11 +997,6 @@ async def export_step_to_pdf(
         input_path.write_bytes(data)
 
         # DSE: Run feature probe + build dimension plan before FreeCAD subprocess
-        from rules.dimension_strategy import (
-            build_dimension_plan,
-            select_layout_profile_standalone,
-        )
-
         try:
             probe_result = run_feature_probe(file.filename, data)
             if probe_result and probe_result.get("ok") is True:
@@ -911,7 +1011,6 @@ async def export_step_to_pdf(
                 export_meta["features"] = probe_result
                 export_meta["dimension_plan"] = dse_plan.model_dump()
         except Exception as exc:
-            import logging
             logging.getLogger("drawform.dse").warning("DSE failed (non-fatal): %s", exc)
 
         meta_path.write_text(
@@ -999,7 +1098,9 @@ async def export_step_to_dxf(
         )
 
     data = await file.read()
-    await file.close()
+
+    if len(data) > EXPORT_MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large (max {EXPORT_MAX_FILE_BYTES // (1024 * 1024)} MB).")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_root = Path(tmpdir)
@@ -1129,11 +1230,20 @@ def _run_reconstruct_pipeline(
         freecad_cmd = resolve_freecad_cmd()
         stl_ok = False
         if freecad_cmd and freecad_cmd.exists():
-            stl2step_result = subprocess.run(
-                [str(freecad_cmd), str(RECONSTRUCT_STL_TO_STEP_SCRIPT), stl_path, step_path],
-                capture_output=True, text=True, timeout=120,
-            )
-            stl_ok = stl2step_result.returncode == 0 and Path(step_path).exists()
+            try:
+                stl2step_result = subprocess.run(
+                    [str(freecad_cmd), str(RECONSTRUCT_STL_TO_STEP_SCRIPT), stl_path, step_path],
+                    capture_output=True, text=True, timeout=120,
+                )
+                stl_ok = stl2step_result.returncode == 0 and Path(step_path).exists()
+            except subprocess.TimeoutExpired:
+                logging.getLogger("drawform.reconstruct").warning(
+                    "STL→STEP conversion timed out after 120s for job %s", job_id,
+                )
+            except OSError as exc:
+                logging.getLogger("drawform.reconstruct").warning(
+                    "STL→STEP process error for job %s: %s", job_id, exc,
+                )
 
         # 4. STEP → PDF Zeichnung via step_to_pdf.py
         pdf_ok = False
@@ -1159,6 +1269,14 @@ def _run_reconstruct_pipeline(
                     capture_output=True, text=True, timeout=RECONSTRUCT_TIMEOUT_SECONDS, env=env,
                 )
                 pdf_ok = pdf_result.returncode == 0 and Path(pdf_path).exists()
+            except subprocess.TimeoutExpired:
+                logging.getLogger("drawform.reconstruct").warning(
+                    "STEP→PDF timed out after %ds for job %s", RECONSTRUCT_TIMEOUT_SECONDS, job_id,
+                )
+            except OSError as exc:
+                logging.getLogger("drawform.reconstruct").warning(
+                    "STEP→PDF process error for job %s: %s", job_id, exc,
+                )
             finally:
                 try:
                     os.unlink(meta_path)

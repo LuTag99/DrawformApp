@@ -77,6 +77,8 @@ def build_steps(
                 ],
                 ROOT,
             ),
+            ("Curated real-priority regression", [py, "test_views.py", "--sample-set", "real_priority"], ROOT),
+            ("Reference-learning gate", [py, "reference_learning_gate.py", "--priority-only"], ROOT),
             ("Generate PDF review checklist", [py, "generate_pdf_review_checklist.py"], ROOT),
         ]
     )

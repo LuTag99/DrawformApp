@@ -27,6 +27,7 @@ const DEFAULT_EXPORT_PROFILE: PdfExportOptions = {
   unit: 'mm',
   sheet: 'auto',
   detailLevel: 1,
+  includeFlatPattern: true,
 };
 
 export function ExportPage() {
@@ -389,6 +390,18 @@ export function ExportPage() {
               )}
               onChange={(event) => updateExportProfile('detailLevel', Number(event.target.value))}
             />
+            <div className="form-field">
+              <label>Abwicklung</label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', paddingTop: '0.25rem' }}>
+                <input
+                  type="checkbox"
+                  checked={exportProfile.includeFlatPattern ?? true}
+                  onChange={(event) => updateExportProfile('includeFlatPattern', event.target.checked)}
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                />
+                In Zeichnung einfuegen
+              </label>
+            </div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>

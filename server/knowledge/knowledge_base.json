@@ -25,7 +25,7 @@
       "kind": "official_standard_catalog",
       "title": "ISO 129-1 – Dimensioning: General principles",
       "publisher": "ISO",
-      "url": "https://www.iso.org/stanedard/64741.html",
+      "url": "https://www.iso.org/standard/64741.html",
       "scope": "Dimension lines, extension lines, arrows (filled 3mm), spacing (10mm from contour, 7mm between), placement outside contour, no redundant dims",
       "license_note": "Norm text is licensed; repository stores only derived internal rules.",
       "verified_on": "2026-03-03"
@@ -48,7 +48,7 @@
       "title": "ISO 2768 (series) – General tolerances",
       "publisher": "ISO",
       "url": "https://www.iso.org/standard/67583.html",
-      "scope": "Part 1: Linear/angular (f/m/c/v classes). Part 2: Geometrical (H/K/L classes). Title block reference: 'DIN ISO 2768-mK'",
+      "scope": "Part 1: Linear/angular (f/m/c/v classes) — still active. Part 2: Geometrical (H/K/L classes) — WITHDRAWN; successor is ISO 22081:2021. Legacy title block 'DIN ISO 2768-mK' accepted for existing drawings; new drawings should transition to ISO 22081 Grade A/B/C for geometrical tolerances.",
       "license_note": "Norm text is licensed; repository stores only derived internal rules.",
       "verified_on": "2026-03-03"
     },
@@ -114,7 +114,7 @@
       "title": "ISO 261 / ISO 965 (series) – Metric ISO threads",
       "publisher": "ISO",
       "url": "https://www.iso.org/standard/43298.html",
-      "scope": "Thread profiles M3-M68, pitch series, tolerance classes (6H/6g standard), thread representation per ISO 6410-1 (thin/thick lines, hatching)",
+      "scope": "Thread profiles M3-M68, pitch series (coarse = default per ISO 261, fine = must specify explicitly e.g. M8×1.0), tolerance classes (6H/6g standard), thread representation per ISO 6410-1. Note: ISO 965-1:2013 active; replacement under preparation as of 2026.",
       "license_note": "Norm text is licensed; repository stores only derived internal rules.",
       "verified_on": "2026-03-03"
     },
@@ -183,6 +183,17 @@
       "scope": "First-angle (Europe) and third-angle (USA) projection. View placement rules. Projection symbol in title block.",
       "license_note": "Norm text is licensed; repository stores only derived internal rules.",
       "verified_on": "2026-03-03"
+    },
+    {
+      "id": "iso_22081_catalog",
+      "tier": "tier_1",
+      "kind": "official_standard_catalog",
+      "title": "ISO 22081:2021 – Geometrical product specifications (GPS): General geometrical tolerances",
+      "publisher": "ISO",
+      "url": "https://www.iso.org/standard/72810.html",
+      "scope": "Successor to ISO 2768-2. Defines general geometrical tolerances (form, orientation, location, runout) using GPS framework. Grade A (tight), B (medium), C (coarse). Applied via annotation in title block: e.g. 'GPS general tolerances ISO 22081-B'.",
+      "license_note": "Norm text is licensed; repository stores only derived internal rules.",
+      "verified_on": "2026-03-30"
     },
     {
       "id": "din_iso_baseline_drawform",
@@ -284,8 +295,9 @@
       "feature": "thread",
       "priority": "must",
       "actions": [
-        { "type": "add_callout", "dimension": "thread_designation", "format": "M{nominal_diameter}-{tolerance_class}" }
+        { "type": "add_callout", "dimension": "thread_designation", "format": "M{nominal_diameter}[-×{pitch_if_fine}]-{tolerance_class}" }
       ],
+      "note": "Coarse-pitch threads (ISO 261 default series): M{diameter}-{class} is sufficient, e.g. 'M8-6H'. Fine-pitch threads MUST state pitch explicitly: M{diameter}×{pitch}-{class}, e.g. 'M8×1.0-6H'. Omitting pitch on fine threads is a manufacturing error.",
       "source_refs": ["iso_261_965_series", "din_iso_baseline_drawform"],
       "quality": { "status": "approved", "reviewers": ["design_lead", "qa_lead"], "last_reviewed": "2026-03-03" }
     },
@@ -297,7 +309,7 @@
       "actions": [
         { "type": "add_annotation", "location": "title_block_or_notes", "format": "Allgemeintoleranzen nach DIN ISO 2768-{format_class}{form_class}" }
       ],
-      "note": "Must reference ISO 2768 in title block or annotation field. Format class: f/m/c/v. Form class: H/K/L.",
+      "note": "Must reference tolerance standard in title block. Linear tolerances: ISO 2768-1 classes f/m/c/v (still active). Geometrical tolerances: ISO 2768-2 is WITHDRAWN — use ISO 22081:2021 Grade A/B/C for new drawings. Legacy 'DIN ISO 2768-mK' accepted for existing drawings where mK means class m (linear) + K (geometrical, legacy grade).",
       "source_refs": ["iso_2768_series", "din_iso_baseline_drawform"],
       "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-03" }
     },
@@ -541,7 +553,7 @@
     {
       "id": "hole_callout_complete_for_special_holes",
       "feature": "hole",
-      "priority": "should",
+      "priority": "must",
       "actions": [
         { "type": "add_callout", "dimension": "counterbore_or_countersink_if_present" },
         { "type": "add_callout", "dimension": "depth_if_blind" }
@@ -553,7 +565,7 @@
     {
       "id": "thread_callout_complete",
       "feature": "thread",
-      "priority": "should",
+      "priority": "must",
       "actions": [
         { "type": "add_callout", "dimension": "handedness_if_left_hand" },
         { "type": "add_callout", "dimension": "usable_thread_length_when_blind" },
@@ -601,7 +613,7 @@
     {
       "id": "gdt_feature_control_frame",
       "feature": "critical_feature",
-      "priority": "should",
+      "priority": "must",
       "when": { "functional_surface": true },
       "actions": [
         { "type": "add_tolerance_frame", "format": "per ISO 1101 with datum references per ISO 5459" }
@@ -620,6 +632,196 @@
       "note": "Every dimension value on the drawing must match the actual CAD geometry within 0.5mm. Automated check in test_views.py: check_geometry_accuracy().",
       "source_refs": ["iso_129_1_catalog", "din_iso_baseline_drawform"],
       "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-03" }
+    },
+    {
+      "id": "flat_pattern_dimensions_required",
+      "feature": "sheet_metal",
+      "priority": "must",
+      "when": { "has_unfold": true },
+      "actions": [
+        { "type": "add_dimension", "dimension": "flat_length" },
+        { "type": "add_dimension", "dimension": "flat_width" }
+      ],
+      "note": "The unfolded (Abwicklung) flat pattern must be fully dimensioned with length and width. These are the laser/cutting dimensions and are the primary manufacturing dimensions for sheet metal parts.",
+      "source_refs": ["din_iso_baseline_drawform", "golden_samples_review_2026_02"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "sheet_thickness_required",
+      "feature": "sheet_metal",
+      "priority": "must",
+      "when": { "has_thickness": true },
+      "actions": [
+        { "type": "add_dimension", "dimension": "sheet_thickness", "format": "s = {thickness_mm}" }
+      ],
+      "note": "Sheet metal thickness must be indicated on the drawing, typically on the front view as 's = X,X'. Thickness ≤10mm guard applies — thicker sections are treated as milling/plate parts.",
+      "source_refs": ["din_iso_baseline_drawform", "golden_samples_review_2026_02"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "bend_radius_required",
+      "feature": "sheet_metal",
+      "priority": "must",
+      "when": { "has_real_bends": true },
+      "actions": [
+        { "type": "add_dimension", "dimension": "bend_radius", "format": "R{radius_mm}" }
+      ],
+      "note": "Inner bend radius must be indicated on parts with real bends. Flat laser-cut plates with only hole walls must NOT get a bend callout — the 'has_real_bends' context flag guards this distinction.",
+      "source_refs": ["din_iso_baseline_drawform", "golden_samples_review_2026_02"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "turning_diameter_overall_required",
+      "feature": "turning",
+      "priority": "must",
+      "actions": [
+        { "type": "add_dimension", "dimension": "overall_diameter", "format": "Ø{diameter_mm}" }
+      ],
+      "note": "Rotational parts (Drehteile) are defined by their outer diameter. The overall_height dimension on the front view must carry the Ø-symbol and the diameter value, not a linear height. This distinguishes turning from milling drawings.",
+      "source_refs": ["iso_129_1_catalog", "din_iso_baseline_drawform"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "hole_countersink_callout",
+      "feature": "hole",
+      "priority": "must",
+      "when": { "hole_type": "countersink" },
+      "actions": [
+        { "type": "add_callout", "format": "Ø{sink_diameter} / {angle}°", "dimension": "countersink_diameter_and_angle" }
+      ],
+      "note": "Countersunk holes (Senkungen) require: sink diameter and included angle (typically 90° per ISO 10642 for socket head cap screws, 60° for some rivets). Format: 'Ø10,5 / 90°'. Add shaft diameter separately if it is a different feature.",
+      "source_refs": ["iso_129_1_catalog", "iso_261_965_series", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "hole_counterbore_callout",
+      "feature": "hole",
+      "priority": "must",
+      "when": { "hole_type": "counterbore" },
+      "actions": [
+        { "type": "add_callout", "format": "Ø{bore_diameter} {tolerance} / t{depth_mm}", "dimension": "counterbore_diameter_depth" }
+      ],
+      "note": "Counterbored holes (Stufenbohrungen) require: bore diameter with tolerance (h9 typical for socket head cap screws per ISO 4762), and bore depth. Format: 'Ø12 h9 / t4'. Do not omit depth — a workshop cannot safely machine without it.",
+      "source_refs": ["iso_129_1_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "hole_blind_thread_depth",
+      "feature": "thread",
+      "priority": "must",
+      "when": { "thread_type": "blind" },
+      "actions": [
+        { "type": "add_callout", "dimension": "usable_thread_length", "format": "M{diameter}[-×{pitch_if_fine}]-{class} TIEF {usable_mm}" }
+      ],
+      "note": "Blind threaded holes MUST state the usable thread length (nutzbare Gewindelänge), not the drill depth. Example: 'M8-6H TIEF 15' means 15mm of usable thread. Drill depth = usable length + 2× pitch + 1mm runout minimum. Confusing drill depth with thread depth is a common manufacturing error.",
+      "source_refs": ["iso_261_965_series", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "sheet_metal_k_factor_specification",
+      "feature": "sheet_metal",
+      "priority": "should",
+      "when": { "has_real_bends": true },
+      "actions": [
+        { "type": "add_process_note", "parameter": "k_factor", "format": "k = {k_factor}" }
+      ],
+      "note": "K-factor (neutral fibre position) governs flat-pattern (Abwicklung) blank length: L_blank = L1 + L2 + (π/2 × R_inner) × (t/R_inner + K). Typical values by material: mild steel/St37 K≈0.33, stainless/V2A K≈0.36, aluminium K≈0.31. Specify when flat-pattern tolerance is ≤±0.5mm or when material deviates from shop default. If omitted, shop uses their standard K-factor which may differ.",
+      "source_refs": ["din_iso_baseline_drawform", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "sheet_metal_min_bend_radius_check",
+      "feature": "sheet_metal",
+      "priority": "should",
+      "when": { "has_real_bends": true },
+      "actions": [
+        { "type": "validate", "rule": "bend_radius_mm >= thickness_mm", "alert": "Innenbiegungsradius < Blechdicke: Mehrstufiges Biegen oder Sonderwerkzeug erforderlich" }
+      ],
+      "note": "Minimum inner bend radius = material thickness (R_inner ≥ t) for standard tooling. Below this: material may crack (especially stainless, hardened alloys), multi-step bending or special tooling is needed. For soft aluminium: R_inner ≥ 0.5t acceptable. For stainless V2A: R_inner ≥ 1.5t recommended.",
+      "source_refs": ["manufacturing_drawings_literature_review_2026_03", "din_iso_baseline_drawform"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "gdt_datum_system_establishment",
+      "feature": "critical_feature",
+      "priority": "must",
+      "when": { "has_gdt_callouts": true },
+      "actions": [
+        { "type": "add_datum", "sequence": ["primary_A", "secondary_B", "tertiary_C"], "rule": "functional_priority_order" }
+      ],
+      "note": "Per ISO 5459: whenever a feature control frame references datum letters, those datums must be explicitly established on the drawing (datum triangle symbol on the feature). Primary datum = most stable manufacturing/functional surface (clamping face). Secondary = constrains remaining DOF. Tertiary = final constraint. Order matters — mismatched datum precedence leads to ambiguous tolerance interpretation.",
+      "source_refs": ["iso_5459_catalog", "iso_1101_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "metrology_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "gdt_position_for_dense_hole_patterns",
+      "feature": "hole_pattern",
+      "priority": "should",
+      "when": { "count_min": 4 },
+      "actions": [
+        { "type": "add_tolerance_frame", "characteristic": "position", "format": "⊕ | {tol_mm} | A / B" }
+      ],
+      "note": "Dense hole patterns (≥4 holes) or tight-tolerance patterns (≤±0.1mm) should use Position tolerance (ISO 1101 symbol ⊕) relative to datums instead of chain dimensions. This uniquely defines the pattern as a functional unit and enables unambiguous CMM verification. Coordinate dimensioning alone is insufficient for patterns requiring interchangeability.",
+      "source_refs": ["iso_1101_catalog", "iso_5459_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "metrology_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "gdt_runout_for_rotating_features",
+      "feature": "critical_feature",
+      "priority": "should",
+      "when": { "feature_type": "cylindrical", "is_functional_surface": true },
+      "actions": [
+        { "type": "add_tolerance_frame", "characteristic": "circular_runout", "format": "↗ | {tol_mm} FIR | A" }
+      ],
+      "note": "Rotating or bearing-mounted cylindrical features should carry radial or total runout (ISO 1101 circular or total runout) relative to the rotational axis datum. Typical values: precision bearings 0.01–0.02mm, general shafts 0.05–0.1mm. Total runout (↗↗) controls both radial and axial deviation simultaneously. A radial tolerance alone (diameter) does not control concentricity.",
+      "source_refs": ["iso_1101_catalog", "iso_5459_catalog"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "metrology_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "surface_roughness_process_defaults",
+      "feature": "surface",
+      "priority": "should",
+      "actions": [
+        { "type": "add_annotation", "location": "title_block_notes", "format": "Alle Flächen Ra {default_µm} sofern nicht anders angegeben" }
+      ],
+      "note": "Default Ra by manufacturing process (per Tabellenbuch Metall): turning Ra 3.2–6.3 µm, face milling Ra 6.3–12.5 µm, fine turning Ra 0.8–1.6 µm, grinding Ra 0.4–1.6 µm, drilling Ra 3.2–6.3 µm, casting/forging Ra 6.3–25 µm. Override on specific features: bearing seats Ra ≤1.6 µm, dynamic seals Ra ≤0.8 µm, fits H7/g6 Ra ≤1.6 µm. Correlation: IT tolerance grade ÷ 3 ≈ required Ra in µm.",
+      "source_refs": ["iso_1302_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "material_designation_unique",
+      "feature": "title_block",
+      "priority": "must",
+      "actions": [
+        { "type": "validate", "field": "material", "rule": "must_reference_norm_designation" }
+      ],
+      "note": "Material must be identified by its norm designation, not a generic name. Examples: structural steel EN 10025 → S235JR or S355J2+N; quenched & tempered EN 10083 → 42CrMo4, C45E; case hardening EN 10084 → 16MnCr5; aluminium EN 573 → EN AW-6061 T6 or EN AW-5083; stainless EN 10088 → 1.4301 (304) or 1.4404 (316L); grey cast iron EN 1561 → EN-GJL-200. Generic terms 'Stahl', 'Aluminium', 'Edelstahl' are insufficient for production orders.",
+      "source_refs": ["iso_7200_catalog", "din_iso_baseline_drawform", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "welding_symbol_complete_if_structural",
+      "feature": "weld_joint",
+      "priority": "should",
+      "when": { "joint_type": "structural_load_bearing" },
+      "actions": [
+        { "type": "add_annotation", "dimension": "weld_process_code" },
+        { "type": "add_annotation", "dimension": "inspection_class_if_required" }
+      ],
+      "note": "Structural and pressure-bearing welds should include: ISO 4063 process code (111=stick, 131=MIG, 135=MAG, 141=TIG), weld quality level per ISO 5817 (B=stringent, C=intermediate, D=moderate) if specified, and surface finishing symbol (flush/ground) if needed for sealing or fit surfaces. Visual-only inspection is insufficient for load-bearing joints.",
+      "source_refs": ["iso_2553_catalog", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
+    },
+    {
+      "id": "sheet_metal_classification_guard",
+      "feature": "sheet_metal",
+      "priority": "must",
+      "actions": [
+        { "type": "validate", "rule": "thickness_mm <= 10 AND has_bend_or_flat_face_ratio >= 0.6", "alert": "Part does not meet sheet metal criteria — reclassify as milling or plate part" }
+      ],
+      "note": "A part is sheet metal (Blechteil) only when: (1) wall thickness ≤10mm, (2) predominantly planar faces (≥60% plane-type faces), and optionally (3) real bends detected. Thick plates >8mm are always milling even if flat. Parts with cones, complex machined pockets, or solid bodies are milling. Correct classification is critical: sheet metal drawings include Abwicklung and s=X.X thickness callout; milling drawings do not.",
+      "source_refs": ["din_iso_baseline_drawform", "manufacturing_drawings_literature_review_2026_03"],
+      "quality": { "status": "approved", "reviewers": ["design_lead", "manufacturing_lead"], "last_reviewed": "2026-03-30" }
     }
   ]
 }

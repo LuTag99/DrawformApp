@@ -321,6 +321,36 @@ class TestMillingWithHoles(unittest.TestCase):
         hp = next(d for d in front.dimensions if d.dim_type == "hole_pitch")
         self.assertAlmostEqual(hp.value_mm, 180.0)
 
+    def test_hole_diameter_rule_id_from_kb(self):
+        """KB drives the hole_diameter gate — rule_id must be set by KB rule."""
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        hd = next(d for d in front.dimensions if d.dim_type == "hole_diameter")
+        self.assertEqual(hd.rule_id, "hole_diameter_required")
+
+    def test_hole_pitch_rule_id_from_kb(self):
+        """KB drives the hole_pitch gate — rule_id must be set by KB rule."""
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        hp = next(d for d in front.dimensions if d.dim_type == "hole_pitch")
+        self.assertEqual(hp.rule_id, "hole_location_required")
+
+    def test_hole_location_rule_id_from_kb(self):
+        """KB drives the hole_location gate — rule_id must be set by KB rule."""
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        hlx = next(d for d in front.dimensions if d.dim_type == "hole_location_x")
+        self.assertEqual(hlx.rule_id, "hole_location_required")
+
+    def test_thread_callout_rule_id_from_kb(self):
+        """KB drives the thread_callout gate — rule_id must be set by KB rule."""
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        tc = next(d for d in front.dimensions if d.dim_type == "thread_callout")
+        self.assertEqual(tc.rule_id, "thread_callout_required")
+
+    def test_overall_dims_rule_id_from_kb(self):
+        """KB drives overall dimension gates — rule_id must be set by KB rule."""
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        ol = next(d for d in front.dimensions if d.dim_type == "overall_length")
+        self.assertEqual(ol.rule_id, "overall_dimensions_required")
+
 
 class TestSheetMetalWithUnfold(unittest.TestCase):
     def setUp(self):
@@ -369,6 +399,24 @@ class TestSheetMetalWithUnfold(unittest.TestCase):
         types = {d.dim_type for d in fp.dimensions}
         self.assertEqual(types, {"flat_length", "flat_width"})
 
+    def test_flat_length_rule_id_from_kb(self):
+        """KB drives flat_length gate — rule_id must be set by KB rule."""
+        fv = next(v for v in self.plan.views if v.view_name == "FlatPattern")
+        fl = next(d for d in fv.dimensions if d.dim_type == "flat_length")
+        self.assertEqual(fl.rule_id, "flat_pattern_dimensions_required")
+
+    def test_flat_width_rule_id_from_kb(self):
+        """KB drives flat_width gate — rule_id must be set by KB rule."""
+        fv = next(v for v in self.plan.views if v.view_name == "FlatPattern")
+        fw = next(d for d in fv.dimensions if d.dim_type == "flat_width")
+        self.assertEqual(fw.rule_id, "flat_pattern_dimensions_required")
+
+    def test_sheet_thickness_rule_id_from_kb(self):
+        """KB drives sheet_thickness gate — rule_id must be set by KB rule."""
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        st = next(d for d in front.dimensions if d.dim_type == "sheet_thickness")
+        self.assertEqual(st.rule_id, "sheet_thickness_required")
+
 
 class TestSheetMetalNoUnfold(unittest.TestCase):
     def test_no_flat_pattern_view(self):
@@ -400,14 +448,28 @@ class TestSheetMetalNoUnfold(unittest.TestCase):
 
 
 class TestTurningPlaceholder(unittest.TestCase):
-    def test_turning_has_overall(self):
+    def setUp(self):
         fp = {**_CUBE_10, "bbox_mm": {"X": 100.0, "Y": 30.0, "Z": 30.0}}
-        plan = build_dimension_plan(fp, "turning")
-        self.assertEqual(plan.part_type, "turning")
-        front = next(v for v in plan.views if v.view_name == "Front")
+        self.plan = build_dimension_plan(fp, "turning")
+
+    def test_turning_has_overall(self):
+        self.assertEqual(self.plan.part_type, "turning")
+        front = next(v for v in self.plan.views if v.view_name == "Front")
         types = {d.dim_type for d in front.dimensions}
         self.assertIn("overall_length", types)
         self.assertIn("overall_height", types)
+
+    def test_turning_diameter_rule_id_from_kb(self):
+        """KB drives Ø-label on overall_height — rule_id must be turning_diameter_overall_required."""
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        oh = next(d for d in front.dimensions if d.dim_type == "overall_height")
+        self.assertEqual(oh.rule_id, "turning_diameter_overall_required")
+
+    def test_turning_overall_height_has_diameter_label(self):
+        """overall_height on turning parts must carry the Ø symbol."""
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        oh = next(d for d in front.dimensions if d.dim_type == "overall_height")
+        self.assertIn("Ø", oh.label or "")
 
 
 class TestDeduplication(unittest.TestCase):
@@ -493,6 +555,82 @@ class TestPolicyHints(unittest.TestCase):
         )
         self.assertTrue(plan.policy_hints.get("prefer_low_hidden_edge_load"))
         self.assertTrue(plan.policy_hints.get("avoid_closed_dimension_chains"))
+
+
+class TestSlotFeatures(unittest.TestCase):
+    """Tests for slot (Langloch/Nut) dimension planning from slot_groups payload."""
+
+    _SLOT_PART = {
+        **{k: v for k, v in {
+            "ok": True,
+            "bbox_mm": {"X": 200.0, "Y": 100.0, "Z": 20.0},
+            "longest_axis": "X",
+            "thickness_axis": "Z",
+            "hole_count": 0,
+            "hole_diameter_mm": None,
+            "hole_pitch_mm": None,
+            "hole_groups": [],
+            "bend_radius_mm": None,
+            "measured_thickness_mm": None,
+            "flat_ratio": 0.2,
+            "thread_label": None,
+            "flat_pattern": None,
+        }.items()},
+        "slot_count": 2,
+        "slot_groups": [
+            {"width_mm": 8.0, "length_mm": 30.0, "depth_mm": None,
+             "center_mm": {"x": 50.0, "y": 50.0, "z": 0.0}, "orientation": "H"},
+            {"width_mm": 8.0, "length_mm": 30.0, "depth_mm": None,
+             "center_mm": {"x": 150.0, "y": 50.0, "z": 0.0}, "orientation": "H"},
+        ],
+    }
+
+    def setUp(self):
+        self.plan = build_dimension_plan(self._SLOT_PART, "milling")
+
+    def test_has_slot_width(self):
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        types = {d.dim_type for d in front.dimensions}
+        self.assertIn("slot_width", types)
+
+    def test_has_slot_length(self):
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        types = {d.dim_type for d in front.dimensions}
+        self.assertIn("slot_length", types)
+
+    def test_has_slot_location(self):
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        types = {d.dim_type for d in front.dimensions}
+        self.assertIn("slot_location", types)
+
+    def test_has_feature_count_for_multiple_slots(self):
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        types = {d.dim_type for d in front.dimensions}
+        self.assertIn("feature_count", types)
+
+    def test_slot_width_value(self):
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        sw = next(d for d in front.dimensions if d.dim_type == "slot_width")
+        self.assertAlmostEqual(sw.value_mm, 8.0)
+
+    def test_slot_length_value(self):
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        sl = next(d for d in front.dimensions if d.dim_type == "slot_length")
+        self.assertAlmostEqual(sl.value_mm, 30.0)
+
+    def test_slot_width_rule_id_from_kb(self):
+        """KB drives slot_width — rule_id must be slot_complete_definition."""
+        front = next(v for v in self.plan.views if v.view_name == "Front")
+        sw = next(d for d in front.dimensions if d.dim_type == "slot_width")
+        self.assertEqual(sw.rule_id, "slot_complete_definition")
+
+    def test_single_slot_no_feature_count(self):
+        """A single slot must not emit a feature_count dimension."""
+        single = {**self._SLOT_PART, "slot_count": 1, "slot_groups": [self._SLOT_PART["slot_groups"][0]]}
+        plan = build_dimension_plan(single, "milling")
+        front = next(v for v in plan.views if v.view_name == "Front")
+        types = {d.dim_type for d in front.dimensions}
+        self.assertNotIn("feature_count", types)
 
 
 class TestDetailLevels(unittest.TestCase):

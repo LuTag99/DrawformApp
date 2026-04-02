@@ -4,12 +4,34 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 SAMPLES_DIR = Path(__file__).resolve().parent / "_samples"
-REAL_SAMPLE_FOLDERS = {"milling parts", "sheetmetals"}
+REAL_PRIORITY_MANIFEST_PATH = (
+    Path(__file__).resolve().parent / "knowledge" / "reference_learning" / "real_priority_samples.json"
+)
+REAL_SAMPLE_FOLDERS = {
+    "milling parts",
+    "sheetmetals",
+    "02_millingparts_miba",
+    "05_202500614-10000_endeffektor",
+    "05_202500614-10000_endeffektor - fd",
+    "10-03-2026",
+    "2025-04-24_blechteile",
+    "adapterplatte ur10_ur20",
+    "bleche magazinwagen",
+    "bleche magazinwagen 2",
+}
+# Top-level category folders for baseline samples (depth-1 subdirectories of _samples/).
+BASELINE_CATEGORY_FOLDERS = {
+    "fraesteile",
+    "drehteile",
+    "blechteile",
+    "baugruppen",
+}
 STEP_EXTENSIONS = {".stp", ".step"}
 PDF_EXTENSIONS = {".pdf"}
 _DUPLICATE_SUFFIX_RE = re.compile(r" \(\d+\)$", flags=re.IGNORECASE)
@@ -38,7 +60,13 @@ def _is_real_sample_path(path: Path, *, samples_dir: Path) -> bool:
         return False
     if len(rel.parts) < 2:
         return False
-    return rel.parts[0].lower() in REAL_SAMPLE_FOLDERS
+    # Old layout: _samples/<RealFolder>/file  (parts[0] is real folder)
+    if rel.parts[0].lower() in REAL_SAMPLE_FOLDERS:
+        return True
+    # New layout: _samples/<Category>/<RealFolder>/file  (parts[1] is real folder)
+    if len(rel.parts) >= 3 and rel.parts[1].lower() in REAL_SAMPLE_FOLDERS:
+        return True
+    return False
 
 
 def _prefer_candidate(current: Path | None, candidate: Path) -> bool:
@@ -66,6 +94,7 @@ def _dedupe_by_canonical(files: list[Path]) -> dict[str, Path]:
 
 def discover_baseline_samples(*, samples_dir: Path = SAMPLES_DIR) -> list[SampleRecord]:
     records: list[SampleRecord] = []
+    # Legacy: STEP files directly in _samples/
     for path in sorted(samples_dir.glob("*.stp"), key=lambda item: str(item).lower()):
         records.append(
             SampleRecord(
@@ -75,6 +104,22 @@ def discover_baseline_samples(*, samples_dir: Path = SAMPLES_DIR) -> list[Sample
                 category="baseline",
             )
         )
+    # New structure: STEP files one level deep inside category folders
+    for category_dir in sorted(samples_dir.iterdir()):
+        if not category_dir.is_dir():
+            continue
+        if category_dir.name.lower() not in BASELINE_CATEGORY_FOLDERS:
+            continue
+        for path in sorted(category_dir.iterdir(), key=lambda item: str(item).lower()):
+            if path.is_file() and path.suffix.lower() in STEP_EXTENSIONS:
+                records.append(
+                    SampleRecord(
+                        name=path.stem,
+                        step_path=path,
+                        pdf_path=None,
+                        category="baseline",
+                    )
+                )
     return records
 
 
@@ -106,6 +151,43 @@ def discover_real_samples(*, samples_dir: Path = SAMPLES_DIR) -> list[SampleReco
     return records
 
 
+def load_real_priority_names(*, manifest_path: Path = REAL_PRIORITY_MANIFEST_PATH) -> list[str]:
+    if not manifest_path.exists():
+        raise ValueError(f"Missing real-priority manifest: {manifest_path}")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entries = payload.get("samples")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError(f"Invalid real-priority manifest: {manifest_path}")
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError(f"Invalid real-priority entry in {manifest_path}: {entry!r}")
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            raise ValueError(f"Missing sample name in {manifest_path}: {entry!r}")
+        if name in seen:
+            raise ValueError(f"Duplicate real-priority sample '{name}' in {manifest_path}")
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def discover_real_priority_samples(
+    *,
+    samples_dir: Path = SAMPLES_DIR,
+    manifest_path: Path = REAL_PRIORITY_MANIFEST_PATH,
+) -> list[SampleRecord]:
+    ordered_names = load_real_priority_names(manifest_path=manifest_path)
+    real_samples = {record.name: record for record in discover_real_samples(samples_dir=samples_dir)}
+    missing = [name for name in ordered_names if name not in real_samples]
+    if missing:
+        missing_text = ", ".join(missing)
+        raise ValueError(f"Real-priority samples missing from catalog: {missing_text}")
+    return [real_samples[name] for name in ordered_names]
+
+
 def resolve_sample_set(sample_set: str, *, samples_dir: Path = SAMPLES_DIR) -> list[SampleRecord]:
     normalized = str(sample_set or "").strip().lower() or "baseline"
     baseline = discover_baseline_samples(samples_dir=samples_dir)
@@ -114,6 +196,8 @@ def resolve_sample_set(sample_set: str, *, samples_dir: Path = SAMPLES_DIR) -> l
         return baseline
     if normalized == "real":
         return real
+    if normalized == "real_priority":
+        return discover_real_priority_samples(samples_dir=samples_dir)
     if normalized == "all":
         return baseline + real
     raise ValueError(f"Unsupported sample set: {sample_set}")

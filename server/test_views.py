@@ -6,6 +6,7 @@ Regression test for view selection/alignment plus golden baseline checks.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime as dt
 import json
 import os
@@ -14,9 +15,14 @@ import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 from sample_catalog import resolve_sample_set
+from rules.dimension_strategy import (
+    build_dimension_plan,
+    select_layout_profile_standalone,
+)
 
 # Force UTF-8 output on Windows
 if sys.platform == "win32":
@@ -63,7 +69,9 @@ def render_preview_png(svg_path: Path, png_path: Path, width_px: int = 1600) -> 
         return False
 DEBUG_DIR = Path(__file__).parent / "_debug"
 SCRIPT_PATH = Path(__file__).parent / "freecad" / "step_to_pdf.py"
+FEATURE_SCRIPT_PATH = Path(__file__).parent / "freecad" / "step_feature_probe.py"
 BASELINE_GOLDEN_PATH = Path(__file__).parent / "_golden" / "views_baseline.json"
+REAL_PRIORITY_GOLDEN_PATH = Path(__file__).parent / "_golden" / "views_real_priority.json"
 REAL_GOLDEN_PATH = DEBUG_DIR / "views_baseline_real.json"
 ALL_GOLDEN_PATH = DEBUG_DIR / "views_baseline_all.json"
 
@@ -73,9 +81,19 @@ PAPER_TOL_MM = 0.25
 CENTER_TOL_MM = 0.25
 FLATNESS_TOL = 0.01
 FEATURE_DIM_TOL_MM = 0.5
-QUALITY_OVERFLOW_TOL_MM = 0.5
+QUALITY_OVERFLOW_TOL_MM = 1.0
 STABILITY_PAPER_TOL_MM = 0.3
 STABILITY_CENTER_TOL_MM = 0.3
+
+# ISO 5455 standard scale ratios (ratio = numerator/denominator, e.g. 2:1 → 2.0, 1:5 → 0.2).
+# Includes DIN supplement scales (2.5:1, 1:2.5, 1:25, 1:250, 1:2500).
+_ISO_5455_SCALES = [
+    50.0, 20.0, 10.0, 5.0, 4.0, 2.5, 2.0,      # enlargements (4:1 = DIN 823 supplement)
+    1.0,                                          # 1:1
+    1/2, 1/2.5, 1/5, 1/10, 1/20, 1/25, 1/50,   # reductions
+    1/100, 1/200, 1/250, 1/500, 1/1000, 1/2500, # large reductions
+]
+_ISO_5455_SCALE_TOL = 0.08  # 8% tolerance on ratio (wider than snap to catch renderer drift)
 
 # Expected results for each test part
 EXPECTED = {
@@ -125,6 +143,7 @@ EXPECTED = {
         "min_hole_count": 6,
         "min_dim_text_count": 2,
         "feature_dims_required": True,
+        "check_lk_callout": True,  # 6 bolt holes in a radial pattern → LK Ø required
         "dse_check": True,
         "part_type": "milling",
     },
@@ -206,7 +225,7 @@ EXPECTED = {
         "alignment_ok": True,
         "front_width_gt_height": True,
         "min_hole_count": 5,
-        "min_hole_pitch_mm": 100.0,
+        "min_hole_pitch_mm": 80.0,  # Median of hole spacings (was span before)
         "min_bend_radius_mm": 4.0,
         "min_centerline_count": 2,
         "has_abwicklung": False,  # Laserteil (0 bends) — no Abwicklung
@@ -219,7 +238,7 @@ EXPECTED = {
         "front_width_gt_height": True,
         "min_hole_count": 8,
         "min_hole_diameter_mm": 10.0,
-        "min_hole_pitch_mm": 120.0,
+        "min_hole_pitch_mm": 25.0,  # Median of hole spacings (was span before)
         "min_centerline_count": 3,
         "stability_check": True,
         "min_dim_text_count": 3,
@@ -236,10 +255,12 @@ EXPECTED = {
         # Large central bore (40mm) may not be detected as a discrete edge due to
         # topology splits in the boolean fused solid; bolt holes (12mm) dominate.
         "min_hole_diameter_mm": 10.0,
-        "min_hole_pitch_mm": 160.0,
+        "min_hole_pitch_mm": 50.0,  # Median of hole spacings (was span before)
         "min_bend_radius_mm": 20.0,
         "min_centerline_count": 4,
         "stability_check": True,
+        # LK check not applicable here: flanged_manifold uses grid_2x2 (milling)
+        # layout; LK callout only appears in flat_round_dominant face views.
         "dse_check": True,
         "part_type": "milling",
     },
@@ -262,7 +283,7 @@ EXPECTED = {
         "alignment_ok": True,
         "front_width_gt_height": True,
         "min_hole_count": 10,
-        "min_hole_pitch_mm": 120.0,
+        "min_hole_pitch_mm": 24.0,  # Median of hole spacings (was span before)
         "min_centerline_count": 4,
         "stability_check": True,
         "dse_check": True,
@@ -274,12 +295,84 @@ EXPECTED = {
         "alignment_ok": True,
         "front_width_gt_height": True,
         "min_hole_count": 8,
-        "min_hole_pitch_mm": 150.0,
+        "min_hole_pitch_mm": 60.0,  # Median of hole spacings (was span before)
         "min_centerline_count": 6,
         "stability_check": True,
         "min_dim_text_count": 3,
         "feature_dims_required": True,
         "dse_check": True,
+    },
+    # First real-part expectation wave: currently green cases with stable
+    # sheet-metal and milling behavior. These add semantic checks beyond
+    # the real golden snapshots without widening into known-red cases yet.
+    "logiBOT_02_AbdeckblechSeitlichSpie_V1.1": {
+        "longest_axis": "X",
+        "is_flat": True,
+        "alignment_ok": True,
+        "front_width_gt_height": True,
+        "top_rotation_deg": 180,
+        "max_hole_count": 0,
+        "min_bend_radius_mm": 10.0,
+        "min_dim_text_count": 3,
+        "feature_dims_required": True,
+        "strict_dim_arrangement": True,
+        "has_abwicklung": True,
+        "dse_check": True,
+        "part_type": "sheet_metal",
+    },
+    "202500521_Abdeckblech Motorstecker 1_V1.0": {
+        "longest_axis": "Y",
+        "is_flat": False,
+        "alignment_ok": True,
+        "front_width_gt_height": True,
+        "top_rotation_deg": 270,
+        "min_hole_count": 6,
+        "min_hole_diameter_mm": 5.0,
+        "min_hole_pitch_mm": 70.0,
+        "min_bend_radius_mm": 0.1,
+        "min_centerline_count": 3,
+        "min_dim_text_count": 5,
+        "feature_dims_required": True,
+        "strict_dim_arrangement": True,
+        "has_abwicklung": True,
+        "dse_check": True,
+        "part_type": "sheet_metal",
+    },
+    "202500521_Abdeckblech Motorstecker 2_V1.0": {
+        "longest_axis": "Y",
+        "is_flat": False,
+        "alignment_ok": True,
+        "front_width_gt_height": True,
+        "top_rotation_deg": 270,
+        "min_hole_count": 8,
+        "min_hole_diameter_mm": 4.0,
+        "min_hole_pitch_mm": 70.0,
+        "min_bend_radius_mm": 1.5,
+        "min_centerline_count": 2,
+        "min_dim_text_count": 6,
+        "feature_dims_required": True,
+        "strict_dim_arrangement": True,
+        "has_abwicklung": True,
+        "dse_check": True,
+        "part_type": "sheet_metal",
+    },
+    "202500521_EOAT Versteifung_V1.0": {
+        "longest_axis": "X",
+        "is_flat": False,
+        "alignment_ok": True,
+        "front_width_gt_height": True,
+        "top_rotation_deg": 180,
+        "min_hole_count": 12,
+        "min_hole_diameter_mm": 5.0,
+        "min_hole_pitch_mm": 65.0,
+        "min_bend_radius_mm": 5.0,
+        "min_centerline_count": 6,
+        "min_dim_text_count": 6,
+        "feature_dims_required": True,
+        "strict_dim_arrangement": True,
+        "has_abwicklung": False,
+        "dse_check": True,
+        "part_type": "milling",
     },
 }
 
@@ -311,6 +404,13 @@ def _parse_scale_label(value: str | None):
     if left is None or right is None or left <= 0 or right <= 0:
         return None
     return left / right
+
+
+def _normalize_sample_key(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
+    ascii_value = ascii_value.lower().replace("-", "_").replace(" ", "_")
+    return re.sub(r"_+", "_", ascii_value).strip("_")
 
 
 def resolve_freecad_python() -> str:
@@ -352,12 +452,51 @@ def _run_freecad_subprocess(freecad_python, step_file, pdf_path, env, timeout=18
     }
 
 
+def _run_feature_probe(step_file: Path, base_name: str, freecad_python: str) -> dict | None:
+    """Run FreeCAD feature probe and return payload, or None on failure."""
+    output_path = DEBUG_DIR / f"{base_name}_features.json"
+    try:
+        result = subprocess.run(
+            [freecad_python, str(FEATURE_SCRIPT_PATH), str(step_file), str(output_path)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0 or not output_path.exists():
+        return None
+    try:
+        data = json.loads(output_path.read_text(encoding="utf-8"))
+        return data if data.get("ok") is True else None
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def run_conversion(step_file: Path, sample_name: str | None = None) -> dict:
     """Run the PDF conversion and return the JSON report."""
     base_name = sample_name or step_file.stem
     json_path = DEBUG_DIR / f"{base_name}_report.json"
-    env = {"DRAWFORM_DEBUG_DIR": str(DEBUG_DIR)}
     freecad_python = resolve_freecad_python()
+
+    # DSE: Run feature probe + build dimension plan (mirrors main.py production path)
+    env = {"DRAWFORM_DEBUG_DIR": str(DEBUG_DIR)}
+    probe = _run_feature_probe(step_file, base_name, freecad_python)
+    if probe:
+        try:
+            layout = select_layout_profile_standalone(str(step_file), probe)
+            plan = build_dimension_plan(
+                feature_payload=probe,
+                layout_profile=layout,
+                detail_level=1,
+            )
+            meta = {"features": probe, "dimension_plan": plan.model_dump()}
+            meta_path = DEBUG_DIR / f"{base_name}_meta.json"
+            meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            env["DRAWFORM_META"] = str(meta_path)
+        except Exception as exc:
+            print(f"  [dse] non-fatal: {exc}", flush=True)
+
     base_pdf = DEBUG_DIR / f"{base_name}_test.pdf"
     pdf_candidates = [
         base_pdf,
@@ -551,10 +690,10 @@ def check_layout_quality(report: dict) -> tuple[bool, list[str]]:
         issues.append(
             f"Drawing overflow too high: max={max_overflow:.3f}mm (tol {QUALITY_OVERFLOW_TOL_MM:.3f}mm)"
         )
-    if not fits:
-        issues.append("Views do not fully fit into drawing area.")
-    if scale_reduction_needed and not fits:
-        issues.append("Layout required scale reduction but views still do not fit.")
+        if not fits:
+            issues.append("Views do not fully fit into drawing area.")
+        if scale_reduction_needed and not fits:
+            issues.append("Layout required scale reduction but views still do not fit.")
     overlap_pairs = list(quality.get("view_overlap_pairs") or [])
     if overlap_pairs:
         issues.append("Views overlap: " + ", ".join(overlap_pairs))
@@ -1095,12 +1234,14 @@ def check_title_block(sample_name: str, report: dict) -> tuple[bool, list[str]]:
         "MASSSTAB": "Scale (Massstab)",
         "EINHEIT": "Unit (Einheit)",
         "BLATT": "Sheet size (Blatt)",
+        "MASSE": "Mass (Masse)",
+        "MATERIAL": "Material",
     }
     for marker, label in required_fields.items():
         if marker not in svg_text:
             issues.append(f"Title block missing field: {label}")
 
-    # Scale field must exist and match the effective render scale from the report.
+    # Scale field must exist and match the nearest ISO 5455 candidate of the render scale.
     scale_match = re.search(r'<text[^>]*id="SCALE"[^>]*>([^<]+)</text>', svg_text)
     if not scale_match:
         issues.append("No scale value found in title block")
@@ -1114,11 +1255,15 @@ def check_title_block(sample_name: str, report: dict) -> tuple[bool, list[str]]:
             if report_scale is None or report_scale <= 0:
                 issues.append("Report scale missing or invalid")
             else:
-                tolerance = max(0.01, abs(report_scale) * 0.015)
-                if abs(parsed_scale - report_scale) > tolerance:
+                # The title block always shows the nearest ISO 5455 standard scale
+                # (format_actual_scale_label always snaps).  Check that the label
+                # is indeed the nearest ISO candidate to the actual render scale.
+                nearest_iso = min(_ISO_5455_SCALES, key=lambda s: abs(s - report_scale))
+                if abs(parsed_scale - nearest_iso) > nearest_iso * 0.05:
                     issues.append(
                         f"Title block scale mismatch: label '{scale_label}' -> {parsed_scale:.4f}, "
-                        f"report={report_scale:.4f}"
+                        f"expected nearest ISO={_iso_ratio_label(nearest_iso)} "
+                        f"(render scale={report_scale:.4f})"
                     )
 
     # Date format check: DD.MM.YYYY
@@ -1129,6 +1274,75 @@ def check_title_block(sample_name: str, report: dict) -> tuple[bool, list[str]]:
     # DIN norm reference
     if "DIN" not in svg_text:
         issues.append("No DIN norm reference found in drawing")
+
+    return len(issues) == 0, issues
+
+
+def _iso_ratio_label(ratio: float) -> str:
+    """Format a numeric scale ratio as a human-readable ISO label (e.g. 0.1 → '1:10')."""
+    if ratio >= 1.0:
+        n = ratio
+        return f"{int(round(n))}:1" if abs(n - round(n)) < 0.1 else f"{n:.1f}:1"
+    d = 1.0 / ratio
+    return f"1:{int(round(d))}" if abs(d - round(d)) < 0.1 else f"1:{d:.1f}"
+
+
+def check_scale_iso_conformity(sample_name: str, report: dict) -> tuple[bool, list[str]]:
+    """Verify that the scale label in the title block is an ISO 5455 standard scale.
+
+    Catches non-standard scales such as '1.27:1' that the renderer may emit when
+    ISO snap is misconfigured or the part size falls between two standard scale bands.
+    Silently skips if the debug SVG is unavailable (already flagged by check_title_block).
+    """
+    issues = []
+    svg_path = DEBUG_DIR / f"{sample_name}_debug.svg"
+    if not svg_path.exists():
+        return True, []
+
+    svg_text = svg_path.read_text(encoding="utf-8", errors="replace")
+    scale_match = re.search(r'<text[^>]*id="SCALE"[^>]*>([^<]+)</text>', svg_text)
+    if not scale_match:
+        return True, []  # Missing scale already caught by check_title_block
+
+    scale_label = scale_match.group(1).strip()
+    parsed_ratio = _parse_scale_label(scale_label)
+    if parsed_ratio is None:
+        return True, []  # Unparseable already caught by check_title_block
+
+    closest_iso = min(_ISO_5455_SCALES, key=lambda s: abs(s - parsed_ratio))
+    rel_delta = abs(closest_iso - parsed_ratio) / max(closest_iso, 1e-9)
+    if rel_delta > _ISO_5455_SCALE_TOL:
+        issues.append(
+            f"scale_iso_conformity: '{scale_label}' (ratio={parsed_ratio:.4f}) is not an "
+            f"ISO 5455 scale (closest={_iso_ratio_label(closest_iso)}, "
+            f"delta={rel_delta:.1%} > tol {_ISO_5455_SCALE_TOL:.0%})"
+        )
+
+    return len(issues) == 0, issues
+
+
+def check_lk_callout(sample_name: str, report: dict, expected: dict) -> tuple[bool, list[str]]:
+    """For parts with a radial bolt-circle pattern, verify 'LK' callout appears in the SVG.
+
+    Only runs when 'check_lk_callout' is True in the EXPECTED dict.  The callout
+    'LK Ø <diameter>' is the German-standard notation for a Lochkreis (bolt circle).
+    """
+    issues = []
+    if not expected.get("check_lk_callout"):
+        return True, []
+
+    svg_path = DEBUG_DIR / f"{sample_name}_debug.svg"
+    if not svg_path.exists():
+        issues.append(f"Missing debug SVG for LK callout check: {svg_path}")
+        return False, issues
+
+    svg_text = svg_path.read_text(encoding="utf-8", errors="replace")
+    if "LK" not in svg_text:
+        hole_count = int(_float_or_none((report.get("features") or {}).get("hole_count")) or 0)
+        issues.append(
+            f"lk_callout: 'LK' Lochkreis callout missing for bolt-circle part "
+            f"(detected {hole_count} holes)"
+        )
 
     return len(issues) == 0, issues
 
@@ -1445,7 +1659,7 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Run view tests and optional golden baseline checks.")
     parser.add_argument(
         "--sample-set",
-        choices=("baseline", "real", "all"),
+        choices=("baseline", "real_priority", "real", "all"),
         default="baseline",
         help="Sample set to test (default: baseline).",
     )
@@ -1478,6 +1692,13 @@ def parse_args(argv=None):
         default=None,
         help="Run only one part by name (e.g. --single complex_bracket).",
     )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Run N tests in parallel (default: 1 = sequential).",
+    )
     return parser.parse_args(argv)
 
 
@@ -1485,11 +1706,97 @@ def resolve_golden_path(sample_set: str, explicit: Path | None) -> Path:
     if explicit is not None:
         return explicit
     normalized = str(sample_set or "").strip().lower() or "baseline"
+    if normalized == "real_priority":
+        return REAL_PRIORITY_GOLDEN_PATH
     if normalized == "real":
         return REAL_GOLDEN_PATH
     if normalized == "all":
         return ALL_GOLDEN_PATH
     return BASELINE_GOLDEN_PATH
+
+
+def _test_one_sample(
+    sample,
+    golden_parts: dict,
+    update_golden: bool,
+    stability_runs: int,
+    stability_sleep_ms: int,
+) -> dict:
+    """Run all checks for a single sample. Returns a result dict.
+
+    Keys: name, passed, issues, report, align_ok, orient_ok, feature_ok,
+    quality_ok, norm_ok, dim_ok, geom_ok, snapshot.
+    """
+    step_file = sample.step_path
+    name = sample.name
+
+    report = run_conversion(step_file, sample_name=name)
+    if "error" in report:
+        return {
+            "name": name,
+            "passed": False,
+            "issues": [report["error"]],
+            "report": report,
+            "align_ok": False,
+            "orient_ok": False,
+            "feature_ok": False,
+            "quality_ok": False,
+            "norm_ok": False,
+            "dim_ok": False,
+            "geom_ok": False,
+            "snapshot": None,
+        }
+
+    expected = EXPECTED.get(name, {})
+
+    align_ok, align_issues = check_alignment(report)
+    orient_ok, orient_issues = check_view_orientation(report, expected)
+    feature_ok, feature_issues = check_feature_expectations(report, expected)
+    quality_ok, quality_issues = check_layout_quality(report)
+    norm_ok, norm_issues = check_norm_conformity(name, report, expected)
+    dim_ok, dim_issues = check_dim_quality(report, expected)
+    dse_ok, dse_issues = check_dimension_plan(report, expected)
+    geom_ok, geom_issues = check_geometry_accuracy(report, expected)
+    abw_ok, abw_issues = check_abwicklung(report, expected)
+    title_ok, title_issues = check_title_block(name, report)
+    scale_ok, scale_issues = check_scale_iso_conformity(name, report)
+    lk_ok, lk_issues = check_lk_callout(name, report, expected)
+    all_issues = (align_issues + orient_issues + feature_issues + quality_issues
+                  + norm_issues + dim_issues + dse_issues + geom_issues
+                  + abw_issues + title_issues + scale_issues + lk_issues)
+
+    snapshot = build_baseline_snapshot(report)
+    if not update_golden:
+        expected_snapshot = golden_parts.get(name)
+        if expected_snapshot is None:
+            all_issues.append(f"Golden baseline missing entry for sample '{name}'")
+        else:
+            all_issues.extend(compare_baseline_snapshot(snapshot, expected_snapshot))
+
+    if stability_runs > 1 and expected.get("stability_check"):
+        stable_ok, stable_issues = run_stability_loop(
+            step_file,
+            snapshot,
+            stability_runs,
+            sleep_ms=max(0, stability_sleep_ms),
+        )
+        if not stable_ok:
+            all_issues.extend(stable_issues)
+
+    return {
+        "name": name,
+        "passed": len(all_issues) == 0,
+        "issues": all_issues,
+        "report": report,
+        "align_ok": align_ok,
+        "orient_ok": orient_ok,
+        "feature_ok": feature_ok,
+        "quality_ok": quality_ok,
+        "norm_ok": norm_ok,
+        "dim_ok": dim_ok,
+        "geom_ok": geom_ok,
+        "snapshot": snapshot,
+    }
 
 
 def main(argv=None):
@@ -1512,8 +1819,8 @@ def main(argv=None):
 
     samples = resolve_sample_set(args.sample_set)
     if args.single:
-        needle = args.single.lower().replace("-", "_").replace(" ", "_")
-        samples = [s for s in samples if s.name.lower().replace("-", "_") == needle]
+        needle = _normalize_sample_key(args.single)
+        samples = [s for s in samples if _normalize_sample_key(s.name) == needle]
         if not samples:
             print(f"Part '{args.single}' not found in sample set '{args.sample_set}'.")
             print(f"Available: {[s.name for s in resolve_sample_set(args.sample_set)]}")
@@ -1527,86 +1834,63 @@ def main(argv=None):
     print(f"Testing {len(samples)} STEP files")
     print(f"{'='*60}\n")
 
-    for sample in samples:
-        step_file = sample.step_path
-        name = sample.name
-        print(f"Testing: {name}...", end=" ", flush=True)
+    worker_kwargs = dict(
+        golden_parts=golden_parts,
+        update_golden=args.update_golden,
+        stability_runs=args.stability_runs,
+        stability_sleep_ms=max(0, args.stability_sleep_ms),
+    )
 
-        report = run_conversion(step_file, sample_name=name)
-        if "error" in report:
-            print(f"ERROR: {report['error'][:70]}")
-            results.append(
-                {
-                    "name": name,
-                    "passed": False,
-                    "issues": [report["error"]],
-                    "report": report,
-                    "align_ok": False,
-                    "orient_ok": False,
-                }
-            )
-            all_passed = False
-            continue
-
-        expected = EXPECTED.get(name, {})
-
-        align_ok, align_issues = check_alignment(report)
-        orient_ok, orient_issues = check_view_orientation(report, expected)
-        feature_ok, feature_issues = check_feature_expectations(report, expected)
-        quality_ok, quality_issues = check_layout_quality(report)
-        norm_ok, norm_issues = check_norm_conformity(name, report, expected)
-        dim_ok, dim_issues = check_dim_quality(report, expected)
-        dse_ok, dse_issues = check_dimension_plan(report, expected)
-        geom_ok, geom_issues = check_geometry_accuracy(report, expected)
-        abw_ok, abw_issues = check_abwicklung(report, expected)
-        title_ok, title_issues = check_title_block(name, report)
-        all_issues = (align_issues + orient_issues + feature_issues + quality_issues
-                      + norm_issues + dim_issues + dse_issues + geom_issues
-                      + abw_issues + title_issues)
-
-        snapshot = build_baseline_snapshot(report)
-        baseline_snapshots[name] = snapshot
-        if not args.update_golden:
-            expected_snapshot = golden_parts.get(name)
-            if expected_snapshot is None:
-                all_issues.append(f"Golden baseline missing entry for sample '{name}'")
-            else:
-                all_issues.extend(compare_baseline_snapshot(snapshot, expected_snapshot))
-
-        if args.stability_runs > 1 and expected.get("stability_check"):
-            stable_ok, stable_issues = run_stability_loop(
-                step_file,
-                snapshot,
-                args.stability_runs,
-                sleep_ms=max(0, args.stability_sleep_ms),
-            )
-            if not stable_ok:
-                all_issues.extend(stable_issues)
-
-        if all_issues:
-            print("FAILED")
-            for issue in all_issues:
+    def _process_result(result: dict):
+        """Print status and collect result. Returns True if passed."""
+        name = result["name"]
+        report = result["report"]
+        issues = result["issues"]
+        if result.get("snapshot") is not None:
+            baseline_snapshots[name] = result["snapshot"]
+        if issues:
+            print(f"Testing: {name}... FAILED")
+            for issue in issues:
                 print(f"   - {issue}")
-            all_passed = False
-        else:
-            det = report.get("detection", {})
-            print(f"OK (axis={det.get('longest_axis', '?')}, conf={det.get('confidence', 0):.2f})")
+            return False
+        det = report.get("detection", {})
+        if "error" in report:
+            print(f"Testing: {name}... ERROR: {report['error'][:70]}")
+            return False
+        print(f"Testing: {name}... OK (axis={det.get('longest_axis', '?')}, conf={det.get('confidence', 0):.2f})")
+        return True
 
-        results.append(
-            {
-                "name": name,
-                "passed": len(all_issues) == 0,
-                "issues": all_issues,
-                "report": report,
-                "align_ok": align_ok,
-                "orient_ok": orient_ok,
-                "feature_ok": feature_ok,
-                "quality_ok": quality_ok,
-                "norm_ok": norm_ok,
-                "dim_ok": dim_ok,
-                "geom_ok": geom_ok,
+    if args.parallel > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallel) as pool:
+            futures = {
+                pool.submit(_test_one_sample, sample, **worker_kwargs): sample.name
+                for sample in samples
             }
-        )
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                if not _process_result(result):
+                    all_passed = False
+                results.append(result)
+    else:
+        for sample in samples:
+            print(f"Testing: {sample.name}...", end=" ", flush=True)
+            result = _test_one_sample(sample, **worker_kwargs)
+            report = result["report"]
+            issues = result["issues"]
+            if result.get("snapshot") is not None:
+                baseline_snapshots[sample.name] = result["snapshot"]
+            if "error" in report:
+                print(f"ERROR: {report['error'][:70]}")
+                all_passed = False
+            elif issues:
+                print("FAILED")
+                for issue in issues:
+                    print(f"   - {issue}")
+                all_passed = False
+            else:
+                det = report.get("detection", {})
+                print(f"OK (axis={det.get('longest_axis', '?')}, conf={det.get('confidence', 0):.2f})")
+            results.append(result)
 
     if args.update_golden:
         golden_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,338 @@
+{
+  "generated_at": "2026-03-30T19:52:18+00:00",
+  "parts": {
+    "202500521_Abdeckblech Motorstecker 1_V1.0": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 110.0,
+        "Y": 270.0,
+        "Z": 68.0
+      },
+      "detection": {
+        "flatness_ratio": 0.618,
+        "is_flat": false,
+        "longest_axis": "Y",
+        "method": "first_angle_projection"
+      },
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "sheet_metal",
+        "process_note_count": 4,
+        "total_dim_count": 8,
+        "view_count": 4
+      },
+      "features": {
+        "bend_radius_mm": 0.2,
+        "hole_count": 6,
+        "hole_diameter_mm": 5.5,
+        "hole_pitch_mm": 75.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 3,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            95.94,
+            54.34
+          ],
+          "paper_size": [
+            112.47,
+            28.33
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            277.25,
+            167.53
+          ],
+          "paper_size": [
+            21.06,
+            48.07
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            246.49,
+            54.34
+          ],
+          "paper_size": [
+            45.82,
+            28.33
+          ],
+          "rotation_deg": 270
+        },
+        "Top": {
+          "center": [
+            95.94,
+            163.75
+          ],
+          "paper_size": [
+            112.47,
+            45.82
+          ],
+          "rotation_deg": 270
+        }
+      }
+    },
+    "202500521_Abdeckblech Motorstecker 2_V1.0": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 105.0,
+        "Y": 115.0,
+        "Z": 35.0
+      },
+      "detection": {
+        "flatness_ratio": 0.333,
+        "is_flat": false,
+        "longest_axis": "Y",
+        "method": "first_angle_projection"
+      },
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "sheet_metal",
+        "process_note_count": 4,
+        "total_dim_count": 8,
+        "view_count": 4
+      },
+      "features": {
+        "bend_radius_mm": 2.0,
+        "hole_count": 8,
+        "hole_diameter_mm": 4.0,
+        "hole_pitch_mm": 75.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 2,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            68.02,
+            36.3
+          ],
+          "paper_size": [
+            52.04,
+            15.84
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            206.08,
+            120.36
+          ],
+          "paper_size": [
+            19.82,
+            30.25
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            157.72,
+            36.3
+          ],
+          "paper_size": [
+            47.51,
+            15.84
+          ],
+          "rotation_deg": 270
+        },
+        "Top": {
+          "center": [
+            68.02,
+            108.53
+          ],
+          "paper_size": [
+            52.04,
+            47.51
+          ],
+          "rotation_deg": 270
+        }
+      }
+    },
+    "202500521_EOAT Versteifung_V1.0": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 410.0,
+        "Y": 20.0,
+        "Z": 10.0
+      },
+      "detection": {
+        "flatness_ratio": 0.5,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 7,
+        "view_count": 4
+      },
+      "features": {
+        "bend_radius_mm": 5.0,
+        "hole_count": 12,
+        "hole_diameter_mm": 5.5,
+        "hole_pitch_mm": 70.0,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 6,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            149.86,
+            3.66
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            81.41,
+            48.39
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            7.31,
+            3.66
+          ],
+          "rotation_deg": 270
+        },
+        "Top": {
+          "center": [
+            110.0,
+            176.5
+          ],
+          "paper_size": [
+            149.86,
+            7.31
+          ],
+          "rotation_deg": 180
+        }
+      }
+    },
+    "logiBOT_02_AbdeckblechSeitlichSpie_V1.1": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 592.0,
+        "Y": 17.0,
+        "Z": 297.0
+      },
+      "detection": {
+        "flatness_ratio": 0.057,
+        "is_flat": true,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "sheet_metal",
+        "process_note_count": 4,
+        "total_dim_count": 4,
+        "view_count": 4
+      },
+      "features": {
+        "bend_radius_mm": 11.5,
+        "hole_count": 0,
+        "hole_diameter_mm": null,
+        "hole_pitch_mm": null,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 0,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            100.5,
+            66.72
+          ],
+          "paper_size": [
+            130.19,
+            65.32
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            273.35,
+            148.55
+          ],
+          "paper_size": [
+            62.21,
+            37.01
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            225.39,
+            66.72
+          ],
+          "paper_size": [
+            3.74,
+            65.32
+          ],
+          "rotation_deg": 270
+        },
+        "Top": {
+          "center": [
+            100.5,
+            161.36
+          ],
+          "paper_size": [
+            130.19,
+            3.74
+          ],
+          "rotation_deg": 180
+        }
+      }
+    }
+  },
+  "sample_count": 4
+}

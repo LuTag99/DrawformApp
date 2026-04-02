@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from typing import Mapping
 
@@ -17,9 +18,12 @@ _VIEW_PRIORITY = {"Front": 0, "Top": 1, "Left": 2}
 
 def _as_float(value) -> float | None:
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
 
 
 def get_view_plan(dim_plan: Mapping[str, object] | None, view_name: str) -> dict | None:

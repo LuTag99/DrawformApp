@@ -1,0 +1,66 @@
+{
+  "generated_at": "2026-03-26T00:00:00+00:00",
+  "description": "Curated real-part gate set. Synthetic baseline stays in server/_golden/views_baseline.json; this manifest defines the smaller real-priority gate and the linked reference-learning budgets.",
+  "samples": [
+    {
+      "name": "logiBOT_02_AbdeckblechSeitlichSpie_V1.1",
+      "group": "priority",
+      "expected_part_type": "sheet_metal",
+      "reference_learning": {
+        "max_occupancy_l1": 0.07,
+        "min_font_ratio": 0.6,
+        "require_sheet_match": true,
+        "require_abwicklung_match": true,
+        "disallowed_flags": [
+          "sheet_mismatch",
+          "abwicklung_mismatch"
+        ]
+      }
+    },
+    {
+      "name": "202500521_Abdeckblech Motorstecker 1_V1.0",
+      "group": "priority",
+      "expected_part_type": "sheet_metal",
+      "reference_learning": {
+        "max_occupancy_l1": 0.045,
+        "min_font_ratio": 0.57,
+        "require_sheet_match": true,
+        "require_abwicklung_match": true,
+        "disallowed_flags": [
+          "sheet_mismatch",
+          "abwicklung_mismatch"
+        ]
+      }
+    },
+    {
+      "name": "202500521_Abdeckblech Motorstecker 2_V1.0",
+      "group": "priority",
+      "expected_part_type": "sheet_metal",
+      "reference_learning": {
+        "max_occupancy_l1": 0.045,
+        "min_font_ratio": 0.57,
+        "require_sheet_match": true,
+        "require_abwicklung_match": true,
+        "disallowed_flags": [
+          "sheet_mismatch",
+          "abwicklung_mismatch"
+        ]
+      }
+    },
+    {
+      "name": "202500521_EOAT Versteifung_V1.0",
+      "group": "priority",
+      "expected_part_type": "milling",
+      "reference_learning": {
+        "max_occupancy_l1": 0.041,
+        "min_font_ratio": 0.69,
+        "require_sheet_match": true,
+        "require_abwicklung_match": true,
+        "disallowed_flags": [
+          "sheet_mismatch",
+          "abwicklung_mismatch"
+        ]
+      }
+    }
+  ]
+}

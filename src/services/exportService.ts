@@ -19,6 +19,7 @@ export interface PdfExportOptions {
   sheet?: string;
   kFactor?: string;
   detailLevel?: number;
+  includeFlatPattern?: boolean;
 }
 
 export interface DxfExportOptions {
@@ -83,6 +84,9 @@ export async function requestPdfExport(
   appendOptionalField(formData, 'sheet', options.sheet);
   appendOptionalField(formData, 'k_factor', options.kFactor);
   appendOptionalField(formData, 'detail_level', options.detailLevel);
+  if (options.includeFlatPattern !== undefined) {
+    formData.append('include_flat_pattern', options.includeFlatPattern ? '1' : '0');
+  }
   try {
     const response = await fetch('/api/export', {
       method: 'POST',

@@ -5,7 +5,7 @@
       .grid { fill: none; stroke: #000; stroke-width: 0.25; }
       .label {
         font-family: ISOCP, "ISO 3098", "Hershey Simplex", "Simplex", monospace;
-        font-size: 3.4px;
+        font-size: 4.0px;
         fill: #000;
         font-style: normal;
         font-weight: normal;
@@ -19,7 +19,7 @@
       }
       .zone {
         font-family: ISOCP, "ISO 3098", "Hershey Simplex", "Simplex", monospace;
-        font-size: 4.0px;
+        font-size: 4.2px;
         fill: #000;
       }
     </style>

@@ -67,6 +67,18 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Unsupported scale", response.text)
 
+    def test_ai_insight_endpoint_returns_backend_proxy_payload(self) -> None:
+        response = self.client.post(
+            "/api/ai-insight",
+            json={"statusSummary": "Fast gate ok, baseline 20/20 passed, complex_bracket render ok."},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertIsInstance(payload.get("narrative"), str)
+        self.assertTrue(payload["narrative"])
+        self.assertEqual(payload.get("chips"), ["Fast Gate gruen", "Baseline stabil", "Weiterbauen"])
+
     def test_analyze_job_lifecycle(self) -> None:
         probe_payload = {
             "ok": True,

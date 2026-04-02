@@ -61,19 +61,38 @@ def _get_kb() -> dict:
     return _KB_CACHE
 
 
-def _action_rule_map(kb: dict, feature: str, context: dict) -> Dict[str, str]:
-    """Return {action_dimension_key -> rule_id} for the given feature+context.
+def _kb_wants_dimension(
+    kb: dict,
+    feature: str,
+    dimension_key: str,
+    context: dict,
+) -> Optional[str]:
+    """Return rule_id if the KB mandates or suggests this dimension, else None.
 
-    Only approved rules are considered (select_applicable_rules filters drafts).
-    Used to populate DimensionItem.rule_id with traceability back to ISO norms.
+    Consults only 'must' and 'should' priority rules (not 'must_not').
+    The ``dimension_key`` matches against ``action.dimension`` or
+    ``action.parameter`` in approved KB rules for the given feature+context.
+
+    Context note: the rule_engine ``_match_condition`` strips ``_min``/``_max``
+    suffixes, so ``when: {count_min: 2}`` requires ``context={"count": N}``,
+    NOT ``context={"count_min": N}``.
+
+    Returns None when the KB is empty or no matching rule fires — callers
+    must fall back to their existing hardcoded logic in that case.
+
+    Note: 'global' feature rules are not queried here to avoid false matches
+    from global forbid/validate actions that share dimension key names.
     """
-    mapping: Dict[str, str] = {}
+    if not kb:
+        return None
     for rule in select_applicable_rules(kb, feature=feature, context=context):
+        if rule.get("priority") == "must_not":
+            continue
         for action in rule.get("actions", []):
-            key = action.get("dimension") or action.get("parameter") or action.get("type")
-            if key and key not in mapping:
-                mapping[key] = rule["id"]
-    return mapping
+            action_dim = action.get("dimension") or action.get("parameter")
+            if action_dim == dimension_key:
+                return str(rule["id"])
+    return None
 
 
 _VIEW_FALLBACK_ORDER = ("Front", "Top", "Left", "FlatPattern", "Iso")
@@ -87,13 +106,13 @@ _DIMENSION_PRIMARY_VIEWS: Dict[str, tuple[str, ...]] = {
     "hole_location_y": ("Front", "Top", "Left"),
     "thread_callout": ("Front", "Left", "Top"),
     "bend_radius": ("Front", "Left", "Top"),
+    "sheet_thickness": ("Front", "Left", "Top"),
     "flat_length": ("FlatPattern", "Front", "Top"),
     "flat_width": ("FlatPattern", "Front", "Left"),
     "pocket_depth": ("Left", "Front", "Top"),
     "pocket_location": ("Front", "Top", "Left"),
     "step_height": ("Left", "Front", "Top"),
 }
-
 
 def _rule_by_id(kb: dict, feature: str, context: dict) -> Dict[str, dict]:
     return {
@@ -306,6 +325,11 @@ def _looks_like_compact_flat_milling_part(
         return False
 
     longest, mid_dim, thickness = sorted_dims[:3]
+
+    # Thick plates (> 8mm) are always milling, regardless of aspect ratio
+    if thickness > 8.0:
+        return True
+
     plan_aspect = longest / max(mid_dim, 1e-6)
     thickness_ratio = thickness / max(mid_dim, 1e-6)
     return plan_aspect <= 1.35 and thickness_ratio >= 0.08
@@ -369,6 +393,10 @@ def select_layout_profile_standalone(
                     return "sheet_metal"
 
     # Tier 3: BBox ratio fallback
+    # Guard: absolute thickness > 8mm is never sheet metal (max ~6mm in practice)
+    bbox_min_dim = min(dim_x, dim_y, dim_z)
+    if bbox_min_dim > 8.0:
+        return "milling"
     cone_count_t3 = int(fp.get("cone_face_count") or 0)
     if cone_count_t3 == 0:
         thickness_axis = str(fp.get("thickness_axis") or "").upper()
@@ -422,26 +450,23 @@ def _plan_milling(
     mid_val = sorted_axes[1][1] if len(sorted_axes) > 1 else 0
     shortest_val = sorted_axes[2][1] if len(sorted_axes) > 2 else 0
 
-    # Knowledge-base rule lookups — runtime traceability for rule_id fields
     hole_count = int(fp.get("hole_count") or 0)
     thread_label = fp.get("thread_label")
     kb = _get_kb()
-    outer_map   = _action_rule_map(kb, "outer_contour", {"view_kind": "orthographic"})
-    hole_map    = _action_rule_map(kb, "hole", {"visible": True})
-    pattern_map = _action_rule_map(kb, "hole_pattern", {"count": hole_count})
-    thread_map  = _action_rule_map(kb, "thread", {}) if thread_label else {}
-    outer_rule  = outer_map.get("overall_length") or outer_map.get("overall_height")
 
+    # Overall dimensions — KB: overall_dimensions_required (ISO 129-1)
+    outer_rule_id = _kb_wants_dimension(
+        kb, "outer_contour", "overall_length", {"view_kind": "orthographic"}
+    )
     front_dims: List[DimensionItem] = [
         _dim("overall_length", "Front", axis="H", value_mm=longest_val,
-             rule_id=outer_rule),
+             rule_id=outer_rule_id),
         _dim("overall_height", "Front", axis="V", value_mm=mid_val,
-             rule_id=outer_rule),
+             rule_id=outer_rule_id),
     ]
-
     top_dims: List[DimensionItem] = [
         _dim("overall_depth", "Top", axis="V", value_mm=shortest_val,
-             rule_id=outer_rule),
+             rule_id=outer_rule_id),
     ]
 
     # Hole features
@@ -449,39 +474,97 @@ def _plan_milling(
     hole_pitch = _opt_float(fp.get("hole_pitch_mm"))
     hole_groups = fp.get("hole_groups") or []
 
-    if hole_count > 0 and hole_diameter is not None:
+    # Hole diameter — KB: hole_diameter_required (ISO 129-1)
+    hd_rule_id = _kb_wants_dimension(kb, "hole", "diameter", {"visible": True})
+    if hd_rule_id is not None and hole_diameter is not None:
         front_dims.append(
             _dim("hole_diameter", "Front", value_mm=hole_diameter,
                  label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}",
-                 rule_id=hole_map.get("diameter"))
+                 rule_id=hd_rule_id)
+        )
+    elif hole_count > 0 and hole_diameter is not None:  # fallback when KB absent
+        front_dims.append(
+            _dim("hole_diameter", "Front", value_mm=hole_diameter,
+                 label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}")
         )
 
-    if hole_count >= 2 and hole_pitch is not None and hole_pitch > 0:
+    # Hole pitch — KB: hole_location_required (count_min=2, ISO 129-1)
+    hp_rule_id = _kb_wants_dimension(
+        kb, "hole_pattern", "pitch_or_spacing", {"count": hole_count}
+    )
+    if hp_rule_id is not None and hole_pitch is not None and hole_pitch > 0:
         front_dims.append(
             _dim("hole_pitch", "Front", axis="H", value_mm=hole_pitch,
-                 rule_id=pattern_map.get("pitch_or_spacing"))
+                 rule_id=hp_rule_id)
+        )
+    elif hole_count >= 2 and hole_pitch is not None and hole_pitch > 0:  # fallback when KB absent
+        front_dims.append(
+            _dim("hole_pitch", "Front", axis="H", value_mm=hole_pitch)
         )
 
-    # Hole locations from datum (coordinate dimensioning)
-    if hole_count >= 1 and hole_groups:
-        front_dims.append(
-            _dim("hole_location_x", "Front", axis="H",
-                 rule_id=pattern_map.get("position_from_datums"))
-        )
-        front_dims.append(
-            _dim("hole_location_y", "Front", axis="V",
-                 rule_id=pattern_map.get("position_from_datums"))
-        )
+    # Hole locations from datum — KB: hole_location_required (count_min=2, ISO 129-1)
+    # Fallback retains original ≥1 threshold when KB is absent (single-hole parts still get located)
+    hl_rule_id = _kb_wants_dimension(
+        kb, "hole_pattern", "position_from_datums", {"count": hole_count}
+    )
+    if hl_rule_id is not None and hole_groups:
+        front_dims.append(_dim("hole_location_x", "Front", axis="H", rule_id=hl_rule_id))
+        front_dims.append(_dim("hole_location_y", "Front", axis="V", rule_id=hl_rule_id))
+    elif hole_count >= 1 and hole_groups:  # fallback when KB absent
+        front_dims.append(_dim("hole_location_x", "Front", axis="H"))
+        front_dims.append(_dim("hole_location_y", "Front", axis="V"))
 
-    if thread_label:
+    # Thread callout — KB: thread_callout_required (ISO 261/965)
+    tc_rule_id = (
+        _kb_wants_dimension(kb, "thread", "thread_designation", {})
+        if thread_label else None
+    )
+    if tc_rule_id is not None and thread_label:
         front_dims.append(
             _dim("thread_callout", "Front",
                  label=f"{thread_label} GEWINDE",
-                 rule_id=thread_map.get("thread_designation"))
+                 rule_id=tc_rule_id)
         )
+    elif thread_label:  # fallback when KB absent
+        front_dims.append(_dim("thread_callout", "Front", label=f"{thread_label} GEWINDE"))
+
+    # Slot features — KB: slot_complete_definition (ISO 129-1)
+    slot_groups = fp.get("slot_groups") or []
+    slot_count = int(fp.get("slot_count") or len(slot_groups))
 
     # Detail level 2+: add depth dimensions on Left view
     left_dims: List[DimensionItem] = []
+
+    if slot_count > 0 and slot_groups:
+        representative = slot_groups[0]
+        sw = _opt_float(representative.get("width_mm"))
+        sl = _opt_float(representative.get("length_mm"))
+        orientation = str(representative.get("orientation") or "H")
+        sw_rule_id = _kb_wants_dimension(kb, "slot", "width", {})
+        sl_rule_id = _kb_wants_dimension(kb, "slot", "length", {})
+        loc_rule_id = _kb_wants_dimension(kb, "slot", "location_from_datums", {})
+        view = "Front" if orientation == "H" else "Left"
+        slot_dims = front_dims if view == "Front" else left_dims
+        if sw is not None:
+            slot_dims.append(
+                _dim("slot_width", view, axis="V", value_mm=sw,
+                     rule_id=sw_rule_id, priority="should")
+            )
+        if sl is not None:
+            slot_dims.append(
+                _dim("slot_length", view, axis="H", value_mm=sl,
+                     rule_id=sl_rule_id, priority="should")
+            )
+        slot_dims.append(
+            _dim("slot_location", view, axis="H",
+                 rule_id=loc_rule_id, priority="should")
+        )
+        if slot_count >= 2:
+            front_dims.append(
+                _dim("feature_count", "Front",
+                     label=f"{slot_count}× LANGLOCH",
+                     value_mm=float(slot_count), priority="should")
+            )
     if detail_level >= 2:
         left_dims.append(
             _dim("overall_depth", "Left", axis="H", value_mm=shortest_val,
@@ -508,17 +591,18 @@ def _plan_sheet_metal(
     longest_val = sorted_axes[0][1] if sorted_axes else 0
     mid_val = sorted_axes[1][1] if len(sorted_axes) > 1 else 0
 
-    # Knowledge-base rule lookups — runtime traceability for rule_id fields
     kb = _get_kb()
-    outer_map   = _action_rule_map(kb, "outer_contour", {"view_kind": "orthographic"})
-    outer_rule  = outer_map.get("overall_length") or outer_map.get("overall_height")
 
+    # Overall dimensions — KB: overall_dimensions_required (ISO 129-1)
+    outer_rule_id = _kb_wants_dimension(
+        kb, "outer_contour", "overall_length", {"view_kind": "orthographic"}
+    )
     # 3D folded views — always present
     front_dims: List[DimensionItem] = [
         _dim("overall_length", "Front", axis="H", value_mm=longest_val,
-             rule_id=outer_rule),
+             rule_id=outer_rule_id),
         _dim("overall_height", "Front", axis="V", value_mm=mid_val,
-             rule_id=outer_rule),
+             rule_id=outer_rule_id),
     ]
 
     top_dims: List[DimensionItem] = []
@@ -526,16 +610,22 @@ def _plan_sheet_metal(
     # Flat pattern (Abwicklung) — primary dimensioning surface for sheet metal
     flat_dims: List[DimensionItem] = []
     has_unfold = isinstance(unfold_result, dict) and unfold_result.get("ok") is True
+
+    # flat_length / flat_width — KB: flat_pattern_dimensions_required
+    fl_rule_id = _kb_wants_dimension(kb, "sheet_metal", "flat_length", {"has_unfold": has_unfold})
+    fw_rule_id = _kb_wants_dimension(kb, "sheet_metal", "flat_width",  {"has_unfold": has_unfold})
     if has_unfold:
         fl = _opt_float(unfold_result.get("flat_length_mm"))
         fw = _opt_float(unfold_result.get("flat_width_mm"))
         if fl is not None:
             flat_dims.append(
-                _dim("flat_length", "FlatPattern", axis="H", value_mm=fl)
+                _dim("flat_length", "FlatPattern", axis="H", value_mm=fl,
+                     rule_id=fl_rule_id)
             )
         if fw is not None:
             flat_dims.append(
-                _dim("flat_width", "FlatPattern", axis="V", value_mm=fw)
+                _dim("flat_width", "FlatPattern", axis="V", value_mm=fw,
+                     rule_id=fw_rule_id)
             )
 
     # Bend radius only belongs on real bent parts. Flat laser-cut plates often
@@ -547,11 +637,41 @@ def _plan_sheet_metal(
     else:
         has_real_bends = int(flat_pattern.get("bend_count") or 0) > 0
     bend_radius = _opt_float(fp.get("bend_radius_mm"))
-    if has_real_bends and bend_radius is not None and bend_radius > 0:
+
+    # Bend radius — KB: bend_radius_required (has_real_bends guard)
+    br_rule_id = _kb_wants_dimension(
+        kb, "sheet_metal", "bend_radius", {"has_real_bends": has_real_bends}
+    )
+    if br_rule_id is not None and bend_radius is not None and bend_radius > 0:
+        front_dims.append(
+            _dim("bend_radius", "Front", value_mm=bend_radius,
+                 label=f"R{_fmt(bend_radius)}",
+                 priority="should", rule_id=br_rule_id)
+        )
+    elif has_real_bends and bend_radius is not None and bend_radius > 0:  # fallback when KB absent
         front_dims.append(
             _dim("bend_radius", "Front", value_mm=bend_radius,
                  label=f"R{_fmt(bend_radius)}",
                  priority="should")
+        )
+
+    # Sheet metal thickness ("s = X,X") — KB: sheet_thickness_required
+    measured_t = _opt_float(fp.get("measured_thickness_mm"))
+    has_thickness = measured_t is not None and 0 < measured_t <= 10.0
+    st_rule_id = _kb_wants_dimension(
+        kb, "sheet_metal", "sheet_thickness", {"has_thickness": has_thickness}
+    )
+    if st_rule_id is not None and has_thickness:
+        front_dims.append(
+            _dim("sheet_thickness", "Front", value_mm=measured_t,
+                 label=f"s = {_fmt(measured_t)}",
+                 priority="must", rule_id=st_rule_id)
+        )
+    elif has_thickness:  # fallback when KB absent
+        front_dims.append(
+            _dim("sheet_thickness", "Front", value_mm=measured_t,
+                 label=f"s = {_fmt(measured_t)}",
+                 priority="must")
         )
 
     views = [
@@ -576,26 +696,35 @@ def _plan_turning(
     longest_val = sorted_axes[0][1] if sorted_axes else 0
     mid_val = sorted_axes[1][1] if len(sorted_axes) > 1 else 0
 
-    # Knowledge-base rule lookups — runtime traceability for rule_id fields
     kb = _get_kb()
-    outer_map  = _action_rule_map(kb, "outer_contour", {"view_kind": "orthographic"})
-    hole_map   = _action_rule_map(kb, "hole", {"visible": True})
-    outer_rule = outer_map.get("overall_length") or outer_map.get("overall_height")
 
+    # Overall dimensions — KB: overall_dimensions_required (ISO 129-1)
+    outer_rule_id = _kb_wants_dimension(
+        kb, "outer_contour", "overall_length", {"view_kind": "orthographic"}
+    )
+    # Ø-label on overall_height — KB: turning_diameter_overall_required
+    diam_rule_id = _kb_wants_dimension(kb, "turning", "overall_diameter", {})
     front_dims: List[DimensionItem] = [
         _dim("overall_length", "Front", axis="H", value_mm=longest_val,
-             rule_id=outer_rule),
+             rule_id=outer_rule_id),
         _dim("overall_height", "Front", axis="V", value_mm=mid_val,
              label=f"{_DIAMETER_SYMBOL}{_fmt(mid_val)}",
-             rule_id=outer_rule),
+             rule_id=diam_rule_id or outer_rule_id),
     ]
 
+    # Hole diameter — KB: hole_diameter_required (ISO 129-1)
     hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
-    if hole_diameter is not None:
+    hd_rule_id = _kb_wants_dimension(kb, "hole", "diameter", {"visible": True})
+    if hd_rule_id is not None and hole_diameter is not None:
         front_dims.append(
             _dim("hole_diameter", "Front", value_mm=hole_diameter,
                  label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}",
-                 rule_id=hole_map.get("diameter"))
+                 rule_id=hd_rule_id)
+        )
+    elif hole_diameter is not None:  # fallback when KB absent
+        front_dims.append(
+            _dim("hole_diameter", "Front", value_mm=hole_diameter,
+                 label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}")
         )
 
     return [

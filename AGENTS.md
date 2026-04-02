@@ -40,6 +40,7 @@ Pruefe bei Aufgaben rund um die Zeichnungsqualitaet immer zuerst diese Dateien:
 - `server/freecad/step_feature_probe.py`
 - `server/freecad/step_unfold.py`
 - `server/rules/dimension_strategy.py`
+- `server/rules/dimension_plan_schema.py`
 - `server/test_views.py`
 - `server/_debug/*`
 - `server/docs/DIN_ISO_BASELINE_TECHNISCHE_ZEICHNUNG.md`
@@ -54,7 +55,7 @@ Jeder Task beginnt mit dieser Einordnung:
 TASK CLASSIFICATION
 - Task summary:
 - Domain impact:
-- Path type: FAST-PATH, FULL-PATH or LONG-RUN
+- Path type: FAST-PATH, MEDIUM-PATH, FULL-PATH or LONG-RUN
 - Required agents:
 - Required artifacts:
 - Main acceptance risk:
@@ -91,6 +92,29 @@ Typische Faelle:
 
 Nicht `FAST-PATH`, wenn Prompt-, Regel- oder Prozesslogik fuer die Agenten selbst geaendert wird und dadurch Routing, Freigabe oder Qualitaetsmassstaebe beeinflusst werden koennen.
 
+### MEDIUM-PATH
+
+`MEDIUM-PATH` ist fuer Aenderungen, die den Zeichnungsoutput beeinflussen, aber kein neues Rendering erfordern, weil sich das sichtbare Ergebnis vorhersagbar aendert.
+
+Typische Faelle:
+
+- Schriftfeld-Aenderungen (Title-Block-Felder, Labels, Formatierung)
+- Skalenlabel-Logik ohne Aenderung der tatsaechlichen Skalierung
+- Aenderungen an Annotationstext oder Info-Zeilen
+- Testtoleranzen oder Check-Logik in `test_views.py`
+- DSE-Plan-Pipeline-Aenderungen ohne Aenderung der Planlogik selbst
+
+Nicht `MEDIUM-PATH`, wenn Ansichtswahl, Massstab, Bemaessungsplatzierung oder Layoutlogik betroffen sind.
+
+MEDIUM-PATH Workflow:
+
+1. Task klassifizieren.
+2. Aenderung umsetzen.
+3. Baseline-Golden regenerieren (`--update-golden`).
+4. Regression pruefen (20/20 baseline).
+5. Delta-Scoring: Critic bewertet nur die geaenderten Kriterien (nicht alle 7).
+6. Iteration dokumentieren.
+
 ### FULL-PATH
 
 `FULL-PATH` ist verpflichtend, wenn die Aufgabe einen der folgenden Bereiche betrifft:
@@ -125,6 +149,7 @@ Typische Faelle:
 ### Routing-Regeln
 
 - `FAST-PATH` => `Agent_planner.md` in `LIGHT` mode -> `Agent_builder.md` -> `Agent_critic.md` in `LIGHT` mode -> `Agent_report.md`
+- `MEDIUM-PATH` => `Agent_builder.md` -> Baseline-Golden regenerieren -> Regression (20/20) -> `Agent_critic.md` in `DELTA` mode -> `Agent_report.md`
 - `FULL-PATH` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_artifact_steward.md` -> `Agent_critic.md` -> `Agent_regression.md` -> `Agent_report.md`
 - `LONG-RUN` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_artifact_steward.md` -> `Agent_critic.md` -> `Agent_regression.md` -> iterative `Agent_builder.md` / `Agent_artifact_steward.md` / `Agent_critic.md` / `Agent_regression.md` cycles as needed -> `Agent_report.md`
 
@@ -182,6 +207,14 @@ Wenn eine Rolle die Datei nicht direkt schreiben kann, muss sie dieselben Felder
 - darf auf vollstaendiges `35/35`-Scoring nur verzichten, wenn keine Zeichnungslogik und keine Exportartefakte betroffen sind
 - eskaliert auf `FULL-PATH`, sobald fachlicher oder visueller Einfluss auf den Output moeglich ist
 
+### Critic in DELTA mode
+
+- wird bei `MEDIUM-PATH` eingesetzt
+- bewertet nur die Kriterien, die von der Aenderung direkt betroffen sind
+- begruendet, welche Kriterien bewertet und welche uebersprungen werden
+- Mindestgrenze: betroffene Kriterien muessen jeweils mindestens `4/5` erreichen
+- eskaliert auf `FULL-PATH`, wenn die Aenderung doch breitere Auswirkungen hat
+
 ## Pflichtworkflow je Iteration
 
 ### FAST-PATH
@@ -194,6 +227,16 @@ Wenn eine Rolle die Datei nicht direkt schreiben kann, muss sie dieselben Felder
 6. Iteration dokumentieren.
 
 Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain Impact explizit begruendet und durch den Critic bestaetigt wurde.
+
+### MEDIUM-PATH
+
+1. Task klassifizieren und begruenden, warum kein `FULL-PATH` noetig ist.
+2. Aenderung umsetzen.
+3. DSE-Unittests ausfuehren (`46/46`).
+4. Baseline-Golden regenerieren (`--update-golden --stability-runs 1`).
+5. Regression pruefen (`--stability-runs 1`, `20/20`).
+6. Critic in `DELTA` mode: nur betroffene Kriterien bewerten (z.B. nur Kriterium 7 bei Schriftfeld-Aenderung).
+7. Iteration dokumentieren.
 
 ### FULL-PATH
 
@@ -232,6 +275,15 @@ Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain
 - Critic-Entscheidung im `LIGHT` mode
 - Iteration Report
 
+### MEDIUM-PATH
+
+- `TASK CLASSIFICATION`
+- Liste der geaenderten Dateien
+- DSE-Unittest-Ergebnis
+- Baseline-Regression (`20/20`)
+- Delta-Scoring (nur betroffene Kriterien)
+- Iteration Report
+
 ### FULL-PATH
 
 - `TASK CLASSIFICATION`
@@ -247,17 +299,20 @@ Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain
 - aktuelles `*_report.json`
 - Regression ueber betroffene Benchmark-Faelle oder Geometrieklassen
 - Critic-Scoring und Entscheidung
+- `KB_PROPOSAL`-Bloecke fuer MAJOR/SHOWSTOPPER Failures (Critic, siehe Agent_critic.md Abschnitt 8)
+- `PROPOSED KB RULES`-Tabelle im Report (siehe Agent_report.md Abschnitt 8)
 - Iteration Report
 
 ### LONG-RUN
 
-- alle `FULL-PATH`-Artefakte
+- alle `FULL-PATH`-Artefakte (inkl. `KB_PROPOSAL` und `PROPOSED KB RULES`)
 - persistenter `run_id` ueber alle Iterationen
 - mindestens ein Stabilitaetslauf mit `>= 5` Wiederholungen
 - Regression ueber `baseline` plus betroffene Geometrieklassen
 - reale Referenzfaelle oder explizite Begruendung, warum keine verfuegbar sind
 - zwei aufeinanderfolgende Critic- und Regression-Freigaben vor Release
 - Iterationsvergleich mit Voriteration im Report
+- kumulierte KB-Regelvorschlaege ueber alle Iterationen
 
 ## Qualitaetskriterien
 
@@ -292,6 +347,10 @@ Unterstelle keine vollstaendige Normabdeckung, wenn diese im System noch nicht i
 - `HOLE_PATTERN_UNCLEAR`
 - `PROJECTION_INCONSISTENT`
 - `TITLEBLOCK_INCOMPLETE`
+- `GDT_MISSING`
+- `SECTION_VIEW_MISSING`
+- `ANNOTATION_OVERLAP`
+- `CHAMFER_UNLABELED`
 
 ## Mangelklassen
 
@@ -325,6 +384,7 @@ Im `FAST-PATH` ist ein vollstaendiges Scoring nur dann entbehrlich, wenn der Cri
 ## Freigaberegeln
 
 - `FAST-PATH` ist nur freigegeben, wenn Critic `LIGHT` bestaetigt, dass kein fachlich relevanter Output betroffen ist.
+- `MEDIUM-PATH` ist nur freigegeben, wenn Baseline-Regression `20/20` besteht und die betroffenen Critic-Kriterien jeweils `4/5` erreichen.
 - `FULL-PATH` ist nur freigegeben, wenn kein KO-Kriterium greift, jedes Hauptkriterium mindestens `4/5` erreicht, die Summe mindestens `30/35` betraegt und Regression keine fachliche Verschlechterung im Zielbereich zeigt.
 - `LONG-RUN` ist nur freigegeben, wenn zwei aufeinanderfolgende Critic- und Regression-Durchlaeufe dieselben Mindestgrenzen halten, die Stabilitaetslaeufe sauber bleiben und kein relevanter Benchmark-Fall degradiert.
 

@@ -67,6 +67,29 @@ ITERATION REPORT
 
 7. Next Best Action
 - genau ein konkreter naechster Schritt
+
+8. Proposed KB Rules
+Sammle alle KB_PROPOSAL-Bloecke aus dem Critic-Output dieser Iteration.
+Klassifiziere jeden Vorschlag:
+
+- READY_TO_APPLY   — klare Regel, direkt in knowledge_base.json einpflegbar
+- NEEDS_REVIEW     — Regel ist plausibel, aber Kontext oder Format unklar
+- CODE_BUG         — kein KB-Eintrag noetig, stattdessen Code-Fix erforderlich
+- DUPLICATE        — bestehende Regel greift bereits, nur nicht angewendet (rule_id angeben)
+
+Format:
+
+PROPOSED KB RULES — Iteration <iteration>
+
+| # | Status | Failure Class | Rule ID (Vorschlag) | Feature | Aktion |
+|---|--------|--------------|---------------------|---------|--------|
+| 1 | READY_TO_APPLY | DIMENSION_MISSING | ... | ... | ... |
+| 2 | CODE_BUG | ANNOTATION_OVERLAP | — | — | Fix in step_to_pdf.py: ... |
+
+JSON-Bloecke (nur fuer READY_TO_APPLY):
+[Copy-paste-bereite JSON-Regeln hier — eine pro Block]
+
+Wenn keine MAJOR/SHOWSTOPPER-Failures vorlagen: "Keine KB-Vorschlaege diese Iteration."
 ```
 
 ## Prinzipien

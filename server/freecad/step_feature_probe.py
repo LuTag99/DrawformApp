@@ -49,10 +49,37 @@ def _axes_are_parallel(v1: App.Vector, v2: App.Vector, tol_deg: float = 15.0) ->
     return cos_theta >= math.cos(math.radians(tol_deg))
 
 
-def collect_circle_data(shape: Part.Shape, thickness_axis: str):
+def _cylinder_face_angle_span(face: Part.Face) -> float:
+    try:
+        u0, u1, _v0, _v1 = face.ParameterRange
+        return abs(float(u1) - float(u0))
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+
+
+def _cylinder_face_is_internal(face: Part.Face, center: App.Vector, axis: App.Vector) -> bool:
+    try:
+        u0, u1, v0, v1 = face.ParameterRange
+        u_mid = (float(u0) + float(u1)) * 0.5
+        v_mid = (float(v0) + float(v1)) * 0.5
+        point = face.valueAt(u_mid, v_mid)
+        normal = face.normalAt(u_mid, v_mid)
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        return False
+
+    axis_len_sq = axis.dot(axis)
+    if axis_len_sq <= 1e-9:
+        return False
+    axis_point = center.add(axis.multiply(axis.dot(point.sub(center)) / axis_len_sq))
+    radial = point.sub(axis_point)
+    if radial.Length <= 1e-9:
+        return False
+    return normal.dot(radial) < 0.0
+
+
+def collect_edge_circle_data(shape: Part.Shape, thickness_axis: str):
     grouped: dict[tuple[float, float], dict[str, object]] = {}
     all_diameters: list[float] = []
-    thickness_vec = _axis_direction_vector(thickness_axis)
 
     for edge in shape.Edges:
         curve = getattr(edge, "Curve", None)
@@ -67,9 +94,6 @@ def collect_circle_data(shape: Part.Shape, thickness_axis: str):
         if radius <= 1e-6 or center is None:
             continue
 
-        # Filter: arc must span ≥50% of the full circumference.
-        # Accepts: full holes (100%), slot semicircular ends (180° = 50%).
-        # Rejects: bend arcs (90° = 25%), edge fillets/chamfers (<45%).
         expected_circ = 2.0 * math.pi * radius
         edge_length = float(getattr(edge, "Length", expected_circ) or expected_circ)
         if edge_length < expected_circ * 0.50:
@@ -104,6 +128,211 @@ def collect_circle_data(shape: Part.Shape, thickness_axis: str):
             }
         )
     return circle_groups, all_diameters
+
+
+def collect_internal_cylinder_circle_data(shape: Part.Shape, thickness_axis: str):
+    grouped: dict[tuple[float, float], dict[str, object]] = {}
+    thickness_vec = _axis_direction_vector(thickness_axis)
+
+    for face in shape.Faces:
+        surface = getattr(face, "Surface", None)
+        if surface is None or surface.__class__.__name__ != "Cylinder":
+            continue
+        radius = float(getattr(surface, "Radius", 0.0) or 0.0)
+        center = getattr(surface, "Center", None)
+        axis = getattr(surface, "Axis", None)
+        if radius <= 1e-6 or center is None or axis is None:
+            continue
+        if not _axes_are_parallel(axis, thickness_vec):
+            continue
+        if not _cylinder_face_is_internal(face, center, axis):
+            continue
+
+        # Filter: individual face arc must span ≥8° to exclude degenerate slivers.
+        # Faces are grouped by center location; the GROUP total must reach 300°
+        # (see below). The 8° per-face minimum filters numerical noise from
+        # tiny split faces while allowing multi-face holes to accumulate coverage.
+        angle_span = _cylinder_face_angle_span(face)
+        if angle_span < math.radians(8.0):
+            continue
+
+        diameter = radius * 2.0
+        key = center_key(center, thickness_axis)
+        bucket = grouped.setdefault(
+            key,
+            {
+                "centers": [],
+                "diameters": [],
+                "angle_span_total": 0.0,
+            },
+        )
+        bucket["centers"].append(center)
+        bucket["diameters"].append(diameter)
+        bucket["angle_span_total"] += angle_span
+
+    circle_groups: list[dict[str, object]] = []
+    all_diameters: list[float] = []
+    for item in grouped.values():
+        # 300° ≈ 83% of full circle — rejects partial cylindrical surfaces
+        # (e.g. 180° half-shells, 90° quarter-bends) while accepting holes
+        # split into multiple faces by adjacent features.
+        if float(item.get("angle_span_total") or 0.0) < math.radians(300.0):
+            continue
+        centers = [center for center in item.get("centers", []) if isinstance(center, App.Vector)]
+        if not centers:
+            continue
+        center = App.Vector(
+            sum(float(candidate.x) for candidate in centers) / len(centers),
+            sum(float(candidate.y) for candidate in centers) / len(centers),
+            sum(float(candidate.z) for candidate in centers) / len(centers),
+        )
+        diameters = sorted({
+            round(float(diameter), 5)
+            for diameter in item["diameters"]
+            if float(diameter) > 1e-6
+        })
+        if not diameters:
+            continue
+        all_diameters.append(float(sum(diameters) / len(diameters)))
+        circle_groups.append(
+            {
+                "center": center,
+                "diameters": diameters,
+            }
+        )
+    return circle_groups, all_diameters
+
+
+def _hole_centers_from_circle_groups(
+    circle_groups: list[dict[str, object]],
+) -> list[tuple[App.Vector, float]]:
+    hole_centers: list[tuple[App.Vector, float]] = []
+    for group in circle_groups:
+        center = group.get("center")
+        diameters = group.get("diameters") or []
+        if not isinstance(center, App.Vector) or not diameters:
+            continue
+        mean_diameter = float(sum(float(value) for value in diameters) / len(diameters))
+        hole_centers.append((center, mean_diameter))
+    return hole_centers
+
+
+def _prefer_internal_cylinder_groups(
+    edge_groups: list[dict[str, object]],
+    edge_diameters: list[float],
+    internal_groups: list[dict[str, object]],
+    dims: dict[str, float],
+    longest_axis: str,
+    flat_ratio: float,
+) -> bool:
+    if flat_ratio >= 0.30 or not internal_groups:
+        return False
+
+    edge_holes = _hole_centers_from_circle_groups(edge_groups)
+    internal_holes = _hole_centers_from_circle_groups(internal_groups)
+    if not edge_holes:
+        return bool(internal_holes)
+    if len(internal_holes) < 3:
+        return False
+
+    edge_pitch = _infer_linear_hole_pitch(edge_holes, longest_axis)
+    internal_pitch = _infer_linear_hole_pitch(internal_holes, longest_axis)
+    if edge_pitch is None and internal_pitch is not None:
+        return True
+
+    edge_dom = _dominant_group_diameter(edge_holes)
+    if edge_dom is None or not edge_diameters:
+        return False
+    edge_max = max(float(value) for value in edge_diameters)
+    transverse_axes = _transverse_axes(longest_axis)
+    cross_max = max((float(dims.get(axis, 0.0)) for axis in transverse_axes), default=0.0)
+    edge_has_large_outlier = edge_max > max(edge_dom * 2.5, cross_max * 0.45)
+    if edge_has_large_outlier and len(edge_holes) > len(internal_holes):
+        return True
+    return False
+
+
+def _dominant_group_diameter(hole_centers: list[tuple[App.Vector, float]]) -> float | None:
+    buckets: dict[float, int] = {}
+    for _center, diameter in hole_centers:
+        if diameter <= 1e-6:
+            continue
+        bucket = round(float(diameter) * 2.0) / 2.0
+        buckets[bucket] = buckets.get(bucket, 0) + 1
+    if not buckets:
+        return None
+    return max(buckets.items(), key=lambda item: (item[1], item[0]))[0]
+
+
+def _infer_linear_hole_pitch(
+    hole_centers: list[tuple[App.Vector, float]],
+    longest_axis: str,
+    tolerance_mm: float = 1.0,
+) -> float | None:
+    """Find consistent linear hole pitch by grouping holes into transverse rows.
+
+    tolerance_mm (default 1.0): grouping bin width for transverse alignment.
+    Requires ≥3 holes in a row and ≥2 consistent spacings (within 8% of median).
+    """
+    if len(hole_centers) < 3:
+        return None
+    transverse_axes = [axis for axis in ("X", "Y", "Z") if axis != longest_axis]
+    grouped: dict[tuple[float, ...], list[tuple[App.Vector, float]]] = {}
+    for center, diameter in hole_centers:
+        if not isinstance(center, App.Vector):
+            continue
+        key = tuple(
+            round(vec_axis_value(center, axis) / max(tolerance_mm, 1e-6)) * tolerance_mm
+            for axis in transverse_axes
+        )
+        grouped.setdefault(key, []).append((center, diameter))
+
+    best_pitch = None
+    best_rank = None
+    for items in grouped.values():
+        if len(items) < 3:
+            continue
+        positions = sorted(vec_axis_value(center, longest_axis) for center, _diameter in items)
+        spacings = [positions[i + 1] - positions[i] for i in range(len(positions) - 1)]
+        spacings = [spacing for spacing in spacings if spacing > 1e-4]
+        if len(spacings) < 2:
+            continue
+        median_spacing = float(statistics.median(spacings))
+        # 8% of median: tolerates manufacturing deviations while rejecting irregular spacing
+        spacing_tol = max(1.0, median_spacing * 0.08)
+        consistent = [spacing for spacing in spacings if abs(spacing - median_spacing) <= spacing_tol]
+        if len(consistent) < 2:
+            continue
+        spread = statistics.pstdev(consistent) if len(consistent) >= 2 else 0.0
+        rank = (len(items), len(consistent), -spread, median_spacing)
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_pitch = float(statistics.median(consistent))
+    return best_pitch
+
+
+def _infer_axis_median_hole_pitch(
+    hole_centers: list[tuple[App.Vector, float]],
+    longest_axis: str,
+    tolerance_mm: float = 0.5,
+) -> float | None:
+    """Simpler fallback: median of all pairwise spacings along longest axis.
+
+    tolerance_mm (default 0.5): position quantization bin to merge near-coincident holes.
+    Requires ≥2 holes.
+    """
+    if len(hole_centers) < 2:
+        return None
+    positions = sorted({
+        round(vec_axis_value(center, longest_axis) / max(tolerance_mm, 1e-6)) * tolerance_mm
+        for center, _diameter in hole_centers
+        if isinstance(center, App.Vector)
+    })
+    spacings = [positions[i + 1] - positions[i] for i in range(len(positions) - 1)]
+    spacings = [spacing for spacing in spacings if spacing > 1e-4]
+    if not spacings:
+        return None
+    return float(statistics.median(spacings))
 
 
 def _transverse_axes(longest_axis: str) -> list[str]:
@@ -236,7 +465,7 @@ def measure_wall_thickness(shape: Part.Shape) -> float | None:
         unit_normal = App.Vector(normal.x / n_len, normal.y / n_len, normal.z / n_len)
         try:
             pt = face.CenterOfMass
-        except Exception:
+        except (AttributeError, RuntimeError):
             continue
         plane_faces.append((unit_normal, pt))
 
@@ -297,7 +526,7 @@ def detect_bend_direction(cyl_face, shape: Part.Shape) -> str:
         bbox = shape.BoundBox
         shape_mid_z = (bbox.ZMax + bbox.ZMin) / 2.0
         return "OBEN" if com.z > shape_mid_z else "UNTEN"
-    except Exception:
+    except (AttributeError, RuntimeError):
         return "OBEN"
 
 
@@ -338,7 +567,7 @@ def compute_flat_pattern(shape: Part.Shape, thickness_axis: str, measured_thickn
             continue
         try:
             bb = face.BoundBox
-        except Exception:
+        except (AttributeError, RuntimeError):
             continue
         if thickness_axis == "X":
             extent = max(bb.YLength, bb.ZLength)
@@ -376,7 +605,7 @@ def compute_flat_pattern(shape: Part.Shape, thickness_axis: str, measured_thickn
         try:
             area = face.Area
             bb = face.BoundBox
-        except Exception:
+        except (AttributeError, RuntimeError):
             continue
         if thickness_axis == "X":
             arc_height = bb.YLength if bb.YLength >= bb.ZLength else bb.ZLength
@@ -468,6 +697,260 @@ def infer_metric_thread_label(core_diameter_mm: float | None) -> str | None:
     return None
 
 
+def _face_pos_along(face, axis_vec: App.Vector) -> float | None:
+    """Return the projection of a face's center of mass onto axis_vec."""
+    try:
+        com = face.CenterOfMass
+        return float(com.dot(axis_vec))
+    except (AttributeError, RuntimeError):
+        return None
+
+
+def _arc_span_fraction(edge: Part.Edge) -> float:
+    """Return arc length as a fraction of the full circle circumference (0..1)."""
+    try:
+        r = float(edge.Curve.Radius)
+        if r < 1e-6:
+            return 0.0
+        return float(edge.Length) / (2.0 * math.pi * r)
+    except (AttributeError, ZeroDivisionError):
+        return 0.0
+
+
+def collect_slot_data(
+    shape: Part.Shape,
+    thickness_axis: str,
+    dims: dict,
+    longest_axis: str,
+) -> list[dict]:
+    """Detect slot features (Nuten/Langlöcher) in a part shape.
+
+    A slot is a planar pocket whose boundary consists of exactly two
+    semicircular arcs (~180° each, matching radius) and two straight edges.
+    Both through-slots (depth=None) and blind pockets are detected.
+
+    Returns a list of slot dicts:
+        width_mm       — slot width = arc diameter
+        length_mm      — end-to-end length = center-to-center distance + width
+        depth_mm       — pocket depth in mm, or None for through-slots
+        center_mm      — geometric center {x, y, z}
+        orientation    — "H" if length axis aligns with longest part axis, else "V"
+    """
+    thickness_vec = _axis_direction_vector(thickness_axis)
+
+    outer_max: float | None = None
+    outer_min: float | None = None
+    for face in shape.Faces:
+        surface = getattr(face, "Surface", None)
+        if surface is None or surface.__class__.__name__ != "Plane":
+            continue
+        try:
+            normal = surface.Axis
+        except AttributeError:
+            continue
+        if normal is None:
+            continue
+        # Outer faces: normal roughly parallel to thickness axis
+        if not _axes_are_parallel(normal, thickness_vec, tol_deg=10.0):
+            continue
+        pos = _face_pos_along(face, thickness_vec)
+        if pos is not None:
+            if outer_max is None or pos > outer_max:
+                outer_max = pos
+            if outer_min is None or pos < outer_min:
+                outer_min = pos
+
+    slots: list[dict] = []
+    seen: set[tuple[float, float, float]] = set()  # deduplicate by rounded center
+
+    for face in shape.Faces:
+        surface = getattr(face, "Surface", None)
+        if surface is None or surface.__class__.__name__ != "Plane":
+            continue
+
+        # Collect edges of this face, skip degenerate micro-edges (< 0.5 mm)
+        arcs: list[Part.Edge] = []
+        lines: list[Part.Edge] = []
+        for edge in face.Edges:
+            edge_len = float(getattr(edge, "Length", 0.0) or 0.0)
+            if edge_len < 0.5:
+                continue
+            curve = getattr(edge, "Curve", None)
+            if curve is None:
+                continue
+            cname = curve.__class__.__name__
+            if cname in {"Circle", "ArcOfCircle"}:
+                arcs.append(edge)
+            elif cname in {"Line", "LineSegment"}:
+                lines.append(edge)
+
+        # Slot signature: exactly 2 arcs + 2 lines
+        if len(arcs) != 2 or len(lines) != 2:
+            continue
+
+        # Both arcs must be semicircular (~180°) and same radius
+        span0 = _arc_span_fraction(arcs[0])
+        span1 = _arc_span_fraction(arcs[1])
+        if not (0.40 <= span0 <= 0.60 and 0.40 <= span1 <= 0.60):
+            continue
+
+        r0 = float(arcs[0].Curve.Radius)
+        r1 = float(arcs[1].Curve.Radius)
+        if abs(r0 - r1) > max(0.5, r0 * 0.05):
+            continue
+
+        # Arc centers
+        c0 = getattr(arcs[0].Curve, "Center", None)
+        c1 = getattr(arcs[1].Curve, "Center", None)
+        if not isinstance(c0, App.Vector) or not isinstance(c1, App.Vector):
+            continue
+
+        slot_width = (r0 + r1)  # avg diameter
+        center_dist = float(c0.distanceToPoint(c1))
+        slot_length = center_dist + slot_width
+        if slot_length < slot_width * 1.1:
+            continue  # degenerate: barely longer than wide → not a slot
+
+        # Geometric center of the slot
+        cx = (float(c0.x) + float(c1.x)) / 2.0
+        cy = (float(c0.y) + float(c1.y)) / 2.0
+        cz = (float(c0.z) + float(c1.z)) / 2.0
+
+        # Deduplicate: same center within 1mm
+        center_key_val = (round(cx), round(cy), round(cz))
+        if center_key_val in seen:
+            continue
+        seen.add(center_key_val)
+
+        # Depth: distance from this face to the nearest outer face along thickness axis
+        face_pos = _face_pos_along(face, thickness_vec)
+        depth_mm = None
+        if face_pos is not None and outer_max is not None and outer_min is not None:
+            dist_to_max = abs(outer_max - face_pos)
+            dist_to_min = abs(face_pos - outer_min)
+            part_thickness = abs(outer_max - outer_min)
+            depth_candidate = min(dist_to_max, dist_to_min)
+            # Through-slot: face is very close to one outer surface (< 5% of thickness)
+            if depth_candidate < max(0.3, part_thickness * 0.05):
+                depth_mm = None  # through-slot
+            else:
+                depth_mm = round(depth_candidate, 3)
+
+        # Orientation: does the slot length axis align with the longest part axis?
+        delta = c1.sub(c0)
+        long_vec = _axis_direction_vector(longest_axis)
+        length_along_long = abs(float(delta.dot(long_vec)))
+        orientation = "H" if length_along_long > center_dist * 0.5 else "V"
+
+        slots.append({
+            "width_mm": round(slot_width, 3),
+            "length_mm": round(slot_length, 3),
+            "depth_mm": depth_mm,
+            "center_mm": {
+                "x": round(cx, 3),
+                "y": round(cy, 3),
+                "z": round(cz, 3),
+            },
+            "orientation": orientation,
+        })
+
+    return slots
+
+
+def _detect_chamfers(shape, dims: dict, ordered_axes: list) -> list[dict]:
+    """Detect chamfer faces: small planar faces whose normal is at ~45° to axis-aligned planes.
+
+    Returns a list of dicts with keys: size_mm, angle_deg, axis_pair, center_mm.
+    """
+    chamfers = []
+    # Axis unit vectors
+    axis_vectors = {
+        "X": (1.0, 0.0, 0.0),
+        "Y": (0.0, 1.0, 0.0),
+        "Z": (0.0, 0.0, 1.0),
+    }
+    # Typical chamfer: normal is ~45° from two axis planes
+    # A 45° chamfer between X and Y has normal ≈ (±0.707, ±0.707, 0)
+    max_face_area = 0.0
+    face_areas = []
+    for face in shape.Faces:
+        area = float(face.Area)
+        face_areas.append(area)
+        if area > max_face_area:
+            max_face_area = area
+
+    if max_face_area < 1e-6:
+        return chamfers
+
+    for face, area in zip(shape.Faces, face_areas):
+        # Chamfer faces are small relative to main faces:
+        # - Upper bound 15% of largest face: chamfers are edge features, not primary surfaces
+        # - Lower bound 0.5 mm²: filters numerical noise / degenerate faces
+        if area > max_face_area * 0.15 or area < 0.5:
+            continue
+        surface = getattr(face, "Surface", None)
+        if surface is None or surface.__class__.__name__ != "Plane":
+            continue
+        normal = getattr(surface, "Axis", None)
+        if normal is None:
+            continue
+        nx, ny, nz = float(normal.x), float(normal.y), float(normal.z)
+        n_len = (nx * nx + ny * ny + nz * nz) ** 0.5
+        if n_len < 1e-6:
+            continue
+        nx, ny, nz = nx / n_len, ny / n_len, nz / n_len
+
+        # Check if normal is at ~45° from any two axis pairs.
+        # A perfect 45° chamfer has dot(normal, axis) ≈ cos(45°) = 0.707.
+        # Range 0.45-0.85 corresponds to ~32°-63°, covering standard chamfers
+        # (30°, 45°, 60°) while rejecting axis-aligned and diagonal faces.
+        for i, (a1_name, a1_vec) in enumerate(axis_vectors.items()):
+            dot1 = abs(nx * a1_vec[0] + ny * a1_vec[1] + nz * a1_vec[2])
+            if not (0.45 <= dot1 <= 0.85):
+                continue
+            for a2_name, a2_vec in list(axis_vectors.items())[i + 1:]:
+                dot2 = abs(nx * a2_vec[0] + ny * a2_vec[1] + nz * a2_vec[2])
+                if not (0.45 <= dot2 <= 0.85):
+                    continue
+                # This face's normal is between two axes — likely a chamfer
+                angle = math.degrees(math.acos(min(dot1, 1.0)))
+                # Estimate chamfer size from face bounding box
+                fb = face.BoundBox
+                face_dims = sorted([float(fb.XLength), float(fb.YLength), float(fb.ZLength)])
+                # Smallest non-zero dimension ≈ chamfer width
+                chamfer_size = next((d for d in face_dims if d > 0.1), 0.0)
+                if chamfer_size < 0.2:
+                    continue
+                center = face.CenterOfMass
+                chamfers.append({
+                    "size_mm": round(chamfer_size, 3),
+                    "angle_deg": round(angle, 1),
+                    "axis_pair": f"{a1_name}-{a2_name}",
+                    "center_mm": {
+                        "x": round(float(center.x), 3),
+                        "y": round(float(center.y), 3),
+                        "z": round(float(center.z), 3),
+                    },
+                })
+                break
+            else:
+                continue
+            break
+
+    # Deduplicate similar chamfers (same size within 0.5mm tolerance)
+    if chamfers:
+        unique = []
+        seen_sizes = set()
+        for ch in chamfers:
+            key = round(ch["size_mm"] * 2) / 2  # round to 0.5mm
+            if key not in seen_sizes:
+                seen_sizes.add(key)
+                unique.append(ch)
+        chamfers = unique
+
+    return chamfers
+
+
 def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -> dict:
     bbox = shape.BoundBox
     dims = {
@@ -482,7 +965,21 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
     flat_ratio = ordered_axes[2][1] / mid
     is_flat = flat_ratio < 0.3
 
-    circle_groups, all_diameters = collect_circle_data(shape, thickness_axis)
+    edge_circle_groups, edge_diameters = collect_edge_circle_data(shape, thickness_axis)
+    internal_circle_groups, internal_diameters = collect_internal_cylinder_circle_data(shape, thickness_axis)
+    if _prefer_internal_cylinder_groups(
+        edge_circle_groups,
+        edge_diameters,
+        internal_circle_groups,
+        dims,
+        longest_axis,
+        flat_ratio,
+    ):
+        circle_groups = internal_circle_groups
+        all_diameters = internal_diameters
+    else:
+        circle_groups = edge_circle_groups
+        all_diameters = edge_diameters
     face_types = classify_face_types(shape)
     cylindrical_radii = collect_cylindrical_radii(shape)
     rotational_profile = _looks_like_rotational_profile(
@@ -496,20 +993,16 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
         hole_centers = []
         effective_diameters = []
     else:
-        hole_centers = []
-        for group in circle_groups:
-            center = group.get("center")
-            diameters = group.get("diameters") or []
-            if not isinstance(center, App.Vector) or not diameters:
-                continue
-            mean_diameter = float(sum(float(value) for value in diameters) / len(diameters))
-            hole_centers.append((center, mean_diameter))
+        hole_centers = _hole_centers_from_circle_groups(circle_groups)
         effective_diameters = list(all_diameters)
 
     hole_count = len(hole_centers)
 
     hole_diameter_mm = None
-    if effective_diameters:
+    dominant_group_diameter = _dominant_group_diameter(hole_centers)
+    if dominant_group_diameter is not None:
+        hole_diameter_mm = float(dominant_group_diameter)
+    elif effective_diameters:
         hole_diameter_mm = float(statistics.median(effective_diameters))
 
     hole_groups = [
@@ -548,18 +1041,31 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
             pass
 
     hole_pitch_mm = None
+    hole_pitch_source = None
+    preferred_hole_pitch_mm = None
+    preferred_hole_pitch_source = None
     if hole_count >= 2:
-        positions = [vec_axis_value(center, longest_axis) for center, _ in hole_centers]
-        span = max(positions) - min(positions)
-        if span > 1e-4:
-            hole_pitch_mm = float(span)
+        linear_pitch = _infer_linear_hole_pitch(hole_centers, longest_axis)
+        if linear_pitch is not None:
+            preferred_hole_pitch_mm = linear_pitch
+            preferred_hole_pitch_source = "linear_pattern"
+        axis_pitch = _infer_axis_median_hole_pitch(hole_centers, longest_axis)
+        if axis_pitch is not None:
+            hole_pitch_mm = axis_pitch
+            hole_pitch_source = "axis_median"
+        elif linear_pitch is not None:
+            hole_pitch_mm = linear_pitch
+            hole_pitch_source = "linear_pattern"
+        if preferred_hole_pitch_mm is None and hole_pitch_mm is not None:
+            preferred_hole_pitch_mm = hole_pitch_mm
+            preferred_hole_pitch_source = hole_pitch_source
 
-    bend_radius_mm = None
+    _raw_bend_radius_mm = None
     if cylindrical_radii and not rotational_profile:
         thickness = max(ordered_axes[2][1], 1e-6)
         filtered = [radius for radius in cylindrical_radii if radius >= thickness * 0.5]
         candidates = filtered or cylindrical_radii
-        bend_radius_mm = float(min(candidates))
+        _raw_bend_radius_mm = float(min(candidates))
 
     # Face-type classification for sheet metal detection
     total_faces = max(face_types["total"], 1)
@@ -581,6 +1087,25 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
     if not rotational_profile:
         flat_pattern = compute_flat_pattern(shape, thickness_axis, measured_thickness_mm, k_factor_override)
 
+    # Only report bend_radius if there is a real sheet metal signal:
+    # face-type classification, flat pattern with bends, or thin wall
+    bend_radius_mm = None
+    if _raw_bend_radius_mm is not None:
+        fp_bend_count = int((flat_pattern or {}).get("bend_count") or 0)
+        has_sheet_signal = (
+            is_sheet_metal_by_faces
+            or fp_bend_count > 0
+            or (measured_thickness_mm is not None and measured_thickness_mm <= 5.0)
+        )
+        if has_sheet_signal:
+            bend_radius_mm = _raw_bend_radius_mm
+
+    # Chamfer detection: small planar faces at non-axis-aligned angles
+    chamfers = _detect_chamfers(shape, dims, ordered_axes)
+
+    # Slot detection: planar pockets with 2 semicircular arcs + 2 straight edges
+    slot_groups = collect_slot_data(shape, thickness_axis, dims, longest_axis)
+
     return {
         "ok": True,
         "bbox_mm": {axis: round(value, 5) for axis, value in dims.items()},
@@ -593,6 +1118,9 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
         "hole_count": hole_count,
         "hole_diameter_mm": round(hole_diameter_mm, 5) if hole_diameter_mm else None,
         "hole_pitch_mm": round(hole_pitch_mm, 5) if hole_pitch_mm else None,
+        "hole_pitch_source": hole_pitch_source,
+        "preferred_hole_pitch_mm": round(preferred_hole_pitch_mm, 5) if preferred_hole_pitch_mm else None,
+        "preferred_hole_pitch_source": preferred_hole_pitch_source,
         "hole_groups": hole_groups,
         "hole_diameters_mm": unique_diameters,
         "thread_core_diameter_mm": round(thread_core_diameter_mm, 5) if thread_core_diameter_mm else None,
@@ -608,6 +1136,9 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
         "is_sheet_metal_by_faces": is_sheet_metal_by_faces,
         "measured_thickness_mm": round(measured_thickness_mm, 5) if measured_thickness_mm is not None else None,
         "flat_pattern": flat_pattern,
+        "chamfers": chamfers,
+        "slot_count": len(slot_groups),
+        "slot_groups": slot_groups,
     }
 
 
