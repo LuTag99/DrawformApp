@@ -8,23 +8,27 @@ Diese Datei ist der schnelle Einstieg fuer Entwickler und KI-Agenten.
 2. `DEVELOPER_DOCS.md`
 3. `.github/copilot-instructions.md`
 
-## Verifizierter Snapshot (2026-03-30)
+## Verifizierter Snapshot (2026-04-02)
 
 - Repo-Struktur: React 19 + TypeScript + Vite 7 im Root, FastAPI + FreeCAD-Pipeline unter `server/`
 - Frontend-Routen laut `src/App.tsx`: `/`, `/analyzer`, `/reconstruct`, `/projects`, `/export`, `/profile`, plus Auth-Seiten
 - Backend-Endpunkte laut `server/main.py`: `/api/health`, `/api/logs/last`, `/api/analyze`, `/api/export`, `/api/export-dxf`, `/api/ai-insight`, `/api/reconstruct`
 - Sample-Sets laut `server/sample_catalog.py`: `baseline=20`, `real=91`, `all=111`
-- `server/freecad/step_to_pdf.py` hat aktuell `~9200` Zeilen und bleibt der groesste technische Hotspot
+- Baseline-Samples neu organisiert in Kategorie-Unterordner: `_samples/Fraesteile/`, `_samples/Drehteile/`, `_samples/Blechteile/`, `_samples/Baugruppen/`
+- `server/freecad/step_to_pdf.py` hat aktuell `~10.000` Zeilen und bleibt der groesste technische Hotspot
 - Wissensbasis: `server/knowledge/knowledge_base.json` v0.2.1 — **21 Quellen, 50 Regeln**
 
 ### Aktuelle Teststatus
 
 - DSE Unit Tests: **64/64** bestanden
-- Baseline Regression: `20/20` bestanden (Golden Baseline regeneriert 2026-03-22)
-- All-Samples: `~105/111` (6 Failures: 1 Textueberlappung, 2 Timeouts, 2 Dim-Out-of-Bounds, 1 FreeCAD-Fehler)
+- Baseline Regression: `20/20` bestanden (Golden Baseline regeneriert 2026-04-02)
+- All-Samples: `96/111` (15 Failures: ~5 dim-outside-bounds mit <50mm Overflow, Rest Timeouts/Crashes/Golden-Mismatches)
 
 ### Neue Features seit 2026-03-22
 
+- **Dimension Placement Bounds Checking**: Iterative Offset-Reduktion fuer Overall-Dims via `transform_local_bounds_to_paper()`, Feature-Dim-Suppression bei Out-of-Bounds, Post-Placement Safety Net (50mm-Schwelle)
+- **Sample Catalog Reorganisation**: Baseline-Samples in Kategorie-Unterordner (`Fraesteile/`, `Drehteile/`, `Blechteile/`, `Baugruppen/`), `discover_baseline_samples()` und `_is_real_sample_path()` aktualisiert
+- **Reference Learning Gate**: `reference_learning_gate.py` fuer kuratierte Real-Part-Vergleiche, `real_priority_samples.json` Manifest
 - **GD&T / Formtoleranzen (ISO 1101)**: Toleranzrahmen-Renderer mit 14 Charakteristiken, Datum-Flags, Leader-Lines
 - **Schnittansichten (ISO 128-40)**: Section-Cut-Engine, Cross-Hatching (ISO 128-50), Schnittlinien-Anzeige
 - **Detailansichten**: Detail-Kreis, Zoom-Clip-Path, "Detail Z (2:1)"-Label
@@ -60,6 +64,7 @@ Diese Datei ist der schnelle Einstieg fuer Entwickler und KI-Agenten.
 
 ### Fixes seit 2026-03-20
 
+- **Dimension-Outside-Drawing-Area reduziert**: Overall-Dim-Offset-Clamping + Feature-Dim-Suppress + Post-Placement-Safety-Net (von ~25 auf ~5 verbleibende Failures)
 - CORS-Middleware fuer localhost-Origins hinzugefuegt (`server/main.py`)
 - Upload-Groessenlimits fuer `/api/analyze` (50 MB) und `/api/export` (100 MB) (`server/main.py`)
 - OpenAI-Key aus Browser entfernt — `aiService.ts` nutzt jetzt Backend-Proxy `/api/ai-insight`

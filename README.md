@@ -63,8 +63,8 @@ Der FastAPI-Service (`server/main.py`) bietet:
 
 - ISO 7200 Schriftfeld mit Masse, Material, Oberflaechenangabe, Skalenlabel (ISO 5455)
 - DIN EN ISO First-Angle Projektion
-- 20/20 Baseline-Regression (Golden Baseline 2026-03-31), **64/64 DSE Unit Tests**
-- 111 Sample-Parts (20 Baseline, 91 Real)
+- 20/20 Baseline-Regression (Golden Baseline 2026-04-02), **64/64 DSE Unit Tests**, 96/111 All-Samples
+- 111 Sample-Parts (20 Baseline in Kategorie-Ordnern, 91 Real)
 - Wissensbasis v0.2.1: 21 ISO/DIN-Quellen, 50 Regeln (inkl. GD&T, K-Faktor, Werkstoff, Schweissnaht)
 - Closed-Loop KB-Learning: Critic-Feedback wird automatisch als KB-Regelvorschlag strukturiert
 
@@ -98,12 +98,14 @@ server/
   main.py            # FastAPI Endpunkte + DSE-Orchestrierung
   freecad/           # FreeCAD-Subprozesse (step_to_pdf, step_feature_probe, step_unfold)
   rules/             # Dimension Strategy Engine + Schema
-  knowledge/         # Wissensbasis (knowledge_base.json)
+  knowledge/         # Wissensbasis (knowledge_base.json) + Reference Learning
   tests/             # DSE Unit Tests
   _debug/            # Debug-Artefakte (SVG, PNG, JSON, Agent-Runs)
-  _golden/           # Golden Baseline fuer Regression
-  sample_catalog.py  # Sample-Sets (baseline, real, all)
+  _golden/           # Golden Baselines fuer Regression (baseline + real_priority)
+  _samples/          # STEP-Samples in Kategorie-Ordnern (Fraesteile, Drehteile, Blechteile, Baugruppen)
+  sample_catalog.py  # Sample-Sets (baseline, real, real_priority, all)
   test_views.py      # View-Regression + Quality Checks
+  reference_learning_gate.py  # Real-Part Reference Learning Gate
 ```
 
 ## Deployment

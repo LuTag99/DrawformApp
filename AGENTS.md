@@ -232,7 +232,7 @@ Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain
 
 1. Task klassifizieren und begruenden, warum kein `FULL-PATH` noetig ist.
 2. Aenderung umsetzen.
-3. DSE-Unittests ausfuehren (`46/46`).
+3. DSE-Unittests ausfuehren (`64/64`).
 4. Baseline-Golden regenerieren (`--update-golden --stability-runs 1`).
 5. Regression pruefen (`--stability-runs 1`, `20/20`).
 6. Critic in `DELTA` mode: nur betroffene Kriterien bewerten (z.B. nur Kriterium 7 bei Schriftfeld-Aenderung).

@@ -109,7 +109,7 @@ View regression tests against golden baseline:
 
 ```powershell
 cd server
-.venv\Scripts\python.exe test_views.py --sample-set baseline          # 20 baseline parts
+.venv\Scripts\python.exe test_views.py --sample-set baseline          # 20 baseline parts (in category subdirs)
 .venv\Scripts\python.exe test_views.py --sample-set real_priority     # curated real-priority gate
 .venv\Scripts\python.exe test_views.py --sample-set real              # 91 real customer parts
 .venv\Scripts\python.exe test_views.py --sample-set all               # all 111 parts
@@ -141,6 +141,14 @@ cd server
 `--mode fast` runs the Python unit/integration suite without view rendering.
 `--mode full` adds baseline regression, curated `real_priority` regression, the reference-learning gate, and checklist generation.
 
+### Current test results (2026-04-02)
+
+| Test-Suite | Ergebnis |
+|------------|----------|
+| DSE Unit Tests | **64/64** |
+| Baseline Regression | **20/20** |
+| All-Samples | **96/111** (15 failures: ~5 dim-outside-bounds <50mm, rest timeouts/crashes) |
+
 ## Dimension Strategy Engine (DSE)
 
 The DSE is a deterministic, knowledge-base-driven rule engine that decides **what** to dimension on a drawing before the FreeCAD subprocess runs.
@@ -169,6 +177,10 @@ main.py
 | `rules/dimension_plan_schema.py` | Pydantic models: `DimensionPlan`, `ViewPlan`, `DimensionItem`, `ProcessNote`, `GDTCallout` |
 | `rules/dimension_strategy.py` | `build_dimension_plan()`, `_kb_wants_dimension()`, `select_layout_profile_standalone()`, `apply_overrides()` |
 | `tests/test_dimension_strategy.py` | 64 unit tests |
+| `sample_catalog.py` | Sample discovery: baseline (category subdirs), real, real_priority, all |
+| `reference_learning_gate.py` | Real-part reference learning gate |
+| `_golden/views_baseline.json` | Golden baseline (20 parts) |
+| `_golden/views_real_priority.json` | Real-priority golden (curated real parts) |
 
 **LLM-Overrides** — structured JSON on top of the deterministic baseline:
 

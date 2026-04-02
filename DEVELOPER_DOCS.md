@@ -41,13 +41,15 @@ Standardpfad fuer laufbezogene Evidenz:
 
 - `server/_debug/agent_runs/<run_id>/`
 
-## 3) Verifizierter Snapshot (2026-03-31)
+## 3) Verifizierter Snapshot (2026-04-02)
 
 - `server/sample_catalog.py` → `baseline=20`, `real=91`, `all=111`
+- Baseline-Samples in Kategorie-Unterordner: `_samples/Fraesteile/`, `_samples/Drehteile/`, `_samples/Blechteile/`, `_samples/Baugruppen/`
 - `server/freecad/step_to_pdf.py` hat aktuell `~10.000` Zeilen
 - DSE Unit Tests: **64/64** bestanden
-- Baseline Regression: `20/20` bestanden (Golden Baseline regeneriert 2026-03-31)
-- All-Samples: `97/111` (Golden regeneriert 2026-03-31; 14 Failures: 7 dim-outside-bounds, 3 label-outside-bounds, 1 Timeout, 1 FreeCAD-Crash, 1 Feature-Detection, 1 unklar)
+- Baseline Regression: `20/20` bestanden (Golden Baseline regeneriert 2026-04-02)
+- All-Samples: `96/111` (15 Failures: ~5 dim-outside-bounds mit <50mm Overflow, Rest Timeouts/Crashes/Golden-Mismatches)
+- Vorher: ~25 dim-outside-bounds Failures; reduziert auf ~5 durch Overall-Dim-Clamping + Feature-Dim-Suppression
 - `server/freecad/step_feature_probe.py` erkennt: Bohrungen, Gewinde, Biegeradien, Blechindikatoren, Fasen, **Langlocher (Slots)**
 - `server/knowledge/knowledge_base.json` v0.2.1 — **21 Quellen, 50 Regeln**
 
@@ -268,7 +270,9 @@ Klassifizierungsreihenfolge:
 - `server/test_views.py` — View-Regression, Golden-Baseline, DSE-Meta-Pipeline, `--parallel N` Flag
 - `server/tests/test_dimension_strategy.py` — 64 DSE Unit Tests
 - `server/_golden/views_baseline.json` — Golden Baseline (20 Teile)
-- `server/sample_catalog.py` — Sample-Sets (baseline=20, real=91, all=111)
+- `server/_golden/views_real_priority.json` — Kuratierte Real-Part-Golden fuer release-nahen Gate-Satz
+- `server/sample_catalog.py` — Sample-Sets (baseline=20, real=91, all=111), Kategorie-Unterordner
+- `server/reference_learning_gate.py` — Vergleich gegen echte STEP/PDF-Referenzen
 
 ### Debug- und Review-Artefakte
 
@@ -278,15 +282,22 @@ Klassifizierungsreihenfolge:
 
 ## 9) Test- und Qualitaetslage
 
-### Status (2026-03-31)
+### Status (2026-04-02)
 
 | Test-Suite | Ergebnis |
 |------------|----------|
 | DSE Unit Tests | **64/64** bestanden |
-| Baseline Regression | `20/20` bestanden (Golden Baseline regeneriert 2026-03-31) |
-| All-Samples | `97/111` (14 Failures: dim/label-outside-bounds, 1 Timeout, 1 FreeCAD-Crash) |
+| Baseline Regression | `20/20` bestanden (Golden Baseline regeneriert 2026-04-02) |
+| All-Samples | `96/111` (15 Failures: ~5 dim-outside-bounds <50mm, Rest Timeouts/Crashes/Golden-Mismatches) |
 | API Endpoint Tests | bestanden |
 | Sample Catalog Tests | bestanden |
+
+### Dimension Placement Bounds Checking (2026-04-02)
+
+- **Overall-Dim-Clamping**: `build_dimension_svg()` reduziert iterativ den Offset via `transform_local_bounds_to_paper()` bis die Bemaessung innerhalb der Zeichenflaeche liegt
+- **Feature-Dim-Suppression**: `_allocate_outside_leader_band()` gibt `suppress: True` zurueck wenn keine Position innerhalb der Zeichenflaeche moeglich ist; Loecher, Gewinde, Biegeradien und Blechdicke pruefen dieses Flag
+- **Post-Placement Safety Net**: nach `build_feature_dimension_svg()` wird der zusammengefuehrte Bounding-Box gegen die Zeichenflaeche geprueft; bei Overflow > 50mm werden alle Feature-Dims fuer diese Ansicht verworfen
+- 50mm-Schwelle empirisch gewaehlt: erfasst Extremfaelle (128mm, 114mm Overflow) ohne moderate Faelle zu unterdruecken
 
 ### Relevante Befehle
 
