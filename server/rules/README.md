@@ -50,7 +50,7 @@ python knowledge/validate_knowledge_base.py
 python rules/rule_engine.py --feature hole --ctx visible=true
 python rules/rule_engine.py --validate
 
-# DSE unit tests (46 tests)
+# DSE unit tests
 python -m unittest tests.test_dimension_strategy -v
 ```
 

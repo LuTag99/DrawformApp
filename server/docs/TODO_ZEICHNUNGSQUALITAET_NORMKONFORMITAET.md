@@ -6,7 +6,7 @@ Stand: 2026-04-04
 
 1. [x] Mittellinien robust fuer Kreise + Kreisboegen rendern
 - Umgesetzt: Kreisquellen aus `<circle>` und aus SVG-Arc-Pfaden (`A/a`) zusammengefuehrt.
-- Verifiziert: `python server/test_views.py` (20/20) und aktualisierte Baseline.
+- Historisch verifiziert in einer frueheren gruenen Baseline; vor der naechsten Freigabe erneut gegen den aktuellen Renderstand pruefen.
 
 2. [x] Bemaessungs-Kollisionserkennung verbessern
 - Umgesetzt: Label-Kollisionsboxen gegen Geometrie, Masslinien, Leader und Pfeile.
@@ -18,7 +18,7 @@ Stand: 2026-04-04
 - Mindestanzahl `centerline_total` fuer komplexe Teile (`min_centerline_count`)
 - strengere unitless-Masspruefung (kein `mm` in Einzelmass-Texten)
 - Pflichtmarker fuer Norm/Projektion/Toleranz
-- Verifiziert: `python server/test_views.py --stability-runs 3 --stability-sleep-ms 100` (20/20).
+- Historisch verifiziert in einer frueheren gruenen Baseline; heute bei jeder release-nahen Iteration erneut pruefen.
 
 4. [x] Low-Confidence-Fallback finalisieren
 - Bereits im aktuellen Stand enthalten (deterministische Candidate-Tie-Breaks, Confidence-Basis/Gap im Report).

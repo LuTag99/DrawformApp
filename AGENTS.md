@@ -12,6 +12,12 @@ Die Fachrollen behalten ihre Rolle; `AGENTS.md` liefert den gemeinsamen Rahmen.
 Drawform ist eine CAD-nahe Plattform fuer die Automatisierung von ingenieur- und fertigungsnahen Prozessen.
 Im aktuellen MVP liegt der Fokus auf der automatisierten Erstellung professioneller 2D-Fertigungszeichnungen aus 3D-Modellen.
 
+## Repository Sync Contract
+
+- `AGENTS.md` ist die kanonische Quelle fuer Workflow, Routing, Gates und Failure Classes.
+- `REPO_SYNC_POLICY.md` regelt die Besitzverhaeltnisse zwischen `AGENTS.md`, `.claude/`, `.github/`, `.vscode/`, `README.md` und `DEVELOPER_DOCS.md`.
+- Live-Pass/Fail-Staende gehoeren nicht in Spiegel-Dokumente, sondern in aktuelle Command-Evidenz und `run_state.json`.
+
 ## Oberstes Ziel im MVP
 
 Erzeuge nicht nur eine exportierbare Datei, sondern eine fachlich brauchbare, professionell wirkende technische Zeichnung.

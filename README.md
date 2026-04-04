@@ -63,9 +63,9 @@ Der FastAPI-Service (`server/main.py`) bietet:
 
 - ISO 7200 Schriftfeld mit Masse, Material, Oberflaechenangabe, Skalenlabel (ISO 5455)
 - DIN EN ISO First-Angle Projektion
-- 20/20 Baseline-Regression (Golden Baseline 2026-04-02), **64/64 DSE Unit Tests**, 96/111 All-Samples
-- 111 Sample-Parts (20 Baseline in Kategorie-Ordnern, 91 Real)
-- Wissensbasis v0.2.1: 21 ISO/DIN-Quellen, 50 Regeln (inkl. GD&T, K-Faktor, Werkstoff, Schweissnaht)
+- Aktuelle Test- und Regressionsergebnisse werden nicht fest in dieses README geschrieben
+- Die kanonischen Regeln dafuer stehen in `AGENTS.md` und `REPO_SYNC_POLICY.md`
+- Live-Status immer ueber `server/README.md`, CI und aktuelle Run-Artefakte pruefen
 - Closed-Loop KB-Learning: Critic-Feedback wird automatisch als KB-Regelvorschlag strukturiert
 
 ## AI-Insights
@@ -126,4 +126,4 @@ Für klassische Plesk-Server (Apache/Nginx) findest du eine Schritt-für-Schritt
 - Die Authentifizierung ist absichtlich lokal gehalten. Hänge hier dein bestehendes Backend an (`AuthProvider` austauschen).
 - Für AI-Features lassen sich weitere Panels (Co-Pilot, Generative Assist) leicht über `fetchAiInsight` erweitern.
 - Die Export-Seite unterstützt bereits Drag & Drop – bei Bedarf Dateianalyse/Progress-Bar ergänzen.
-- Fuer Entwickler-Dokumentation siehe `Developer.md` und `DEVELOPER_DOCS.md`.
+- Fuer Entwickler-Dokumentation siehe `Developer.md`, `DEVELOPER_DOCS.md` und `REPO_SYNC_POLICY.md`.
