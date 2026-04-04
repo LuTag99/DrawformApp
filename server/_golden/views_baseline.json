@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-02T12:22:22+00:00",
+  "generated_at": "2026-04-04T12:35:10+00:00",
   "parts": {
     "10x10x10": {
       "alignment": {
@@ -104,7 +104,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 3,
+        "total_dim_count": 4,
         "view_count": 4
       },
       "features": {
@@ -207,7 +207,7 @@
         "Front": {
           "center": [
             110.0,
-            72.3
+            65.5
           ],
           "paper_size": [
             98.73,
@@ -218,7 +218,7 @@
         "Iso": {
           "center": [
             310.0,
-            180.4
+            176.5
           ],
           "paper_size": [
             87.27,
@@ -229,7 +229,7 @@
         "Left": {
           "center": [
             310.0,
-            72.3
+            65.5
           ],
           "paper_size": [
             65.82,
@@ -240,7 +240,7 @@
         "Top": {
           "center": [
             110.0,
-            183.3
+            176.5
           ],
           "paper_size": [
             98.73,
@@ -270,7 +270,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 7,
+        "total_dim_count": 8,
         "view_count": 4
       },
       "features": {
@@ -436,7 +436,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 7,
+        "total_dim_count": 8,
         "view_count": 4
       },
       "features": {
@@ -455,45 +455,45 @@
       "views": {
         "Front": {
           "center": [
-            189.67,
-            93.03
+            145.38,
+            67.8
           ],
           "paper_size": [
-            254.78,
-            137.19
+            162.44,
+            87.47
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            504.02,
-            302.02
+            338.62,
+            202.25
           ],
           "paper_size": [
-            79.03,
-            89.68
+            51.25,
+            58.15
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            416.22,
-            93.03
+            280.94,
+            67.8
           ],
           "paper_size": [
-            29.4,
-            137.19
+            18.74,
+            87.47
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            189.67,
-            273.5
+            145.38,
+            189.29
           ],
           "paper_size": [
-            254.78,
-            29.4
+            162.44,
+            18.74
           ],
           "rotation_deg": 270
         }
@@ -519,7 +519,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 8,
+        "total_dim_count": 9,
         "view_count": 4
       },
       "features": {
@@ -533,50 +533,50 @@
         "centerline_total": 8,
         "fits_inside_drawing_area": true,
         "overflow_max_mm": 0.0,
-        "scale_reduction_needed": true
+        "scale_reduction_needed": false
       },
       "views": {
         "Front": {
           "center": [
-            158.58,
-            71.88
+            107.64,
+            78.98
           ],
           "paper_size": [
-            90.5,
-            90.5
+            102.27,
+            102.27
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            302.78,
-            213.9
+            206.2,
+            203.32
           ],
           "paper_size": [
-            28.16,
-            34.52
+            31.82,
+            39.01
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            261.06,
-            71.88
+            196.92,
+            78.98
           ],
           "paper_size": [
-            9.05,
-            90.5
+            10.23,
+            102.27
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            158.58,
-            207.12
+            107.64,
+            202.04
           ],
           "paper_size": [
-            90.5,
-            9.05
+            102.27,
+            10.23
           ],
           "rotation_deg": 270
         }
@@ -685,7 +685,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 3,
+        "total_dim_count": 4,
         "view_count": 4
       },
       "features": {
@@ -708,15 +708,15 @@
             65.5
           ],
           "paper_size": [
-            127.51,
-            63.76
+            109.46,
+            54.73
           ],
           "rotation_deg": 90
         },
         "Iso": {
           "center": [
-            310.0,
-            176.5
+            368.08,
+            182.24
           ],
           "paper_size": [
             80.75,
@@ -727,11 +727,11 @@
         "Left": {
           "center": [
             310.0,
-            81.44
+            79.18
           ],
           "paper_size": [
-            63.76,
-            95.64
+            54.73,
+            82.09
           ],
           "rotation_deg": 0
         },
@@ -741,8 +741,8 @@
             176.5
           ],
           "paper_size": [
-            127.51,
-            95.64
+            109.46,
+            82.09
           ],
           "rotation_deg": 0
         }
@@ -768,7 +768,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 3,
+        "total_dim_count": 4,
         "view_count": 4
       },
       "features": {
@@ -851,7 +851,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 7,
+        "total_dim_count": 8,
         "view_count": 4
       },
       "features": {
@@ -864,51 +864,51 @@
       "quality": {
         "centerline_total": 15,
         "fits_inside_drawing_area": true,
-        "overflow_max_mm": 0.0,
+        "overflow_max_mm": 0.305,
         "scale_reduction_needed": true
       },
       "views": {
         "Front": {
           "center": [
-            203.74,
-            96.74
+            154.08,
+            70.69
           ],
           "paper_size": [
-            240.22,
-            135.12
+            150.18,
+            84.48
           ],
           "rotation_deg": 0
         },
         "Iso": {
           "center": [
-            484.42,
-            305.58
+            328.64,
+            205.79
           ],
           "paper_size": [
-            70.49,
-            84.83
+            44.07,
+            53.03
           ],
           "rotation_deg": 0
         },
         "Left": {
           "center": [
-            412.04,
-            96.74
+            281.79,
+            70.69
           ],
           "paper_size": [
-            9.01,
-            135.12
+            5.63,
+            84.48
           ],
           "rotation_deg": 0
         },
         "Top": {
           "center": [
-            203.74,
-            275.96
+            154.08,
+            193.76
           ],
           "paper_size": [
-            240.22,
-            9.01
+            150.18,
+            5.63
           ],
           "rotation_deg": 270
         }
@@ -934,7 +934,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 7,
+        "total_dim_count": 8,
         "view_count": 4
       },
       "features": {
@@ -953,7 +953,7 @@
       "views": {
         "Front": {
           "center": [
-            115.17,
+            110.0,
             65.5
           ],
           "paper_size": [
@@ -975,7 +975,7 @@
         },
         "Left": {
           "center": [
-            315.18,
+            310.0,
             65.5
           ],
           "paper_size": [
@@ -986,7 +986,7 @@
         },
         "Top": {
           "center": [
-            115.17,
+            110.0,
             176.5
           ],
           "paper_size": [
@@ -1017,7 +1017,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 3,
+        "total_dim_count": 4,
         "view_count": 4
       },
       "features": {
@@ -1040,14 +1040,14 @@
             65.5
           ],
           "paper_size": [
-            159.39,
-            31.88
+            136.82,
+            27.36
           ],
           "rotation_deg": 90
         },
         "Iso": {
           "center": [
-            369.31,
+            367.23,
             176.5
           ],
           "paper_size": [
@@ -1059,11 +1059,11 @@
         "Left": {
           "center": [
             310.0,
-            97.38
+            92.86
           ],
           "paper_size": [
-            31.88,
-            95.64
+            27.36,
+            82.09
           ],
           "rotation_deg": 0
         },
@@ -1073,8 +1073,8 @@
             176.5
           ],
           "paper_size": [
-            159.39,
-            95.64
+            136.82,
+            82.09
           ],
           "rotation_deg": 0
         }
@@ -1598,7 +1598,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 7,
+        "total_dim_count": 8,
         "view_count": 4
       },
       "features": {

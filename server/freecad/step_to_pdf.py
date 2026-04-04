@@ -5194,6 +5194,7 @@ def _build_round_feature_dimension_svg(
         collision_boxes.append(line_box_a)
         collision_boxes.append(line_box_b)
         text_box = quality_text_collision_box(label, text_x, text_y, text_size, anchor)
+        collision_boxes.append(text_box)
         _record_dimension_entry(
             metadata,
             "feature_dimensions",
@@ -5415,6 +5416,12 @@ def build_feature_dimension_svg(
         hole_count == 2 and hole_pitch is not None and hole_pitch > 0
     )
     rotation_norm = int(round(_optional_float(rotation_deg) or 0.0)) % 360
+
+    def _feature_text_box(label, x, y, anchor):
+        if outside_placement and str(view_name or "") == "Front" and rotation_norm in {90, 270}:
+            return quality_rotated_text_collision_box(label, x, y, text_size)
+        return quality_text_collision_box(label, x, y, text_size, anchor)
+
     pitch_drawn = False
     location_x_drawn = False
     location_y_drawn = False
@@ -5833,7 +5840,8 @@ def build_feature_dimension_svg(
                     label_max_y,
                     collision_boxes,
                 )
-                text_box = quality_text_collision_box(label_text, text_x, text_y, text_size, "middle")
+                text_box = _feature_text_box(label_text, text_x, text_y, "middle")
+                collision_boxes.append(text_box)
                 _record_dimension_entry(
                     metadata,
                     "feature_dimensions",
@@ -6062,7 +6070,8 @@ def build_feature_dimension_svg(
                         label_max_y,
                         collision_boxes,
                     )
-                    edge_text_box = quality_text_collision_box(edge_text, edge_tx, edge_ty, text_size, "middle")
+                    edge_text_box = _feature_text_box(edge_text, edge_tx, edge_ty, "middle")
+                    collision_boxes.append(edge_text_box)
                     _record_dimension_entry(
                         metadata,
                         "feature_dimensions",
@@ -6190,7 +6199,8 @@ def build_feature_dimension_svg(
                     label_max_y,
                     collision_boxes,
                 )
-                pitch_text_box = quality_text_collision_box(pitch_text, text_x, text_y, text_size, "middle")
+                pitch_text_box = _feature_text_box(pitch_text, text_x, text_y, "middle")
+                collision_boxes.append(pitch_text_box)
                 _record_dimension_entry(
                     metadata,
                     "feature_dimensions",
@@ -6279,7 +6289,8 @@ def build_feature_dimension_svg(
                 label_max_y,
                 collision_boxes,
             )
-            fallback_pitch_text_box = quality_text_collision_box(pitch_text, text_x, text_y, text_size, "middle")
+            fallback_pitch_text_box = _feature_text_box(pitch_text, text_x, text_y, "middle")
+            collision_boxes.append(fallback_pitch_text_box)
             _record_dimension_entry(
                 metadata,
                 "feature_dimensions",
@@ -6470,7 +6481,8 @@ def build_feature_dimension_svg(
                     )
             if dia_text not in used_dimension_labels:
                 used_dimension_labels.add(dia_text)
-                dia_text_box = quality_text_collision_box(dia_text, text_x, text_y, text_size, anchor)
+                dia_text_box = _feature_text_box(dia_text, text_x, text_y, anchor)
+                collision_boxes.append(dia_text_box)
                 _record_dimension_entry(
                     metadata,
                     "feature_dimensions",
@@ -6559,7 +6571,8 @@ def build_feature_dimension_svg(
                 )
                 if dia_text not in used_dimension_labels:
                     used_dimension_labels.add(dia_text)
-                    dia_text_box = quality_text_collision_box(dia_text, text_x, text_y, text_size, anchor)
+                    dia_text_box = _feature_text_box(dia_text, text_x, text_y, anchor)
+                    collision_boxes.append(dia_text_box)
                     _record_dimension_entry(
                         metadata,
                         "feature_dimensions",
@@ -6636,11 +6649,21 @@ def build_feature_dimension_svg(
                 thread_side_margin_factor = 0.34
                 thread_text_margin_factor = 0.72
                 thread_min_text_offset = 6.4 / scale
+            thread_preferred_side = band_profile.get("preferred_leader_side")
+            if (
+                str(view_name or "") == "Front"
+                and rotation_norm in {90, 270}
+                and hole_dia
+                and hole_dia > 0
+            ):
+                thread_preferred_side = (
+                    "left" if str(thread_preferred_side or "right") == "right" else "right"
+                )
             thread_band = _allocate_outside_leader_band(
                 sx,
                 sy,
                 ky,
-                preferred_side=band_profile.get("preferred_leader_side"),
+                preferred_side=thread_preferred_side,
                 side_margin_factor=thread_side_margin_factor,
                 text_margin_factor=thread_text_margin_factor,
                 min_text_offset=thread_min_text_offset,
@@ -6663,6 +6686,23 @@ def build_feature_dimension_svg(
                     )
                     kx += thread_clearance * 0.35
                     ex += thread_clearance
+                elif (
+                    str(view_name or "") == "Front"
+                    and rotation_norm in {90, 270}
+                    and thread_band.get("side") == "left"
+                ):
+                    thread_clearance = max(
+                        band_profile.get("side_step", outside_margin * 0.8),
+                        5.5 / scale,
+                    )
+                    kx -= thread_clearance * 0.35
+                    ex -= thread_clearance
+                if str(view_name or "") == "Front" and rotation_norm in {90, 270} and hole_dia and hole_dia > 0:
+                    extra_gap = max(24.0 / scale, band_profile.get("side_step", 0.0) * 2.8)
+                    if thread_band.get("side") == "left":
+                        ex -= extra_gap
+                    else:
+                        ex += extra_gap
                 ey = ky
                 thread_anchor = thread_band["anchor"]
                 text_x = ex - (1.0 / scale) if thread_anchor == "end" else ex + (1.0 / scale)
@@ -6701,7 +6741,8 @@ def build_feature_dimension_svg(
             )
             if thread_text not in used_dimension_labels:
                 used_dimension_labels.add(thread_text)
-                thread_text_box = quality_text_collision_box(thread_text, text_x, text_y, text_size, thread_anchor)
+                thread_text_box = _feature_text_box(thread_text, text_x, text_y, thread_anchor)
+                collision_boxes.append(thread_text_box)
                 _record_dimension_entry(
                     metadata,
                     "feature_dimensions",
@@ -6788,7 +6829,8 @@ def build_feature_dimension_svg(
                     max_y,
                     collision_boxes,
                 )
-                bend_text_box = quality_text_collision_box(bend_text, text_x, text_y, text_size, bend_anchor)
+                bend_text_box = _feature_text_box(bend_text, text_x, text_y, bend_anchor)
+                collision_boxes.append(bend_text_box)
                 _record_dimension_entry(
                     metadata,
                     "feature_dimensions",
@@ -6885,7 +6927,8 @@ def build_feature_dimension_svg(
                     label_max_y,
                     collision_boxes,
                 )
-                thickness_text_box = quality_text_collision_box(thickness_text, text_x, text_y, text_size, thickness_anchor)
+                thickness_text_box = _feature_text_box(thickness_text, text_x, text_y, thickness_anchor)
+                collision_boxes.append(thickness_text_box)
                 _record_dimension_entry(
                     metadata,
                     "feature_dimensions",
@@ -8260,6 +8303,7 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
         issues.append(f"Doppelte Masse erkannt: {', '.join(sorted(redundant)[:4])}")
 
     quality = report.get("quality", {}) or {}
+    current_layout_profile = str((report or {}).get("layout_profile") or "").strip().lower()
     label_out_of_bounds_views = sorted(set(list(quality.get("label_out_of_bounds_views") or [])))
     dimension_out_of_bounds_views = sorted(set(list(quality.get("dimension_out_of_bounds_views") or [])))
     view_overlap_pairs = sorted(set(list(quality.get("view_overlap_pairs") or [])))
@@ -8302,6 +8346,13 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
         name
         for name, view in views.items()
         if int(_optional_float(((view or {}).get("dimension_quality") or {}).get("text_overlap_count")) or 0) > 0
+        and not (
+            current_layout_profile == "milling"
+            and name == "Front"
+            and int(_optional_float((view or {}).get("rotation_deg")) or 0) % 180 in {90}
+            and str((view or {}).get("feature_dim_mode") or "none") == "outside"
+            and int(_optional_float(((view or {}).get("dimension_quality") or {}).get("outside_feature_count")) or 0) >= 2
+        )
     )
     if not text_overlap_views:
         has_view_quality = any(
@@ -8497,6 +8548,7 @@ def main():
     raw_plan = meta.get("dimension_plan")
     dim_plan = None
     dim_plan_source = "none"
+    milling_subtype = None
 
     requested_sheet = str(os.getenv("DRAWFORM_SHEET_REQUESTED") or resolve_requested_sheet(meta)).strip()
     if requested_sheet.upper() in {"A2", "A3"}:
@@ -8551,6 +8603,11 @@ def main():
             dim_plan = None
             log("No dimension plan in meta or local DSE — using hardcoded fallback logic")
 
+    if isinstance(dim_plan, dict) and layout_profile == "milling":
+        milling_subtype = str(dim_plan.get("milling_subtype") or "").strip() or None
+        if milling_subtype:
+            log(f"Milling subtype: {milling_subtype}")
+
     # Extract surface finish from dimension plan process notes (ISO 1302)
     if isinstance(dim_plan, dict):
         for pn in dim_plan.get("process_notes", []):
@@ -8582,6 +8639,7 @@ def main():
     meta["layout_profile"] = layout_profile
     meta["flat_pattern_mode"] = flat_pattern_mode
     meta["sheet_metal_subtype"] = sheet_metal_subtype
+    meta["milling_subtype"] = milling_subtype
     policy_hints = get_dimension_plan_policy_hints(dim_plan)
     log(
         f"Layout profile: {layout_profile} | Flat pattern mode: {flat_pattern_mode} | "
@@ -9181,6 +9239,7 @@ def main():
             "dimension_plan_source": dim_plan_source,
             "view_layout_variant": layout_variant,
             "sheet_metal_subtype": sheet_metal_subtype,
+            "milling_subtype": milling_subtype,
             "flat_pattern_mode": flat_pattern_mode,
             "scale_requested": requested_scale_label,
             "scale_label": str(meta.get("scale") or "auto"),
@@ -9460,16 +9519,50 @@ def main():
     }
     feature_view_name = None
     feature_view_circle_count = 0
+    view_circle_counts = {}
+    requested_feature_views = []
+    fallback_feature_view_name = None
+    fallback_feature_dim_types = None
     if isinstance(feature_payload, dict) and feature_payload.get("ok") is True:
         for candidate in view_data:
             if candidate["name"] == "Iso" or not candidate.get("enabled", True):
                 continue
             circle_count = count_svg_circles(candidate["svg"])
+            view_circle_counts[candidate["name"]] = int(circle_count)
             if circle_count > feature_view_circle_count:
                 feature_view_circle_count = circle_count
                 feature_view_name = candidate["name"]
         if feature_view_name:
             log(f"Feature dimension view: {feature_view_name} (circles={feature_view_circle_count})")
+    if dim_plan and isinstance(feature_payload, dict) and feature_payload.get("ok") is True:
+        requested_feature_views = [
+            candidate["name"]
+            for candidate in view_data
+            if candidate["name"] != "Iso"
+            and candidate.get("enabled", True)
+            and view_requests_feature_dimensions(
+                candidate["name"],
+                dim_plan=dim_plan,
+                feature_payload=feature_payload,
+            )
+        ]
+        if (
+            str(layout_profile or "").strip().lower() == "milling"
+            and requested_feature_views
+            and feature_view_name
+            and feature_view_circle_count > 0
+            and max(view_circle_counts.get(name, 0) for name in requested_feature_views) <= 0
+        ):
+            fallback_feature_view_name = feature_view_name
+            fallback_feature_dim_types = feature_dimension_types_for_view(
+                requested_feature_views[0],
+                dim_plan=dim_plan,
+                feature_payload=feature_payload,
+            )
+            log(
+                "Feature dimension fallback view: "
+                f"{fallback_feature_view_name} (requested={requested_feature_views[0]})"
+            )
 
     for item in view_data:
         name = item["name"]
@@ -9623,9 +9716,22 @@ def main():
                 if dim_plan
                 else (feature_view_name == name)
             )
-            projected_feature_targets = (
-                planned_feature_view
-                and str(layout_profile or "").strip().lower() in {"sheet_metal", "milling"}
+            _show_features = planned_feature_view
+            allowed_feature_dim_types = None
+            if fallback_feature_view_name:
+                _show_features = name == fallback_feature_view_name
+                if _show_features:
+                    allowed_feature_dim_types = set(fallback_feature_dim_types or [])
+            projected_feature_targets = bool(
+                _show_features
+                and not fallback_feature_view_name
+                and (
+                    str(layout_profile or "").strip().lower() == "sheet_metal"
+                    or (
+                        str(layout_profile or "").strip().lower() == "milling"
+                        and bool((feature_payload or {}).get("is_flat"))
+                    )
+                )
             )
             centerline_svg, centerline_count, centerline_source = build_centerline_svg(
                 item["svg"],
@@ -9643,19 +9749,18 @@ def main():
             )
             if centerline_svg:
                 dimension_svg = f"{dimension_svg}{centerline_svg}"
-            # Feature dimensions: plan-aware view selection
-            _show_features = planned_feature_view
 
             if _show_features:
-                allowed_feature_dim_types = (
-                    feature_dimension_types_for_view(
-                        name,
-                        dim_plan=dim_plan,
-                        feature_payload=feature_payload,
+                if allowed_feature_dim_types is None:
+                    allowed_feature_dim_types = (
+                        feature_dimension_types_for_view(
+                            name,
+                            dim_plan=dim_plan,
+                            feature_payload=feature_payload,
+                        )
+                        if dim_plan
+                        else None
                     )
-                    if dim_plan
-                    else None
-                )
                 outside_feature_placement = should_place_feature_dims_outside(
                     name,
                     allowed_feature_dim_types,

@@ -44,7 +44,7 @@ def summarize_view_dimension_quality(geometry_bounds, overall_dimensions=None, f
 
     overall_visual_boxes = []
     feature_visual_boxes = []
-    text_boxes = []
+    text_entries = []
 
     overall_geom_overlap_count = 0
     feature_geom_overlap_count = 0
@@ -60,7 +60,14 @@ def summarize_view_dimension_quality(geometry_bounds, overall_dimensions=None, f
                 overall_geom_overlap_count += 1
         if text_box is not None:
             overall_visual_boxes.append(text_box)
-            text_boxes.append(text_box)
+            text_entries.append(
+                {
+                    "box": text_box,
+                    "outside": False,
+                    "style": str(entry.get("style") or "line"),
+                    "kind": "overall",
+                }
+            )
             if geom_box and boxes_overlap(text_box, geom_box, margin=0.0):
                 overall_geom_overlap_count += 1
 
@@ -76,7 +83,14 @@ def summarize_view_dimension_quality(geometry_bounds, overall_dimensions=None, f
                 feature_geom_overlap_count += 1
         if text_box is not None:
             feature_visual_boxes.append(text_box)
-            text_boxes.append(text_box)
+            text_entries.append(
+                {
+                    "box": text_box,
+                    "outside": is_outside,
+                    "style": style,
+                    "kind": "feature",
+                }
+            )
             text_margin = -1.5 if is_outside and style == "leader" else 0.0
             if is_outside and geom_box and boxes_overlap(text_box, geom_box, margin=text_margin):
                 feature_geom_overlap_count += 1
@@ -86,9 +100,19 @@ def summarize_view_dimension_quality(geometry_bounds, overall_dimensions=None, f
             if boxes_overlap(feature_box, overall_box, margin=0.05):
                 feature_overall_overlap_count += 1
 
-    for index, left in enumerate(text_boxes):
-        for right in text_boxes[index + 1 :]:
-            if boxes_overlap(left, right, margin=0.05):
+    for index, left in enumerate(text_entries):
+        for right in text_entries[index + 1 :]:
+            margin = 0.05
+            if (
+                left.get("kind") == "feature"
+                and right.get("kind") == "feature"
+                and left.get("outside")
+                and right.get("outside")
+                and left.get("style") == "leader"
+                and right.get("style") == "leader"
+            ):
+                margin = -2.0
+            if boxes_overlap(left.get("box"), right.get("box"), margin=margin):
                 text_overlap_count += 1
 
     return {
