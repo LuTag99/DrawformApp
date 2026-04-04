@@ -532,8 +532,11 @@ def _plan_milling(
     slot_groups = fp.get("slot_groups") or []
     slot_count = int(fp.get("slot_count") or len(slot_groups))
 
-    # Detail level 2+: add depth dimensions on Left view
-    left_dims: List[DimensionItem] = []
+    # Milling parts need a third orthographic overall size to expose the
+    # remaining stock / thickness axis even at detail level 1.
+    left_dims: List[DimensionItem] = [
+        _dim("overall_depth", "Left", axis="H", value_mm=mid_val, priority="should")
+    ]
 
     if slot_count > 0 and slot_groups:
         representative = slot_groups[0]
@@ -567,7 +570,7 @@ def _plan_milling(
             )
     if detail_level >= 2:
         left_dims.append(
-            _dim("overall_depth", "Left", axis="H", value_mm=shortest_val,
+            _dim("overall_height", "Left", axis="V", value_mm=shortest_val,
                  detail_level=2, priority="should")
         )
 

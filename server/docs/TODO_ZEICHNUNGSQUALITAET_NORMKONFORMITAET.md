@@ -1,6 +1,6 @@
 # To-do: Zeichnungsqualitaet und Normkonformitaet
 
-Stand: 2026-02-19
+Stand: 2026-04-04
 
 ## P0 - Muss vor naechstem Release
 
@@ -49,6 +49,22 @@ Stand: 2026-02-19
 - `/api/export` und `/api/analyze` Fehlerantworten standardisieren:
 - feste `code`-Felder
 - reproduzierbare Fehlermeldungen fuer Frontend.
+
+10. [ ] Fraesteil-Featurelogik vervollstaendigen
+- Teilweise umgesetzt:
+- projizierte Lochzentren und Centerlines fuer `milling`
+- 2-Loch-Pitch nicht mehr unnoetig unterdruecken
+- dritte Gesamtabmessung auf linker Ansicht
+- Verifiziert an:
+- `21631_03_141_gripper finger_486.STEP`
+- `complex_bracket`
+- `feature_test_part`
+- `housing`
+- Noch offen:
+- Bohrungstyp `durch/blind`
+- Bohrtiefe
+- Taschen-/Stufen-/Chamfer-Logik
+- Layout-Warnung `Front vs Top` bei gedrehten Milling-Frontansichten
 
 ## P2 - Ausbau nach stabiler Basis
 

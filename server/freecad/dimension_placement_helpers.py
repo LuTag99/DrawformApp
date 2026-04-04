@@ -57,16 +57,16 @@ def build_feature_outside_band_profile(
 
     preferred_vertical_side = "left" if has_vertical_overall else "right"
     if view == "Front" and rotation_norm == 90:
-        preferred_vertical_side = "left"
+        preferred_vertical_side = "left" if layout == "sheet_metal" else "right"
     elif view == "Front" and rotation_norm == 270:
-        preferred_vertical_side = "right"
+        preferred_vertical_side = "right" if layout == "sheet_metal" else "left"
     elif not has_vertical_overall and rotation_norm in {0, 180}:
         preferred_vertical_side = "right"
     preferred_leader_side = preferred_vertical_side
     if view == "Front" and rotation_norm == 90:
-        preferred_leader_side = "right" if layout == "sheet_metal" else "left"
+        preferred_leader_side = "right"
     elif view == "Front" and rotation_norm == 270:
-        preferred_leader_side = "left"
+        preferred_leader_side = "left" if layout == "sheet_metal" else "right"
 
     return {
         "preferred_vertical_side": preferred_vertical_side,

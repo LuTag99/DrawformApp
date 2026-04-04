@@ -1,6 +1,6 @@
 # Quality Check Audit
 
-Stand: 2026-03-13
+Stand: 2026-04-04
 
 Ziel:
 - dokumentieren, welche Pruefpfade echte fachliche Tiefe haben
@@ -38,7 +38,10 @@ Ziel:
 
 - `check_layout_quality()` -> `superficial`
   Grund: prueft nur Overflow/Fit.
-  Blind Spot: die View-BBox basiert auf Geometrie, nicht auf kompletter Mass- und Textausdehnung.
+  Blind Spot: die View-BBox bleibt fuer schwierige Rotationsfaelle zu grob; der
+  aktuelle Milling-Referenzfall `21631_03_141_gripper finger_486.STEP` meldet
+  weiter `Front vs Top`, obwohl die eigentliche Verbesserung aus der
+  Feature-Bemassung stammt und nicht aus echter Geometrie-Ueberlagerung.
 
 - `check_norm_conformity()` -> `medium`
   Grund: Marker, Einheitensuffixe und Mittellinien werden sinnvoll geprueft.
@@ -46,7 +49,12 @@ Ziel:
 
 - `check_dim_quality()` -> `medium`
   Grund: prueft Mindestanzahl, Feature-Mass-Praesenz, fehlende Aussenplatzierung bei bevorzugten Feature-Views und harte Textkollisionen.
-  Blind Spot: Geometrie-/Gesamtmass-Ueberlagerungen werden zwar als View-Metrik erfasst, aber standardmaessig noch nicht global hart gegatet; ausserdem keine vollstaendige Datum-/Baseline-/Chain-Bewertung und keine semantische Lesbarkeitsmetrik.
+  Blind Spot: Geometrie-/Gesamtmass-Ueberlagerungen werden zwar als View-Metrik
+  erfasst, aber standardmaessig noch nicht global hart gegatet; ausserdem keine
+  vollstaendige Datum-/Baseline-/Chain-Bewertung und keine semantische
+  Lesbarkeitsmetrik. Positiv ist inzwischen, dass Milling-Lochlagen ueber
+  projizierte Probe-Zentren erkannt werden koennen; Tiefen-/`durch/blind`-Logik
+  bleibt jedoch ausserhalb des aktuellen Checks.
 
 - `check_dimension_plan()` -> `superficial`
   Grund: prueft Struktur des DSE-Plans und offensichtliche Duplikate.
@@ -77,6 +85,9 @@ Ziel:
 - Kein Check bewertet Slot-zu-Slot-, Text-zu-Text- und Text-zu-Geometrie-Kollisionen view-spezifisch.
 - Layout-Fit basiert noch auf View-Geometrie, nicht auf kompletter Zeichnung inklusive Dimensionen.
 - Doppelte Werte werden nur textuell und naeherungsweise erkannt; gleiche Werte in verschiedenen fachlichen Ketten koennen falsch beurteilt werden.
+- Kein Check bewertet fuer Fraesteile, ob Bohrungen als `durch` oder `blind`
+  mit Tiefe beschrieben wurden, sobald die Probe diese Information spaeter
+  liefern kann.
 
 ## Konsequenz
 

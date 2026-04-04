@@ -4771,12 +4771,20 @@ def _select_centerline_circles(circles, scale, limit=12):
     return selected[:limit]
 
 
-def _project_feature_centerline_targets(feature_payload, direction, scale, limit=12):
+def _project_feature_centerline_targets(
+    feature_payload,
+    direction,
+    scale,
+    limit=12,
+    *,
+    allow_nonflat=False,
+):
     if not isinstance(feature_payload, dict):
         return []
     flat_pattern = feature_payload.get("flat_pattern") or {}
     if (
-        not bool(feature_payload.get("is_flat"))
+        not allow_nonflat
+        and not bool(feature_payload.get("is_flat"))
         and feature_payload.get("is_sheet_metal_by_faces") is not True
         and int(flat_pattern.get("bend_count") or 0) <= 0
     ):
@@ -4820,6 +4828,7 @@ def build_centerline_svg(
     line_profile=None,
     feature_payload=None,
     direction=None,
+    allow_projected_feature_targets=False,
 ):
     """
     Build ISO-128 style centerlines (chain thin) for circular features.
@@ -4833,6 +4842,7 @@ def build_centerline_svg(
             direction,
             scale,
             limit=limit,
+            allow_nonflat=allow_projected_feature_targets,
         )
         if targets:
             source = "projected"
@@ -5218,6 +5228,7 @@ def build_feature_dimension_svg(
     rotation_deg=0,
     view_name=None,
     layout_profile=None,
+    allow_projected_feature_targets=False,
 ):
     if not isinstance(feature_payload, dict) or feature_payload.get("ok") is not True:
         return ""
@@ -5229,7 +5240,13 @@ def build_feature_dimension_svg(
     min_x, max_x, min_y, max_y = svg_bounds
     circles = extract_svg_circular_features(svg_group)
     projected_circles = (
-        _project_feature_centerline_targets(feature_payload, direction, scale, limit=40)
+        _project_feature_centerline_targets(
+            feature_payload,
+            direction,
+            scale,
+            limit=40,
+            allow_nonflat=allow_projected_feature_targets,
+        )
         if direction is not None
         else []
     )
@@ -5394,7 +5411,9 @@ def build_feature_dimension_svg(
     parts = []
     hole_pitch = _optional_float(feature_payload.get("preferred_hole_pitch_mm"))
     hole_pitch_source = str(feature_payload.get("preferred_hole_pitch_source") or "").strip().lower()
-    allow_hole_pitch_dimension = hole_pitch_source == "linear_pattern"
+    allow_hole_pitch_dimension = hole_pitch_source == "linear_pattern" or (
+        hole_count == 2 and hole_pitch is not None and hole_pitch > 0
+    )
     rotation_norm = int(round(_optional_float(rotation_deg) or 0.0)) % 360
     pitch_drawn = False
     location_x_drawn = False
@@ -6380,6 +6399,8 @@ def build_feature_dimension_svg(
             and (
                 bool(feature_payload.get("is_flat"))
                 or (
+                    str(layout_profile or "").strip().lower() != "milling"
+                    and
                     str(view_name or "") == "Front"
                     and rotation_norm in {90, 270}
                     and (
@@ -9496,6 +9517,17 @@ def main():
             line_profile = iso128_line_profile(scale)
             stroke_width = float(line_profile.get("visible", compute_stroke_width(scale)))
             show_horizontal, show_vertical = resolve_overall_dimension_axes(name, dim_plan=dim_plan)
+            if (
+                str(layout_profile or "").strip().lower() == "milling"
+                and name == "Front"
+                and int(item.get("rotation_deg", 0)) % 180 in {90}
+                and not bool((feature_payload or {}).get("is_flat"))
+            ):
+                # Rotated milling front views easily duplicate the long overall
+                # size into the lower neighboring slot. Keep the functional
+                # height on the front view and leave the global length to the
+                # orthogonal companion views.
+                show_horizontal = False
             dimension_metadata = {"overall_dimensions": [], "feature_dimensions": []}
             neighbor_slot_bounds = []
             neighbor_view_bounds = []
@@ -9591,6 +9623,10 @@ def main():
                 if dim_plan
                 else (feature_view_name == name)
             )
+            projected_feature_targets = (
+                planned_feature_view
+                and str(layout_profile or "").strip().lower() in {"sheet_metal", "milling"}
+            )
             centerline_svg, centerline_count, centerline_source = build_centerline_svg(
                 item["svg"],
                 scale,
@@ -9599,10 +9635,11 @@ def main():
                 line_profile=line_profile,
                 feature_payload=(
                     feature_payload
-                    if planned_feature_view and str(layout_profile or "").strip().lower() == "sheet_metal"
+                    if projected_feature_targets
                     else None
                 ),
                 direction=item.get("direction"),
+                allow_projected_feature_targets=projected_feature_targets,
             )
             if centerline_svg:
                 dimension_svg = f"{dimension_svg}{centerline_svg}"
@@ -9639,6 +9676,7 @@ def main():
                     rotation_deg=item.get("rotation_deg", 0),
                     view_name=name,
                     layout_profile=layout_profile,
+                    allow_projected_feature_targets=projected_feature_targets,
                 )
                 # Post-check: discard feature dims that overflow drawing area
                 if feature_dimension_svg and outside_feature_placement:
@@ -9675,13 +9713,23 @@ def main():
                         dim_tracking["feature_dim_internal_views"].append(name)
                 elif outside_feature_placement:
                     dim_tracking["outside_preferred_feature_views"].append(name)
+            milling_step_dims = (
+                str(layout_profile or "").strip().lower() == "milling"
+                and name == "Left"
+                and not bool((feature_payload or {}).get("rotational_profile"))
+                and svg_detail_score(item["svg"]) > max(proj_w, proj_h) * 1.35
+            )
             enable_step_dims = (
-                name == "Front"
-                and show_horizontal
-                and bool((feature_payload or {}).get("is_flat"))
-                and svg_detail_score(item["svg"]) > max(proj_w, proj_h) * 2.0
+                (
+                    name == "Front"
+                    and show_horizontal
+                    and bool((feature_payload or {}).get("is_flat"))
+                    and svg_detail_score(item["svg"]) > max(proj_w, proj_h) * 2.0
+                )
+                or milling_step_dims
             )
             if enable_step_dims:
+                milling_steps = str(layout_profile or "").strip().lower() == "milling"
                 step_dim_svg = build_step_dimensions(
                     item["svg"],
                     svg_bounds,
@@ -9690,11 +9738,15 @@ def main():
                     line_profile=line_profile,
                     label_width=label_w,
                     label_height=label_h,
-                    max_steps=5,
-                    show_horizontal_steps=True,
-                    show_vertical_steps=False,
+                    max_steps=3 if milling_steps else 5,
+                    show_horizontal_steps=(name == "Front" and not milling_steps),
+                    show_vertical_steps=milling_steps and name == "Left",
                     horizontal_side="below",
-                    horizontal_max_ratio=0.68 if int((feature_payload or {}).get("hole_count") or 0) >= 6 else None,
+                    horizontal_max_ratio=(
+                        None
+                        if milling_steps
+                        else (0.68 if int((feature_payload or {}).get("hole_count") or 0) >= 6 else None)
+                    ),
                 )
                 if step_dim_svg:
                     dimension_svg = f"{dimension_svg}{step_dim_svg}"
