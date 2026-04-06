@@ -136,6 +136,7 @@ class DimensionPlan(BaseModel):
     """Complete dimension plan for a part — the output of the DSE."""
 
     part_type: Literal["milling", "sheet_metal", "turning"]
+    milling_subtype: Optional[Literal["plate_2p5d", "block_prismatic", "feature_dense"]] = None
     detail_level: int = Field(default=1, ge=1, le=3)
     datum_system: DatumSystem = Field(default_factory=DatumSystem)
     views: list[ViewPlan] = []

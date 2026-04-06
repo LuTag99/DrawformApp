@@ -30,6 +30,28 @@ Begruendung:
 - nicht jedes Fraesteil braucht dieselbe Ansichtslogik
 - flache Platten, prismatische Bloecke und feature-dichte Teile haben unterschiedliche Anforderungen an Hauptansicht, Z-Darstellung und Schnittbedarf
 
+## Subtypklassifikation
+
+Die Fraesteil-Unterfamilie wird in `v1` explizit aus bestehenden Probe-Feldern
+abgeleitet.
+
+Reihenfolge:
+
+1. `feature_dense`, wenn
+   - `hole_count >= 8`
+   - oder `slot_count >= 4`
+   - oder `(hole_count + slot_count) >= 6`
+2. `plate_2p5d`, wenn
+   - `flat_ratio < 0.25`
+   - und kein `feature_dense`-Trigger aktiv ist
+3. `block_prismatic` fuer alle verbleibenden Faelle
+
+Begruendung:
+
+- die Regeln nutzen nur bereits vorhandene Probe-Felder
+- die Klassifikation ist damit in `v1` robust genug fuer DSE-Metadaten und
+  spaetere Layout-Entscheidungen
+
 ## Grundprinzipien
 
 1. Fertigung vor Geometrieoptik.
@@ -251,6 +273,12 @@ Regel:
 
 Jede Tasche ist eine 3D- oder 2,5D-Bearbeitung und braucht zwingend eine Z-Information.
 
+Probe-Voraussetzung:
+
+- Taschenerkennung ist in `v1` noch nicht robust implementiert
+- die Regel ist fachlich verpflichtend, aber aktuell nur dann voll umsetzbar,
+  wenn der Probe die Tasche explizit liefert
+
 Pflicht:
 
 - Lage `X/Y`
@@ -265,6 +293,13 @@ Nicht zulaessig:
 - Tiefe fehlt
 
 ### 6. Nuten
+
+Probe-Voraussetzung:
+
+- `slot_groups[].depth_mm` ist als Datenpfad fuer `v1` vorgesehen bzw.
+  verfuegbar
+- die Nutenregel ist deshalb teilweise umsetzbar, solange `depth_mm`
+  konsistent geliefert wird
 
 Pflicht:
 
@@ -281,6 +316,12 @@ Nicht zulaessig:
 
 ### 7. Stufen / Absaetze
 
+Probe-Voraussetzung:
+
+- Stufenerkennung erfordert in `v1` eine Probe-Erweiterung
+- ohne diese Probe-Erweiterung bleibt die Regel fachlich richtig, aber nur
+  ueber Silhouetten- oder View-Fallbacks approximierbar
+
 Pflicht:
 
 - Lage
@@ -292,6 +333,16 @@ Nicht zulaessig:
 
 - sichtbare Stufe ohne Hoehenmass
 - mehrere Ebenen ohne klare Z-Zuordnung
+
+## Probe-Voraussetzungen in v1
+
+| Regelbereich | In v1 direkt umsetzbar | Braucht Probe-Erweiterung |
+| --- | --- | --- |
+| Bohrungen | ja | nur fuer `durch/blind` und Tiefen-Details |
+| Nuten / Schlitze | ja, wenn `slot_groups` inkl. Tiefe vorliegen | bei fehlender `depth_mm` |
+| Taschen | teilweise | ja |
+| Stufen / Absaetze | teilweise | ja |
+| Gewinde / Passungen | teilweise | ja, wenn Text-/Toleranzinfos fehlen |
 
 ## Lochbilder und Wiederholungen
 
@@ -351,6 +402,21 @@ Ist Pflicht, wenn mindestens einer dieser Trigger zutrifft:
 - Sackloecher oder Taschen sind sonst nicht sicher beschreibbar
 - Innenkonturen waeren sonst nur ueber verdeckte Kanten erkennbar
 
+#### Fallback bei nicht verfuegbarer Schnittansicht
+
+Wenn keine automatische Schnittansicht erzeugt werden kann, gilt in `v1`
+folgende Fallback-Reihenfolge:
+
+1. verdeckte Kanten anzeigen
+2. explizite Tiefen-Annotation ergaenzen, z. B. `Tasche t = 5,0`
+3. Quality Check erzeugt `VIEW_SELECTION_ERROR`
+
+Klarstellung:
+
+- automatische Schnitterzeugung ist in `v1` optional
+- die Infrastruktur fuer Section Views ist vorhanden, aber noch nicht fuer alle
+  Milling-Faelle automatisch getriggert
+
 ### Isometrie
 
 - nur Uebersicht
@@ -389,6 +455,21 @@ Default-Regeln:
 - keine reine Dekoration
 - Schnitt muss bearbeitungskritische Tiefe oder Innengeometrie erklaeren
 
+### Abstandswerte
+
+Die exakten Abstaende sind Renderer-Parameter und keine DSE-Entscheidung.
+
+Normnahe Zielwerte fuer `v1`:
+
+- Konturabstand erste Masslinie: `>= 6,0 mm`
+- Staffelung weiterer Masslinien: `>= 6,0 mm`
+- Ueberstand der Extensionslinien ueber die Masslinie: `1,5 mm`
+
+Interpretation:
+
+- die Leitlinie definiert die Ordnungsgrenzen
+- der Renderer verantwortet die konkrete Parametrisierung und Kollisionen
+
 ## Verdeckte Kanten
 
 Verdeckte Kanten duerfen nie die einzige Informationsquelle fuer fertigungskritische Geometrie sein.
@@ -398,6 +479,17 @@ Wenn ein Merkmal verdeckt und relevant ist:
 - Schnittansicht bevorzugen
 - Detailansicht bevorzugen
 - oder explizite Tiefen-/Featureangabe ergaenzen
+
+### Interimsstrategie (v1)
+
+Bis zur feineren Feature-Erkennung fuer verdeckte Geometrie gilt:
+
+1. verdeckte Kanten werden standardmaessig gerendert
+2. `hidden_edge_load` und `hidden_ratio` werden pro Ansicht bewertet
+3. bei `hidden_ratio >= 0.14` entsteht mindestens eine Schnittempfehlung und
+   ein `VIEW_SELECTION_ERROR`
+4. Feature-Level-Erkennung, welches konkrete Merkmal nur verdeckt sichtbar ist,
+   bleibt `v2`
 
 ## Funktionsmasse vor Schoenheitsmassen
 
@@ -593,6 +685,14 @@ Diese Spezifikation verlangt noch nicht:
 - vollautomatische CAM-Strategie
 - komplexe 5-Achs-Bearbeitungsplanung
 - vollstaendige Freiform-/Surfacing-Logik
+- Einzeltoleranzen
+- formale GD&T-Rahmen nach ISO 1101
+- Passungstoleranzbereiche ueber die textliche Angabe hinaus
+
+Klarstellung:
+
+- `v1` erwartet eine Allgemeintoleranz `DIN ISO 2768-mK` im Titelblock
+- individuelle Toleranzen sind `v2`-Scope
 
 ## Kurzform
 

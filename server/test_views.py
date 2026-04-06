@@ -959,11 +959,11 @@ def check_geometry_accuracy(report: dict, expected: dict) -> tuple[bool, list[st
                     f"(delta={abs(closest - value):.2f}mm > tol {GEOM_OVERALL_TOL_MM}mm)"
                 )
 
-        elif dim_type == "overall_width":
+        elif dim_type == "overall_depth":
             closest = min(bbox_sorted, key=lambda x: abs(x - value))
             if abs(closest - value) > GEOM_OVERALL_TOL_MM:
                 issues.append(
-                    f"geom_accuracy: overall_width={value:.1f}mm vs bbox closest={closest:.1f}mm "
+                    f"geom_accuracy: overall_depth={value:.1f}mm vs bbox closest={closest:.1f}mm "
                     f"(delta={abs(closest - value):.2f}mm > tol {GEOM_OVERALL_TOL_MM}mm)"
                 )
 
@@ -989,8 +989,7 @@ def check_geometry_accuracy(report: dict, expected: dict) -> tuple[bool, list[st
         for note in plan.get("process_notes", []):
             text = note.get("text", "") if isinstance(note, dict) else str(note)
             # Look for "t = X,Y mm" pattern
-            import re as _re
-            t_match = _re.search(r"t\s*=\s*(\d+[.,]\d+)", text)
+            t_match = re.search(r"t\s*=\s*(\d+[.,]\d+)", text)
             if t_match:
                 noted_t = float(t_match.group(1).replace(",", "."))
                 if abs(noted_t - measured_t) > GEOM_THICKNESS_TOL_MM:
@@ -1345,6 +1344,470 @@ def check_lk_callout(sample_name: str, report: dict, expected: dict) -> tuple[bo
         )
 
     return len(issues) == 0, issues
+
+
+# ---------------------------------------------------------------------------
+# Guideline coverage: Prio-A features from probe must be in DSE plan
+# ---------------------------------------------------------------------------
+
+# Maps (part_type, feature_field, dim_type) — if feature_field is truthy in
+# features, the corresponding dim_type must appear in the DSE plan.
+_PRIO_A_RULES: list[tuple[str | None, str, str, str]] = [
+    # part_type (None=any), feature_field, comparison, expected dim_type
+    # NOTE: only fields actually present in report["features"] can be checked here.
+    # slot_count and thread_label are NOT in the report features block (they come
+    # from the raw feature probe, not the report summary).  These are covered
+    # indirectly via check_dimension_plan and the guideline regression tests.
+    (None, "hole_count", ">0", "hole_diameter"),
+    ("sheet_metal", "measured_thickness_mm", "truthy", "sheet_thickness"),
+    ("sheet_metal", "bend_radius_mm", ">0", "bend_radius"),
+]
+
+
+def check_guideline_coverage(report: dict, expected: dict) -> tuple[bool, list[str]]:
+    """Validate that all Priorität-A features detected by probe are covered in DSE plan.
+
+    This bridges the gap between the Bemassungsleitlinien (which define what
+    *must* be dimensioned) and the automated check suite (which until now only
+    checked structural/layout properties).
+    """
+    issues: list[str] = []
+    if not expected.get("dse_check"):
+        return True, []
+
+    features = report.get("features", {})
+    plan = report.get("dimension_plan")
+    if not features.get("ok") or not plan:
+        return True, []  # No data to validate against
+
+    part_type = plan.get("part_type")
+    all_dim_types = set()
+    for view in plan.get("views", []):
+        for dim in view.get("dimensions", []):
+            all_dim_types.add(dim.get("dim_type"))
+
+    for rule_pt, field, comparison, dim_type in _PRIO_A_RULES:
+        # Skip rules that don't apply to this part_type
+        if rule_pt is not None and rule_pt != part_type:
+            continue
+
+        value = features.get(field)
+        triggered = False
+        if comparison == ">0":
+            triggered = (_float_or_none(value) or 0) > 0
+        elif comparison == "truthy":
+            triggered = bool(value)
+
+        if triggered and dim_type not in all_dim_types:
+            issues.append(
+                f"guideline_coverage: PRIO_A feature '{field}' detected "
+                f"but '{dim_type}' missing from DSE plan"
+            )
+
+    # Overall dimensions must always be present (all part types)
+    for required_overall in ("overall_length", "overall_height"):
+        if required_overall not in all_dim_types:
+            issues.append(
+                f"guideline_coverage: PRIO_A '{required_overall}' missing from DSE plan"
+            )
+
+    # Milling: if hole_count >= 2 and hole_pitch detected, pitch must be in plan
+    if part_type == "milling":
+        hole_count = int(_float_or_none(features.get("hole_count")) or 0)
+        hole_pitch = _float_or_none(features.get("hole_pitch_mm"))
+        if hole_count >= 2 and hole_pitch and hole_pitch > 0:
+            if "hole_pitch" not in all_dim_types:
+                issues.append(
+                    "guideline_coverage: PRIO_A hole_pitch missing "
+                    f"(hole_count={hole_count}, pitch={hole_pitch:.1f}mm)"
+                )
+
+    return len(issues) == 0, issues
+
+
+# ---------------------------------------------------------------------------
+# Readability: SVG-based text overlap, dimension spacing, font size checks
+# ---------------------------------------------------------------------------
+
+# DIN ISO 3098 minimum letter height is 2.5mm, at typical A3 scale this is
+# ~7 SVG user units.  We use a conservative lower bound.
+_MIN_TEXT_HEIGHT_SVG = 5.0
+_MIN_DIM_LINE_SPACING_SVG = 12.0  # ~7mm at typical scale
+
+
+def _parse_svg_texts(svg_text: str) -> list[dict]:
+    """Extract text elements with approximate bounding boxes from SVG.
+
+    Parses ``<text ...>content</text>`` elements regardless of attribute order.
+    """
+    results = []
+    # Two-step: first find <text ...>content</text>, then extract attrs
+    text_pattern = re.compile(
+        r'<text\s+([^>]*)>([^<]*)</text>',
+        re.IGNORECASE,
+    )
+    attr_x = re.compile(r'\bx=["\']([^"\']*)["\']')
+    attr_y = re.compile(r'\by=["\']([^"\']*)["\']')
+    attr_fs = re.compile(r'\bfont-size=["\']([^"\']*)["\']')
+
+    for m in text_pattern.finditer(svg_text):
+        attrs = m.group(1)
+        content = m.group(2).strip()
+        if not content:
+            continue
+        x_m = attr_x.search(attrs)
+        y_m = attr_y.search(attrs)
+        fs_m = attr_fs.search(attrs)
+        x = _float_or_none(x_m.group(1)) if x_m else 0.0
+        y = _float_or_none(y_m.group(1)) if y_m else 0.0
+        font_size = _float_or_none(fs_m.group(1)) if fs_m else 0.0
+        x = x or 0.0
+        y = y or 0.0
+        font_size = font_size or 0.0
+        # Approximate bounding box: width ~ len(content) * font_size * 0.6
+        est_width = len(content) * max(font_size, 6.0) * 0.6
+        est_height = max(font_size, 6.0)
+        results.append({
+            "x": x, "y": y,
+            "w": est_width, "h": est_height,
+            "font_size": font_size,
+            "content": content,
+        })
+    return results
+
+
+def _boxes_overlap(a: dict, b: dict, margin: float = 0.0) -> bool:
+    """Check if two text bounding boxes overlap."""
+    return (
+        a["x"] - margin < b["x"] + b["w"]
+        and a["x"] + a["w"] + margin > b["x"]
+        and a["y"] - a["h"] - margin < b["y"]
+        and a["y"] + margin > b["y"] - b["h"]
+    )
+
+
+def check_readability(sample_name: str, report: dict) -> tuple[bool, list[str]]:
+    """Check dimension readability via SVG analysis.
+
+    Checks:
+    - Text elements with font-size below minimum (ISO 3098)
+    - Text-on-text overlaps (bounding box collision)
+    - Dimension line spacing too tight
+    """
+    issues: list[str] = []
+    svg_path = DEBUG_DIR / f"{sample_name}_debug.svg"
+    if not svg_path.exists():
+        return True, []  # SVG missing — already caught by other checks
+
+    svg_text = svg_path.read_text(encoding="utf-8", errors="replace")
+    texts = _parse_svg_texts(svg_text)
+
+    # 1. Font size check (skip title block / meta texts — only check dim-like texts)
+    dim_texts = [
+        t for t in texts
+        if re.match(r'^[\d.,Ø⌀×xRMt\s°\-]+$', t["content"])
+    ]
+    small_texts = [t for t in dim_texts if 0 < t["font_size"] < _MIN_TEXT_HEIGHT_SVG]
+    if small_texts:
+        sizes = {t["font_size"] for t in small_texts}
+        issues.append(
+            f"readability: {len(small_texts)} dimension text(s) below minimum "
+            f"height {_MIN_TEXT_HEIGHT_SVG} (found sizes: {sorted(sizes)})"
+        )
+
+    # 2. Text overlap detection (pairwise among dimension texts)
+    overlap_count = 0
+    for i in range(len(dim_texts)):
+        for j in range(i + 1, len(dim_texts)):
+            if _boxes_overlap(dim_texts[i], dim_texts[j]):
+                overlap_count += 1
+                if overlap_count <= 3:
+                    issues.append(
+                        f"readability: text overlap between "
+                        f"'{dim_texts[i]['content']}' and '{dim_texts[j]['content']}'"
+                    )
+    if overlap_count > 3:
+        issues.append(f"readability: {overlap_count} total text overlaps detected")
+
+    # 3. Dimension line spacing — look for horizontal/vertical lines that are
+    #    parallel and too close.  We approximate by finding <line> elements.
+    h_lines: list[float] = []
+    v_lines: list[float] = []
+    line_pattern = re.compile(
+        r'<line\s+[^>]*?x1=["\']([^"\']*)["\'][^>]*?y1=["\']([^"\']*)["\']'
+        r'[^>]*?x2=["\']([^"\']*)["\'][^>]*?y2=["\']([^"\']*)["\']',
+        re.IGNORECASE,
+    )
+    for m in line_pattern.finditer(svg_text):
+        x1 = _float_or_none(m.group(1)) or 0.0
+        y1 = _float_or_none(m.group(2)) or 0.0
+        x2 = _float_or_none(m.group(3)) or 0.0
+        y2 = _float_or_none(m.group(4)) or 0.0
+        length = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+        if length < 10:
+            continue  # Skip short lines (arrows, ticks)
+        if abs(y1 - y2) < 1.0:  # Horizontal
+            h_lines.append(y1)
+        elif abs(x1 - x2) < 1.0:  # Vertical
+            v_lines.append(x1)
+
+    h_lines.sort()
+    close_h = sum(1 for i in range(1, len(h_lines))
+                  if h_lines[i] - h_lines[i - 1] < _MIN_DIM_LINE_SPACING_SVG)
+    v_lines.sort()
+    close_v = sum(1 for i in range(1, len(v_lines))
+                  if v_lines[i] - v_lines[i - 1] < _MIN_DIM_LINE_SPACING_SVG)
+    if close_h + close_v > 2:
+        issues.append(
+            f"readability: {close_h + close_v} dimension line pairs too close "
+            f"(< {_MIN_DIM_LINE_SPACING_SVG} SVG units)"
+        )
+
+    return len(issues) == 0, issues
+
+
+# ---------------------------------------------------------------------------
+# Overdetermination: detect redundant dimension chains
+# ---------------------------------------------------------------------------
+
+
+def check_overdetermination(report: dict, expected: dict) -> tuple[bool, list[str]]:
+    """Detect overdetermined dimension chains in the DSE plan.
+
+    Checks:
+    - Chain dimensions in one direction summing to the overall dimension
+      → one is redundant (closed dimension chain, ISO 129-1 §6.1).
+    - Same feature dimensioned from multiple references without justification.
+    """
+    issues: list[str] = []
+    if not expected.get("dse_check"):
+        return True, []
+
+    plan = report.get("dimension_plan")
+    if not plan:
+        return True, []
+
+    # Collect all dimensions by axis
+    h_dims: list[dict] = []
+    v_dims: list[dict] = []
+    overall_h: float | None = None
+    overall_v: float | None = None
+
+    for view in plan.get("views", []):
+        for dim in view.get("dimensions", []):
+            dt = dim.get("dim_type", "")
+            val = dim.get("value_mm")
+            axis = dim.get("axis")
+            if val is None:
+                continue
+
+            if dt == "overall_length":
+                overall_h = val
+            elif dt == "overall_height":
+                overall_v = val
+            elif dt == "overall_depth":
+                pass  # Overall depth is not a chain member
+            elif axis == "H":
+                h_dims.append(dim)
+            elif axis == "V":
+                v_dims.append(dim)
+
+    # Check if partial H dims sum to overall_length (closed chain)
+    if overall_h is not None and len(h_dims) >= 2:
+        partial_sum = sum(d.get("value_mm", 0) for d in h_dims if d.get("value_mm"))
+        if partial_sum > 0 and abs(partial_sum - overall_h) < 0.5:
+            issues.append(
+                f"overdetermination: H-axis chain sum ({partial_sum:.1f}mm) "
+                f"equals overall_length ({overall_h:.1f}mm) — closed chain"
+            )
+
+    # Check if partial V dims sum to overall_height (closed chain)
+    if overall_v is not None and len(v_dims) >= 2:
+        partial_sum = sum(d.get("value_mm", 0) for d in v_dims if d.get("value_mm"))
+        if partial_sum > 0 and abs(partial_sum - overall_v) < 0.5:
+            issues.append(
+                f"overdetermination: V-axis chain sum ({partial_sum:.1f}mm) "
+                f"equals overall_height ({overall_v:.1f}mm) — closed chain"
+            )
+
+    # Check same-value dimensions appearing on the same axis (potential duplicate)
+    for axis_label, dims in [("H", h_dims), ("V", v_dims)]:
+        values_seen: dict[float, list[str]] = {}
+        for dim in dims:
+            val = dim.get("value_mm")
+            if val is None:
+                continue
+            rounded = round(val, 1)
+            values_seen.setdefault(rounded, []).append(dim.get("dim_type", "?"))
+        for val, types in values_seen.items():
+            if len(types) > 1:
+                issues.append(
+                    f"overdetermination: {axis_label}-axis has duplicate value "
+                    f"{val}mm across types: {', '.join(types)}"
+                )
+
+    return len(issues) == 0, issues
+
+
+# ---------------------------------------------------------------------------
+# Cross-view consistency
+# ---------------------------------------------------------------------------
+
+# Preferred view per dim_type — feature should be dimensioned where most visible
+_PREFERRED_VIEW_FOR_DIM: dict[str, str] = {
+    "hole_diameter": "Front",
+    "hole_pitch": "Front",
+    "hole_location_x": "Front",
+    "hole_location_y": "Front",
+    "thread_callout": "Front",
+    "slot_width": "Front",
+    "slot_length": "Front",
+    "slot_location": "Front",
+    "pocket_depth": "Left",
+    "pocket_location": "Front",
+    "step_height": "Left",
+    "bend_radius": "Front",
+    "sheet_thickness": "Front",
+    "flat_length": "FlatPattern",
+    "flat_width": "FlatPattern",
+    # chamfer, angle, diagonal, feature_count, total_span: no fixed preferred
+    # view — placement depends on part geometry, so not checked here.
+}
+
+
+def check_cross_view_consistency(report: dict, expected: dict) -> tuple[bool, list[str]]:
+    """Validate cross-view dimension placement.
+
+    Checks:
+    - Feature dimensions should appear in their preferred (most visible) view.
+    - Same dimension type+value should not appear in multiple views (unless
+      justified by different features, e.g. two distinct hole diameters).
+    """
+    issues: list[str] = []
+    if not expected.get("dse_check"):
+        return True, []
+
+    plan = report.get("dimension_plan")
+    if not plan:
+        return True, []
+
+    # Build index: dim_type → list of (view_name, value_mm)
+    dim_index: dict[str, list[tuple[str, float | None]]] = {}
+    for view in plan.get("views", []):
+        for dim in view.get("dimensions", []):
+            dt = dim.get("dim_type", "")
+            dim_index.setdefault(dt, []).append(
+                (view.get("view_name", ""), dim.get("value_mm"))
+            )
+
+    # 1. Preferred-view check: warn if feature dims are in non-preferred view
+    for dt, preferred in _PREFERRED_VIEW_FOR_DIM.items():
+        placements = dim_index.get(dt, [])
+        for view_name, _val in placements:
+            if view_name != preferred and view_name != "Iso":
+                issues.append(
+                    f"cross_view: '{dt}' placed in '{view_name}' "
+                    f"instead of preferred '{preferred}'"
+                )
+
+    # 2. Same (dim_type, value_mm) in multiple views → redundant
+    for dt, placements in dim_index.items():
+        if dt.startswith("overall_"):
+            continue  # Overall dims can legitimately appear in different views
+        valued = [(v, val) for v, val in placements if val is not None]
+        seen_vals: dict[float, list[str]] = {}
+        for view_name, val in valued:
+            rounded = round(val, 1)
+            seen_vals.setdefault(rounded, []).append(view_name)
+        for val, views in seen_vals.items():
+            if len(views) > 1:
+                issues.append(
+                    f"cross_view: '{dt}' value={val}mm appears in "
+                    f"multiple views: {', '.join(views)}"
+                )
+
+    return len(issues) == 0, issues
+
+
+# ---------------------------------------------------------------------------
+# Quality Score: weighted multi-criteria scoring model
+# ---------------------------------------------------------------------------
+
+QUALITY_WEIGHTS: dict[str, int] = {
+    "alignment": 10,
+    "orientation": 10,
+    "geometry": 15,
+    "completeness": 20,
+    "norm": 15,
+    "layout": 10,
+    "readability": 10,
+    "dim_quality": 10,
+    "title_block": 5,
+    "scale": 5,
+}
+_MAX_SCORE = sum(QUALITY_WEIGHTS.values())  # 110
+
+QUALITY_THRESHOLD_GOOD = 85       # ≥85% → GOOD
+QUALITY_THRESHOLD_ACCEPTABLE = 60  # 60-84% → ACCEPTABLE, <60% → POOR
+
+
+def compute_quality_score(check_results: dict[str, tuple[bool, list[str]]]) -> dict:
+    """Compute a weighted quality score from individual check results.
+
+    Parameters
+    ----------
+    check_results : dict
+        Mapping of check_name → (passed: bool, issues: list[str]).
+        Keys should match QUALITY_WEIGHTS keys.
+
+    Returns
+    -------
+    dict with keys: score, max_score, percent, grade, breakdown.
+    """
+    breakdown: dict[str, dict] = {}
+    total = 0
+
+    for check_name, weight in QUALITY_WEIGHTS.items():
+        result = check_results.get(check_name)
+        if result is None:
+            # Check not executed — award full points (don't penalize)
+            earned = weight
+            passed = True
+            issue_count = 0
+        else:
+            passed, issue_list = result
+            issue_count = len(issue_list)
+            if passed:
+                earned = weight
+            elif issue_count <= 1:
+                # Minor issues: partial credit (50%)
+                earned = weight // 2
+            else:
+                earned = 0
+
+        total += earned
+        breakdown[check_name] = {
+            "weight": weight,
+            "earned": earned,
+            "passed": passed,
+            "issues": issue_count,
+        }
+
+    percent = round(100 * total / _MAX_SCORE, 1) if _MAX_SCORE > 0 else 0.0
+    if percent >= QUALITY_THRESHOLD_GOOD:
+        grade = "GOOD"
+    elif percent >= QUALITY_THRESHOLD_ACCEPTABLE:
+        grade = "ACCEPTABLE"
+    else:
+        grade = "POOR"
+
+    return {
+        "score": total,
+        "max_score": _MAX_SCORE,
+        "percent": percent,
+        "grade": grade,
+        "breakdown": breakdown,
+    }
 
 
 def build_baseline_snapshot(report: dict) -> dict:
@@ -1722,11 +2185,7 @@ def _test_one_sample(
     stability_runs: int,
     stability_sleep_ms: int,
 ) -> dict:
-    """Run all checks for a single sample. Returns a result dict.
-
-    Keys: name, passed, issues, report, align_ok, orient_ok, feature_ok,
-    quality_ok, norm_ok, dim_ok, geom_ok, snapshot.
-    """
+    """Run all checks for a single sample. Returns a result dict."""
     step_file = sample.step_path
     name = sample.name
 
@@ -1743,7 +2202,17 @@ def _test_one_sample(
             "quality_ok": False,
             "norm_ok": False,
             "dim_ok": False,
+            "dse_ok": False,
             "geom_ok": False,
+            "abw_ok": False,
+            "title_ok": False,
+            "scale_ok": False,
+            "lk_ok": False,
+            "guideline_ok": False,
+            "readability_ok": False,
+            "overdet_ok": False,
+            "crossview_ok": False,
+            "quality_score": {"score": 0, "max_score": _MAX_SCORE, "percent": 0.0, "grade": "POOR", "breakdown": {}},
             "snapshot": None,
         }
 
@@ -1761,9 +2230,31 @@ def _test_one_sample(
     title_ok, title_issues = check_title_block(name, report)
     scale_ok, scale_issues = check_scale_iso_conformity(name, report)
     lk_ok, lk_issues = check_lk_callout(name, report, expected)
+    guideline_ok, guideline_issues = check_guideline_coverage(report, expected)
+    readability_ok, readability_issues = check_readability(name, report)
+    overdet_ok, overdet_issues = check_overdetermination(report, expected)
+    crossview_ok, crossview_issues = check_cross_view_consistency(report, expected)
+
     all_issues = (align_issues + orient_issues + feature_issues + quality_issues
                   + norm_issues + dim_issues + dse_issues + geom_issues
-                  + abw_issues + title_issues + scale_issues + lk_issues)
+                  + abw_issues + title_issues + scale_issues + lk_issues
+                  + guideline_issues + readability_issues
+                  + overdet_issues + crossview_issues)
+
+    # Compute quality score from all check results
+    check_results_map = {
+        "alignment": (align_ok, align_issues),
+        "orientation": (orient_ok, orient_issues),
+        "geometry": (geom_ok, geom_issues),
+        "completeness": (guideline_ok, guideline_issues),
+        "norm": (norm_ok, norm_issues),
+        "layout": (quality_ok, quality_issues),
+        "readability": (readability_ok, readability_issues),
+        "dim_quality": (dim_ok, dim_issues),
+        "title_block": (title_ok, title_issues),
+        "scale": (scale_ok, scale_issues),
+    }
+    quality_score = compute_quality_score(check_results_map)
 
     snapshot = build_baseline_snapshot(report)
     if not update_golden:
@@ -1794,7 +2285,17 @@ def _test_one_sample(
         "quality_ok": quality_ok,
         "norm_ok": norm_ok,
         "dim_ok": dim_ok,
+        "dse_ok": dse_ok,
         "geom_ok": geom_ok,
+        "abw_ok": abw_ok,
+        "title_ok": title_ok,
+        "scale_ok": scale_ok,
+        "lk_ok": lk_ok,
+        "guideline_ok": guideline_ok,
+        "readability_ok": readability_ok,
+        "overdet_ok": overdet_ok,
+        "crossview_ok": crossview_ok,
+        "quality_score": quality_score,
         "snapshot": snapshot,
     }
 
@@ -1907,8 +2408,8 @@ def main(argv=None):
     print(f"Results: {passed}/{len(samples)} passed")
     print(f"{'='*60}\n")
 
-    print(f"\n{'Part':<20} {'Axis':<6} {'Flat':<6} {'Align':<8} {'Front WxH':<16} {'Conf':<6}")
-    print("-" * 70)
+    print(f"\n{'Part':<20} {'Axis':<6} {'Flat':<6} {'Align':<8} {'Front WxH':<16} {'Conf':<6} {'Score':<8}")
+    print("-" * 80)
     for result in results:
         report = result.get("report", {})
         if "error" in report:
@@ -1918,6 +2419,8 @@ def main(argv=None):
         front = report.get("views", {}).get("Front", {})
         paper = front.get("paper_size", [0, 0])
         align_ok = align.get("front_top_left_match", False) and align.get("front_left_top_match", False)
+        qs = result.get("quality_score", {})
+        score_str = f"{qs.get('percent', 0):.0f}% {qs.get('grade', '?')}"
         if len(paper) != 2:
             paper = [0, 0]
         orientation = "->" if paper[0] > paper[1] else "v" if paper[1] > paper[0] else "[]"
@@ -1925,7 +2428,19 @@ def main(argv=None):
             f"{result['name']:<20} {det.get('longest_axis', '?'):<6} "
             f"{str(det.get('is_flat', '?')):<6} {str(align_ok):<8} "
             f"{paper[0]:>6.1f}x{paper[1]:<6.1f} {orientation}  {det.get('confidence', 0):.2f}"
+            f"  {score_str}"
         )
+
+    # Quality score summary
+    scored = [r for r in results if "error" not in r.get("report", {})]
+    if scored:
+        avg_pct = sum(r.get("quality_score", {}).get("percent", 0) for r in scored) / len(scored)
+        grades = {"GOOD": 0, "ACCEPTABLE": 0, "POOR": 0}
+        for r in scored:
+            g = r.get("quality_score", {}).get("grade", "POOR")
+            grades[g] = grades.get(g, 0) + 1
+        print(f"\nQuality Score: avg={avg_pct:.1f}%  "
+              f"GOOD={grades['GOOD']} ACCEPTABLE={grades['ACCEPTABLE']} POOR={grades['POOR']}")
 
     return 0 if all_passed else 1
 

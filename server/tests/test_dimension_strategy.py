@@ -15,6 +15,7 @@ from rules.dimension_plan_schema import DimensionPlan, ViewPlan
 from rules.dimension_strategy import (
     apply_overrides,
     build_dimension_plan,
+    classify_milling_subtype,
     select_layout_profile_standalone,
 )
 
@@ -350,6 +351,23 @@ class TestMillingWithHoles(unittest.TestCase):
         front = next(v for v in self.plan.views if v.view_name == "Front")
         ol = next(d for d in front.dimensions if d.dim_type == "overall_length")
         self.assertEqual(ol.rule_id, "overall_dimensions_required")
+
+
+class TestMillingSubtypeClassification(unittest.TestCase):
+    def test_feature_dense_from_holes(self):
+        self.assertEqual(classify_milling_subtype(_FLANGE), "feature_dense")
+
+    def test_plate_2p5d_from_flat_ratio(self):
+        payload = {**_CUBE_10, "flat_ratio": 0.2, "hole_count": 1, "slot_count": 0}
+        self.assertEqual(classify_milling_subtype(payload), "plate_2p5d")
+
+    def test_block_prismatic_default(self):
+        payload = {**_CUBE_10, "flat_ratio": 0.8, "hole_count": 2, "slot_count": 1}
+        self.assertEqual(classify_milling_subtype(payload), "block_prismatic")
+
+    def test_plan_exposes_milling_subtype(self):
+        plan = build_dimension_plan(_FLANGE, "milling")
+        self.assertEqual(plan.milling_subtype, "feature_dense")
 
 
 class TestSheetMetalWithUnfold(unittest.TestCase):

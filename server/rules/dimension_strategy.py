@@ -409,6 +409,22 @@ def select_layout_profile_standalone(
     return "milling"
 
 
+def classify_milling_subtype(fp: dict) -> str:
+    """Classify milling parts into v1 subtypes using existing probe fields."""
+    if not isinstance(fp, dict):
+        return "block_prismatic"
+
+    hole_count = int(_opt_float(fp.get("hole_count")) or 0)
+    slot_count = int(_opt_float(fp.get("slot_count")) or 0)
+    flat_ratio = _opt_float(fp.get("flat_ratio"))
+
+    if hole_count >= 8 or slot_count >= 4 or (hole_count + slot_count) >= 6:
+        return "feature_dense"
+    if flat_ratio is not None and flat_ratio < 0.25:
+        return "plate_2p5d"
+    return "block_prismatic"
+
+
 # ---------------------------------------------------------------------------
 # Datum system inference
 # ---------------------------------------------------------------------------
@@ -677,6 +693,66 @@ def _plan_sheet_metal(
                  priority="must")
         )
 
+    # Hole features — sheet metal (Prio B in Blechteil-Leitlinie)
+    hole_count = int(fp.get("hole_count") or 0)
+    hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
+    hole_pitch = _opt_float(fp.get("hole_pitch_mm"))
+    hole_groups = fp.get("hole_groups") or []
+
+    # Hole diameter
+    hd_rule_id = _kb_wants_dimension(kb, "hole", "diameter", {"visible": True})
+    if hd_rule_id is not None and hole_diameter is not None:
+        front_dims.append(
+            _dim("hole_diameter", "Front", value_mm=hole_diameter,
+                 label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}",
+                 rule_id=hd_rule_id)
+        )
+    elif hole_count > 0 and hole_diameter is not None:  # fallback when KB absent
+        front_dims.append(
+            _dim("hole_diameter", "Front", value_mm=hole_diameter,
+                 label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}")
+        )
+
+    # Hole pitch
+    hp_rule_id = _kb_wants_dimension(
+        kb, "hole_pattern", "pitch_or_spacing", {"count": hole_count}
+    )
+    if hp_rule_id is not None and hole_pitch is not None and hole_pitch > 0:
+        front_dims.append(
+            _dim("hole_pitch", "Front", axis="H", value_mm=hole_pitch,
+                 rule_id=hp_rule_id)
+        )
+    elif hole_count >= 2 and hole_pitch is not None and hole_pitch > 0:
+        front_dims.append(
+            _dim("hole_pitch", "Front", axis="H", value_mm=hole_pitch)
+        )
+
+    # Hole locations from datum
+    hl_rule_id = _kb_wants_dimension(
+        kb, "hole_pattern", "position_from_datums", {"count": hole_count}
+    )
+    if hl_rule_id is not None and hole_groups:
+        front_dims.append(_dim("hole_location_x", "Front", axis="H", rule_id=hl_rule_id))
+        front_dims.append(_dim("hole_location_y", "Front", axis="V", rule_id=hl_rule_id))
+    elif hole_count >= 1 and hole_groups:
+        front_dims.append(_dim("hole_location_x", "Front", axis="H"))
+        front_dims.append(_dim("hole_location_y", "Front", axis="V"))
+
+    # Thread callout
+    thread_label = fp.get("thread_label")
+    tc_rule_id = (
+        _kb_wants_dimension(kb, "thread", "thread_designation", {})
+        if thread_label else None
+    )
+    if tc_rule_id is not None and thread_label:
+        front_dims.append(
+            _dim("thread_callout", "Front",
+                 label=f"{thread_label} GEWINDE",
+                 rule_id=tc_rule_id)
+        )
+    elif thread_label:
+        front_dims.append(_dim("thread_callout", "Front", label=f"{thread_label} GEWINDE"))
+
     views = [
         ViewPlan(view_name="Front", dimensions=front_dims),
         ViewPlan(view_name="Top", dimensions=top_dims),
@@ -716,6 +792,7 @@ def _plan_turning(
     ]
 
     # Hole diameter — KB: hole_diameter_required (ISO 129-1)
+    hole_count = int(fp.get("hole_count") or 0)
     hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
     hd_rule_id = _kb_wants_dimension(kb, "hole", "diameter", {"visible": True})
     if hd_rule_id is not None and hole_diameter is not None:
@@ -724,11 +801,26 @@ def _plan_turning(
                  label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}",
                  rule_id=hd_rule_id)
         )
-    elif hole_diameter is not None:  # fallback when KB absent
+    elif hole_count > 0 and hole_diameter is not None:  # fallback when KB absent
         front_dims.append(
             _dim("hole_diameter", "Front", value_mm=hole_diameter,
                  label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}")
         )
+
+    # Thread callout — KB: thread_callout_required (ISO 261/965)
+    thread_label = fp.get("thread_label")
+    tc_rule_id = (
+        _kb_wants_dimension(kb, "thread", "thread_designation", {})
+        if thread_label else None
+    )
+    if tc_rule_id is not None and thread_label:
+        front_dims.append(
+            _dim("thread_callout", "Front",
+                 label=f"{thread_label} GEWINDE",
+                 rule_id=tc_rule_id)
+        )
+    elif thread_label:  # fallback when KB absent
+        front_dims.append(_dim("thread_callout", "Front", label=f"{thread_label} GEWINDE"))
 
     return [
         ViewPlan(view_name="Front", dimensions=front_dims),
@@ -965,6 +1057,8 @@ def build_dimension_plan(
         process_notes=process_notes,
         policy_hints=policy_hints,
     )
+    if layout_profile == "milling":
+        plan.milling_subtype = classify_milling_subtype(fp)
 
     if overrides:
         plan = apply_overrides(plan, overrides)
