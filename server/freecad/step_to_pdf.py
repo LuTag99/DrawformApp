@@ -73,10 +73,32 @@ SHEET_SPECS = {
     "A3": {"width": 420.0, "height": 297.0, "title_block_h": 55.0, "template": "iso7200_a3_landscape.svg"},
     "A2": {"width": 594.0, "height": 420.0, "title_block_h": 62.0, "template": "iso7200_a2_landscape.svg"},
 }
+_DIMENSION_STRATEGY_HOLE_HELPERS = None
 
 
 def log(message):
     sys.stderr.write(f"[drawform] {message}\n")
+
+
+def _get_dimension_strategy_hole_helpers():
+    global _DIMENSION_STRATEGY_HOLE_HELPERS
+    if _DIMENSION_STRATEGY_HOLE_HELPERS is not None:
+        return _DIMENSION_STRATEGY_HOLE_HELPERS
+
+    server_root = Path(__file__).resolve().parent.parent
+    if str(server_root) not in sys.path:
+        sys.path.insert(0, str(server_root))
+
+    from rules.feature_payload_hole_helpers import (
+        match_feature_hole_groups,
+        summarize_feature_hole_extent,
+    )
+
+    _DIMENSION_STRATEGY_HOLE_HELPERS = (
+        match_feature_hole_groups,
+        summarize_feature_hole_extent,
+    )
+    return _DIMENSION_STRATEGY_HOLE_HELPERS
 
 
 def complexity_score(shape):
@@ -5574,54 +5596,13 @@ def infer_metric_thread_label(core_diameter_mm):
 
 
 def _matching_hole_groups(feature_payload, diameter_mm=None):
-    hole_groups = (feature_payload or {}).get("hole_groups") or []
-    if diameter_mm is None:
-        return [group for group in hole_groups if isinstance(group, dict)]
-
-    tol = max(0.25, float(diameter_mm) * 0.08)
-    matching = [
-        group
-        for group in hole_groups
-        if isinstance(group, dict)
-        and _optional_float(group.get("diameter_mm")) is not None
-        and abs(float(group.get("diameter_mm")) - float(diameter_mm)) <= tol
-    ]
-    return matching or [group for group in hole_groups if isinstance(group, dict)]
+    matching_hole_groups, _ = _get_dimension_strategy_hole_helpers()
+    return matching_hole_groups(feature_payload or {}, diameter_mm=diameter_mm)
 
 
 def _summarize_hole_extent(feature_payload, diameter_mm=None):
-    groups = _matching_hole_groups(feature_payload, diameter_mm=diameter_mm)
-    if not groups:
-        return None
-
-    classified = [
-        group
-        for group in groups
-        if isinstance(group.get("through"), bool) or _optional_float(group.get("depth_mm")) is not None
-    ]
-    if not classified:
-        return None
-
-    through_flags = [group.get("through") for group in classified if isinstance(group.get("through"), bool)]
-    if through_flags and all(flag is True for flag in through_flags):
-        return {"through": True, "depth_mm": None, "count": len(classified)}
-
-    blind_depths = [
-        _optional_float(group.get("depth_mm"))
-        for group in classified
-        if group.get("through") is False and _optional_float(group.get("depth_mm")) is not None
-    ]
-    blind_depths = [depth for depth in blind_depths if depth is not None and depth > 0]
-    if through_flags and all(flag is False for flag in through_flags) and blind_depths:
-        ref_depth = float(blind_depths[0])
-        tol = max(0.25, ref_depth * 0.08)
-        if all(abs(float(depth) - ref_depth) <= tol for depth in blind_depths):
-            return {
-                "through": False,
-                "depth_mm": float(sum(blind_depths) / len(blind_depths)),
-                "count": len(classified),
-            }
-    return None
+    _, summarize_hole_extent = _get_dimension_strategy_hole_helpers()
+    return summarize_hole_extent(feature_payload or {}, diameter_mm=diameter_mm)
 
 
 def _format_hole_callout_text(base_text, feature_payload, diameter_mm=None):
@@ -10325,6 +10306,7 @@ def main():
                 "hole_count": feature_payload.get("hole_count"),
                 "hole_diameter_mm": feature_payload.get("hole_diameter_mm"),
                 "hole_pitch_mm": feature_payload.get("hole_pitch_mm"),
+                "chamfer_count": len([item for item in (feature_payload.get("chamfers") or []) if isinstance(item, dict)]),
                 "blind_hole_count": feature_payload.get("blind_hole_count"),
                 "hole_groups": feature_payload.get("hole_groups"),
                 "thread_label": feature_payload.get("thread_label"),

@@ -103,7 +103,6 @@ EXPECTED = {
         "alignment_ok": True,
         "dse_check": True,
         "part_type": "milling",
-        "part_type": "milling",
     },
     "rechteck": {
         "longest_axis": "Y",  # 300mm is Y
@@ -881,6 +880,16 @@ def check_dimension_plan(report: dict, expected: dict) -> tuple[bool, list[str]]
         groove_count = int(_float_or_none((report.get("features") or {}).get("groove_count")) or 0)
         if groove_count > 0 and "groove_callout" not in front_types:
             issues.append("dimension_plan: Front view missing groove_callout for detected relief groove")
+
+    chamfer_count = int(_float_or_none((report.get("features") or {}).get("chamfer_count")) or 0)
+    if chamfer_count > 0:
+        rendered_chamfer_views = []
+        for view_name, view_report in (report.get("views") or {}).items():
+            feature_types = set((view_report or {}).get("feature_dim_types") or [])
+            if "chamfer" in feature_types:
+                rendered_chamfer_views.append(str(view_name))
+        if not rendered_chamfer_views:
+            issues.append("dimension_plan: rendered views missing chamfer feature_dim_type for detected chamfer")
 
     # No duplicate (dim_type, value_mm) across views
     seen_dims: set = set()
@@ -1929,6 +1938,7 @@ def build_baseline_snapshot(report: dict) -> dict:
             "hole_count": int(features.get("hole_count", 0) or 0),
             "hole_diameter_mm": _round_or_none(features.get("hole_diameter_mm")),
             "hole_pitch_mm": _round_or_none(features.get("hole_pitch_mm")),
+            "chamfer_count": int(features.get("chamfer_count", 0) or 0),
             "bend_radius_mm": _round_or_none(features.get("bend_radius_mm")),
         },
         "views": view_snapshot,

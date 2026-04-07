@@ -23,6 +23,10 @@ from .dimension_plan_schema import (
     SurfaceFinish,
     ViewPlan,
 )
+from .feature_payload_hole_helpers import (
+    match_feature_hole_groups as _shared_match_feature_hole_groups,
+    summarize_feature_hole_extent as _shared_summarize_feature_hole_extent,
+)
 from .rule_engine import KnowledgeError, load_knowledge_base, select_applicable_rules
 
 # ---------------------------------------------------------------------------
@@ -46,23 +50,26 @@ def _opt_float(value: Any) -> Optional[float]:
         return None
 
 
+def match_feature_hole_groups(
+    fp: dict,
+    diameter_mm: float | None = None,
+) -> List[dict]:
+    return _shared_match_feature_hole_groups(fp, diameter_mm=diameter_mm)
+
+
+def summarize_feature_hole_extent(
+    fp: dict,
+    *,
+    diameter_mm: float | None = None,
+) -> Optional[Dict[str, Any]]:
+    return _shared_summarize_feature_hole_extent(fp, diameter_mm=diameter_mm)
+
+
 def _matching_hole_groups(
     fp: dict,
     diameter_mm: float | None = None,
 ) -> List[dict]:
-    hole_groups = fp.get("hole_groups") or []
-    if diameter_mm is None:
-        return [group for group in hole_groups if isinstance(group, dict)]
-
-    tol = max(0.25, float(diameter_mm) * 0.08)
-    matching = [
-        group
-        for group in hole_groups
-        if isinstance(group, dict)
-        and _opt_float(group.get("diameter_mm")) is not None
-        and abs(float(group.get("diameter_mm")) - float(diameter_mm)) <= tol
-    ]
-    return matching or [group for group in hole_groups if isinstance(group, dict)]
+    return match_feature_hole_groups(fp, diameter_mm=diameter_mm)
 
 
 def _summarize_hole_extent(
@@ -70,38 +77,7 @@ def _summarize_hole_extent(
     *,
     diameter_mm: float | None = None,
 ) -> Optional[Dict[str, Any]]:
-    groups = _matching_hole_groups(fp, diameter_mm=diameter_mm)
-    if not groups:
-        return None
-
-    classified = [
-        group
-        for group in groups
-        if isinstance(group.get("through"), bool) or _opt_float(group.get("depth_mm")) is not None
-    ]
-    if not classified:
-        return None
-
-    through_flags = [group.get("through") for group in classified if isinstance(group.get("through"), bool)]
-    if through_flags and all(flag is True for flag in through_flags):
-        return {"through": True, "depth_mm": None, "count": len(classified)}
-
-    blind_depths = [
-        _opt_float(group.get("depth_mm"))
-        for group in classified
-        if group.get("through") is False and _opt_float(group.get("depth_mm")) is not None
-    ]
-    blind_depths = [depth for depth in blind_depths if depth is not None and depth > 0]
-    if through_flags and all(flag is False for flag in through_flags) and blind_depths:
-        ref_depth = float(blind_depths[0])
-        tol = max(0.25, ref_depth * 0.08)
-        if all(abs(float(depth) - ref_depth) <= tol for depth in blind_depths):
-            return {
-                "through": False,
-                "depth_mm": float(sum(blind_depths) / len(blind_depths)),
-                "count": len(classified),
-            }
-    return None
+    return summarize_feature_hole_extent(fp, diameter_mm=diameter_mm)
 
 
 def _collect_blind_hole_groups(fp: dict) -> List[dict]:
