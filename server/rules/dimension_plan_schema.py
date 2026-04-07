@@ -27,6 +27,7 @@ class DimensionItem(BaseModel):
         "overall_height",
         "overall_depth",
         "hole_diameter",
+        "hole_depth",
         "hole_pitch",
         "hole_location_x",
         "hole_location_y",
@@ -38,6 +39,9 @@ class DimensionItem(BaseModel):
         "pocket_depth",
         "pocket_location",
         "step_height",
+        "step_length",
+        "step_diameter",
+        "groove_callout",
         "chamfer",
         "angle",
         "diagonal",
@@ -72,6 +76,15 @@ class ProcessNote(BaseModel):
     ]
     text: str
     detail_level: int = Field(default=1, ge=1, le=3)
+
+
+class SurfaceFinish(BaseModel):
+    """General surface finish requirement derived from model metadata."""
+
+    parameter: Literal["RA", "RZ"]
+    value: float
+    scope: Literal["general"] = "general"
+    source: Optional[str] = None
 
 
 class GDTCallout(BaseModel):
@@ -137,11 +150,13 @@ class DimensionPlan(BaseModel):
 
     part_type: Literal["milling", "sheet_metal", "turning"]
     milling_subtype: Optional[Literal["plate_2p5d", "block_prismatic", "feature_dense"]] = None
+    turning_subtype: Optional[Literal["simple_rotational", "stepped_shaft", "complex_turning"]] = None
     detail_level: int = Field(default=1, ge=1, le=3)
     datum_system: DatumSystem = Field(default_factory=DatumSystem)
     views: list[ViewPlan] = []
     section_views: list[SectionViewPlan] = []
     detail_views: list[DetailViewPlan] = []
     process_notes: list[ProcessNote] = []
+    surface_finish: Optional[SurfaceFinish] = None
     policy_hints: dict = Field(default_factory=dict)
     overrides_applied: list[dict] = []

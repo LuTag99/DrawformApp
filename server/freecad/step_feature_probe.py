@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -28,6 +29,21 @@ def center_key(center: App.Vector, thickness_axis: str) -> tuple[float, float]:
     if thickness_axis == "Y":
         return (round(float(center.x), 3), round(float(center.z), 3))
     return (round(float(center.x), 3), round(float(center.y), 3))
+
+
+def _numeric_or_none(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bbox_axis_bounds(bbox, axis_name: str) -> tuple[float, float]:
+    if axis_name == "X":
+        return float(bbox.XMin), float(bbox.XMax)
+    if axis_name == "Y":
+        return float(bbox.YMin), float(bbox.YMax)
+    return float(bbox.ZMin), float(bbox.ZMax)
 
 
 def _axis_direction_vector(axis_name: str) -> App.Vector:
@@ -164,11 +180,19 @@ def collect_internal_cylinder_circle_data(shape: Part.Shape, thickness_axis: str
                 "centers": [],
                 "diameters": [],
                 "angle_span_total": 0.0,
+                "axis_mins": [],
+                "axis_maxs": [],
             },
         )
         bucket["centers"].append(center)
         bucket["diameters"].append(diameter)
         bucket["angle_span_total"] += angle_span
+        try:
+            face_min, face_max = _bbox_axis_bounds(face.BoundBox, thickness_axis)
+            bucket["axis_mins"].append(face_min)
+            bucket["axis_maxs"].append(face_max)
+        except AttributeError:
+            pass
 
     circle_groups: list[dict[str, object]] = []
     all_diameters: list[float] = []
@@ -193,11 +217,18 @@ def collect_internal_cylinder_circle_data(shape: Part.Shape, thickness_axis: str
         })
         if not diameters:
             continue
+        axis_mins = [_numeric_or_none(value) for value in item.get("axis_mins", [])]
+        axis_mins = [value for value in axis_mins if value is not None]
+        axis_maxs = [_numeric_or_none(value) for value in item.get("axis_maxs", [])]
+        axis_maxs = [value for value in axis_maxs if value is not None]
         all_diameters.append(float(sum(diameters) / len(diameters)))
         circle_groups.append(
             {
                 "center": center,
                 "diameters": diameters,
+                "axis": thickness_axis,
+                "axis_min_mm": round(min(axis_mins), 5) if axis_mins else None,
+                "axis_max_mm": round(max(axis_maxs), 5) if axis_maxs else None,
             }
         )
     return circle_groups, all_diameters
@@ -215,6 +246,289 @@ def _hole_centers_from_circle_groups(
         mean_diameter = float(sum(float(value) for value in diameters) / len(diameters))
         hole_centers.append((center, mean_diameter))
     return hole_centers
+
+
+def _classify_hole_extent(
+    axis_min_mm: float | None,
+    axis_max_mm: float | None,
+    part_min_mm: float | None,
+    part_max_mm: float | None,
+) -> tuple[bool | None, float | None]:
+    if None in {axis_min_mm, axis_max_mm, part_min_mm, part_max_mm}:
+        return None, None
+    feature_span = max(float(axis_max_mm) - float(axis_min_mm), 0.0)
+    part_span = max(float(part_max_mm) - float(part_min_mm), 0.0)
+    if feature_span <= 1e-6 or part_span <= 1e-6:
+        return None, None
+
+    tol = max(0.2, min(1.0, part_span * 0.04))
+    touches_min = float(axis_min_mm) <= float(part_min_mm) + tol
+    touches_max = float(axis_max_mm) >= float(part_max_mm) - tol
+    if feature_span >= part_span - tol or (touches_min and touches_max):
+        return True, None
+
+    depth_mm = min(feature_span, part_span)
+    if depth_mm <= tol:
+        return None, None
+    return False, round(depth_mm, 5)
+
+
+def _extract_rotational_profile(shape: Part.Shape, axis_name: str) -> list[dict[str, object]]:
+    """Approximate the outer turning profile as axial step segments.
+
+    The probe inspects external cylindrical faces aligned with the rotational
+    axis, then samples the axial intervals between all cylinder face boundaries.
+    For each interval, the largest active outer diameter becomes the envelope
+    diameter of that step. Adjacent intervals with the same diameter are merged.
+    """
+    if axis_name not in {"X", "Y", "Z"}:
+        return []
+
+    try:
+        part_min_mm, part_max_mm = _bbox_axis_bounds(shape.BoundBox, axis_name)
+    except AttributeError:
+        return []
+    part_span = max(float(part_max_mm) - float(part_min_mm), 0.0)
+    if part_span <= 1e-6:
+        return []
+
+    axis_vec = _axis_direction_vector(axis_name)
+    min_segment_span = max(0.4, part_span * 0.006)
+    boundary_tol = max(0.25, part_span * 0.004)
+    diameter_tol = max(0.25, part_span * 0.002)
+    segments: list[dict[str, float]] = []
+
+    for face in shape.Faces:
+        surface = getattr(face, "Surface", None)
+        if surface is None or surface.__class__.__name__ != "Cylinder":
+            continue
+        radius = float(getattr(surface, "Radius", 0.0) or 0.0)
+        center = getattr(surface, "Center", None)
+        axis = getattr(surface, "Axis", None)
+        if radius <= 1e-6 or center is None or axis is None:
+            continue
+        if not _axes_are_parallel(axis, axis_vec):
+            continue
+        if _cylinder_face_is_internal(face, center, axis):
+            continue
+        if _cylinder_face_angle_span(face) < math.radians(20.0):
+            continue
+        try:
+            face_min_mm, face_max_mm = _bbox_axis_bounds(face.BoundBox, axis_name)
+        except AttributeError:
+            continue
+        start_mm = max(float(part_min_mm), min(float(face_min_mm), float(face_max_mm)))
+        end_mm = min(float(part_max_mm), max(float(face_min_mm), float(face_max_mm)))
+        if end_mm - start_mm < min_segment_span:
+            continue
+        segments.append(
+            {
+                "start_mm": start_mm,
+                "end_mm": end_mm,
+                "diameter_mm": radius * 2.0,
+            }
+        )
+
+    if not segments:
+        return []
+
+    boundaries: list[float] = []
+    for value in sorted(
+        [float(part_min_mm), float(part_max_mm)]
+        + [float(segment["start_mm"]) for segment in segments]
+        + [float(segment["end_mm"]) for segment in segments]
+    ):
+        if not boundaries:
+            boundaries.append(value)
+            continue
+        if abs(value - boundaries[-1]) <= boundary_tol:
+            boundaries[-1] = (boundaries[-1] + value) * 0.5
+        else:
+            boundaries.append(value)
+
+    if len(boundaries) < 2:
+        return []
+
+    profile: list[dict[str, object]] = []
+    for left_mm, right_mm in zip(boundaries, boundaries[1:]):
+        span_mm = float(right_mm) - float(left_mm)
+        if span_mm < min_segment_span * 0.5:
+            continue
+        mid_mm = float(left_mm) + span_mm * 0.5
+        active_segments = [
+            segment
+            for segment in segments
+            if float(segment["start_mm"]) - boundary_tol <= mid_mm <= float(segment["end_mm"]) + boundary_tol
+        ]
+        if not active_segments:
+            continue
+        diameter_mm = max(float(segment["diameter_mm"]) for segment in active_segments)
+        if profile:
+            previous = profile[-1]
+            previous_diameter = _numeric_or_none(previous.get("diameter_mm"))
+            previous_end = _numeric_or_none(previous.get("end_mm"))
+            if (
+                previous_diameter is not None
+                and previous_end is not None
+                and abs(previous_diameter - diameter_mm) <= diameter_tol
+                and abs(previous_end - float(left_mm)) <= boundary_tol
+            ):
+                previous["end_mm"] = round(float(right_mm), 5)
+                previous["length_mm"] = round(float(previous["end_mm"]) - float(previous["start_mm"]), 5)
+                continue
+        profile.append(
+            {
+                "axis": axis_name,
+                "diameter_mm": round(diameter_mm, 5),
+                "start_mm": round(float(left_mm), 5),
+                "end_mm": round(float(right_mm), 5),
+                "length_mm": round(span_mm, 5),
+            }
+        )
+
+    return [step for step in profile if _numeric_or_none(step.get("length_mm")) and float(step["length_mm"]) > 0.0]
+
+
+_SURFACE_FINISH_PATTERN = re.compile(
+    r"\b(RA|RZ)\s*[:=]?\s*(\d+(?:[.,]\d+)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_surface_finish_from_step_metadata(source_path: Path | str | None) -> dict[str, object] | None:
+    if not source_path:
+        return None
+    try:
+        step_text = Path(source_path).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+
+    match = _SURFACE_FINISH_PATTERN.search(step_text)
+    if not match:
+        return None
+
+    parameter = str(match.group(1) or "").upper()
+    try:
+        value = float(str(match.group(2) or "").replace(",", "."))
+    except ValueError:
+        return None
+    if parameter not in {"RA", "RZ"} or value <= 0.0:
+        return None
+    return {
+        "parameter": parameter,
+        "value": round(value, 5),
+        "source": "step_metadata",
+        "raw_text": match.group(0).strip(),
+    }
+
+
+def _axial_center_point(
+    bbox,
+    axis_name: str,
+    axis_position_mm: float,
+) -> dict[str, float]:
+    center_x = (float(bbox.XMin) + float(bbox.XMax)) * 0.5
+    center_y = (float(bbox.YMin) + float(bbox.YMax)) * 0.5
+    center_z = (float(bbox.ZMin) + float(bbox.ZMax)) * 0.5
+    if axis_name == "X":
+        center_x = float(axis_position_mm)
+    elif axis_name == "Y":
+        center_y = float(axis_position_mm)
+    else:
+        center_z = float(axis_position_mm)
+    return {
+        "x": round(center_x, 5),
+        "y": round(center_y, 5),
+        "z": round(center_z, 5),
+    }
+
+
+def _detect_turning_relief_grooves(
+    bbox,
+    step_profile: list[dict[str, object]],
+    axis_name: str,
+    *,
+    thread_label: str | None = None,
+) -> list[dict[str, object]]:
+    if axis_name not in {"X", "Y", "Z"} or len(step_profile) < 3:
+        return []
+
+    try:
+        part_min_mm, part_max_mm = _bbox_axis_bounds(bbox, axis_name)
+    except AttributeError:
+        return []
+    part_length_mm = max(float(part_max_mm) - float(part_min_mm), 0.0)
+    if part_length_mm <= 1e-6:
+        return []
+
+    max_feature_length = max(3.0, min(8.0, part_length_mm * 0.08))
+    max_diameter = max(
+        (_numeric_or_none(step.get("diameter_mm")) or 0.0)
+        for step in step_profile
+    )
+    diameter_tol = max(0.4, max_diameter * 0.02)
+    relief_depth_tol = max(0.8, max_diameter * 0.03)
+    grooves: list[dict[str, object]] = []
+
+    for index in range(1, len(step_profile) - 1):
+        prev_step = step_profile[index - 1]
+        step = step_profile[index]
+        next_step = step_profile[index + 1]
+
+        width_mm = _numeric_or_none(step.get("length_mm"))
+        prev_length_mm = _numeric_or_none(prev_step.get("length_mm"))
+        next_length_mm = _numeric_or_none(next_step.get("length_mm"))
+        prev_diameter_mm = _numeric_or_none(prev_step.get("diameter_mm"))
+        diameter_mm = _numeric_or_none(step.get("diameter_mm"))
+        next_diameter_mm = _numeric_or_none(next_step.get("diameter_mm"))
+        start_mm = _numeric_or_none(step.get("start_mm"))
+        end_mm = _numeric_or_none(step.get("end_mm"))
+
+        if None in {
+            width_mm,
+            prev_length_mm,
+            next_length_mm,
+            prev_diameter_mm,
+            diameter_mm,
+            next_diameter_mm,
+            start_mm,
+            end_mm,
+        }:
+            continue
+        if width_mm <= 0.0 or width_mm > max_feature_length:
+            continue
+        if prev_length_mm < width_mm * 1.25 or next_length_mm < width_mm * 1.25:
+            continue
+
+        flank_diameter_mm = min(float(prev_diameter_mm), float(next_diameter_mm))
+        if float(diameter_mm) + diameter_tol >= flank_diameter_mm:
+            continue
+
+        relief_depth_mm = flank_diameter_mm - float(diameter_mm)
+        if relief_depth_mm < relief_depth_tol:
+            continue
+
+        center_mm = (float(start_mm) + float(end_mm)) * 0.5
+        center_ratio = (center_mm - float(part_min_mm)) / max(part_length_mm, 1e-6)
+        kind = "einstich"
+        if thread_label and (center_ratio <= 0.35 or center_ratio >= 0.65):
+            kind = "freistich"
+
+        grooves.append(
+            {
+                "axis": axis_name,
+                "kind": kind,
+                "din_ref": "DIN 509",
+                "start_mm": round(float(start_mm), 5),
+                "end_mm": round(float(end_mm), 5),
+                "width_mm": round(float(width_mm), 5),
+                "diameter_mm": round(float(diameter_mm), 5),
+                "relief_depth_mm": round(float(relief_depth_mm), 5),
+                "center_mm": _axial_center_point(bbox, axis_name, center_mm),
+            }
+        )
+
+    return grooves
 
 
 def _prefer_internal_cylinder_groups(
@@ -857,6 +1171,137 @@ def collect_slot_data(
     return slots
 
 
+def collect_pocket_data(
+    shape: Part.Shape,
+    thickness_axis: str,
+    dims: dict,
+    longest_axis: str,
+) -> list[dict]:
+    """Detect blind rectangular-like pockets on the primary milling face.
+
+    v1 intentionally stays conservative and only considers pocket floor faces
+    whose normal is parallel to the part's thickness axis. This covers common
+    2.5D milling pockets while avoiding false positives on pocket side walls,
+    outer contour faces, and blind-hole bottoms.
+    """
+
+    if thickness_axis not in {"X", "Y", "Z"}:
+        return []
+
+    thickness_vec = _axis_direction_vector(thickness_axis)
+    part_min, part_max = _bbox_axis_bounds(shape.BoundBox, thickness_axis)
+    part_span = max(part_max - part_min, 0.0)
+    if part_span <= 1e-6:
+        return []
+
+    tolerance = max(0.3, min(1.0, part_span * 0.04))
+    transverse_axes = [axis for axis in ("X", "Y", "Z") if axis != thickness_axis]
+    pockets: list[dict] = []
+    seen: set[tuple[str, float, float, float]] = set()
+
+    for face in shape.Faces:
+        surface = getattr(face, "Surface", None)
+        if surface is None or surface.__class__.__name__ != "Plane":
+            continue
+        normal = getattr(surface, "Axis", None)
+        if normal is None or not _axes_are_parallel(normal, thickness_vec, tol_deg=10.0):
+            continue
+
+        face_pos = _face_pos_along(face, thickness_vec)
+        if face_pos is None:
+            continue
+        depth_mm = min(abs(face_pos - part_min), abs(part_max - face_pos))
+        if depth_mm <= tolerance or depth_mm >= part_span - tolerance:
+            continue
+
+        line_count = 0
+        unsupported_edge = False
+        for edge in face.Edges:
+            edge_len = float(getattr(edge, "Length", 0.0) or 0.0)
+            if edge_len < 0.5:
+                continue
+            curve = getattr(edge, "Curve", None)
+            cname = getattr(getattr(curve, "__class__", None), "__name__", "")
+            if cname in {"Line", "LineSegment"}:
+                line_count += 1
+            elif cname in {"Circle", "ArcOfCircle"}:
+                continue
+            else:
+                unsupported_edge = True
+                break
+        if unsupported_edge or line_count < 4:
+            continue
+
+        bbox = face.BoundBox
+        span_a = max(_bbox_axis_bounds(bbox, transverse_axes[0])[1] - _bbox_axis_bounds(bbox, transverse_axes[0])[0], 0.0)
+        span_b = max(_bbox_axis_bounds(bbox, transverse_axes[1])[1] - _bbox_axis_bounds(bbox, transverse_axes[1])[0], 0.0)
+        if span_a < 2.0 or span_b < 2.0:
+            continue
+        aspect_ratio = min(span_a, span_b) / max(max(span_a, span_b), 1e-6)
+        if aspect_ratio < 0.15:
+            continue
+
+        part_span_a = max(float(dims.get(transverse_axes[0], 0.0)), 0.0)
+        part_span_b = max(float(dims.get(transverse_axes[1], 0.0)), 0.0)
+        if (
+            part_span_a > 1e-6
+            and part_span_b > 1e-6
+            and span_a >= part_span_a - tolerance
+            and span_b >= part_span_b - tolerance
+        ):
+            continue
+
+        bbox_area = max(span_a * span_b, 1e-6)
+        face_area = float(getattr(face, "Area", 0.0) or 0.0)
+        fill_ratio = face_area / bbox_area
+        if fill_ratio < 0.45:
+            continue
+
+        axis_a_min, axis_a_max = _bbox_axis_bounds(bbox, transverse_axes[0])
+        axis_b_min, axis_b_max = _bbox_axis_bounds(bbox, transverse_axes[1])
+        center_mm = {
+            "x": round((float(bbox.XMin) + float(bbox.XMax)) / 2.0, 3),
+            "y": round((float(bbox.YMin) + float(bbox.YMax)) / 2.0, 3),
+            "z": round((float(bbox.ZMin) + float(bbox.ZMax)) / 2.0, 3),
+        }
+        major_axis = transverse_axes[0] if span_a >= span_b else transverse_axes[1]
+        orientation = "H" if major_axis == longest_axis else "V"
+        center_key_val = (
+            thickness_axis,
+            round(center_mm["x"], 1),
+            round(center_mm["y"], 1),
+            round(center_mm["z"], 1),
+        )
+        if center_key_val in seen:
+            continue
+        seen.add(center_key_val)
+
+        pockets.append(
+            {
+                "axis": thickness_axis,
+                "depth_mm": round(depth_mm, 3),
+                "length_mm": round(max(span_a, span_b), 3),
+                "width_mm": round(min(span_a, span_b), 3),
+                "center_mm": center_mm,
+                "orientation": orientation,
+                "opening_bbox_mm": {
+                    transverse_axes[0]: [round(axis_a_min, 3), round(axis_a_max, 3)],
+                    transverse_axes[1]: [round(axis_b_min, 3), round(axis_b_max, 3)],
+                },
+            }
+        )
+
+    pockets.sort(
+        key=lambda pocket: (
+            -float(pocket.get("length_mm") or 0.0) * float(pocket.get("width_mm") or 0.0),
+            -float(pocket.get("depth_mm") or 0.0),
+            float(((pocket.get("center_mm") or {}).get("x")) or 0.0),
+            float(((pocket.get("center_mm") or {}).get("y")) or 0.0),
+        )
+    )
+    return pockets
+
+
 def _detect_chamfers(shape, dims: dict, ordered_axes: list) -> list[dict]:
     """Detect chamfer faces: small planar faces whose normal is at ~45° to axis-aligned planes.
 
@@ -937,21 +1382,33 @@ def _detect_chamfers(shape, dims: dict, ordered_axes: list) -> list[dict]:
                 continue
             break
 
-    # Deduplicate similar chamfers (same size within 0.5mm tolerance)
+    # Aggregate similar chamfers and keep a count so the DSE can emit grouped
+    # chamfer callouts such as "4×0,5×45°" instead of identical duplicates.
     if chamfers:
-        unique = []
-        seen_sizes = set()
-        for ch in chamfers:
-            key = round(ch["size_mm"] * 2) / 2  # round to 0.5mm
-            if key not in seen_sizes:
-                seen_sizes.add(key)
-                unique.append(ch)
-        chamfers = unique
+        grouped = {}
+        for chamfer in chamfers:
+            size_key = round(float(chamfer.get("size_mm") or 0.0) * 2.0) / 2.0
+            angle_key = round(float(chamfer.get("angle_deg") or 45.0) / 5.0) * 5.0
+            key = (size_key, angle_key)
+            bucket = grouped.get(key)
+            if bucket is None:
+                bucket = dict(chamfer)
+                bucket["size_mm"] = round(size_key, 3)
+                bucket["angle_deg"] = round(angle_key, 1)
+                bucket["count"] = 1
+                grouped[key] = bucket
+                continue
+            bucket["count"] = int(bucket.get("count") or 1) + 1
+        chamfers = list(grouped.values())
 
     return chamfers
 
 
-def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -> dict:
+def compute_payload(
+    shape: Part.Shape,
+    k_factor_override: float | None = None,
+    source_path: Path | str | None = None,
+) -> dict:
     bbox = shape.BoundBox
     dims = {
         "X": float(bbox.XLength),
@@ -989,6 +1446,7 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
         flat_ratio,
         cylindrical_radii,
     )
+    step_profile = _extract_rotational_profile(shape, longest_axis) if rotational_profile else []
     if rotational_profile:
         hole_centers = []
         effective_diameters = []
@@ -1005,17 +1463,36 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
     elif effective_diameters:
         hole_diameter_mm = float(statistics.median(effective_diameters))
 
-    hole_groups = [
-        {
+    part_axis_min_mm, part_axis_max_mm = _bbox_axis_bounds(shape.BoundBox, thickness_axis)
+    internal_groups_by_key = {
+        center_key(group["center"], thickness_axis): group
+        for group in internal_circle_groups
+        if isinstance(group.get("center"), App.Vector)
+    }
+    hole_groups = []
+    blind_hole_count = 0
+    for center, diameter in hole_centers:
+        group = internal_groups_by_key.get(center_key(center, thickness_axis), {})
+        through, depth_mm = _classify_hole_extent(
+            _numeric_or_none(group.get("axis_min_mm")),
+            _numeric_or_none(group.get("axis_max_mm")),
+            part_axis_min_mm,
+            part_axis_max_mm,
+        )
+        hole_group = {
             "center_mm": {
                 "x": round(float(center.x), 5),
                 "y": round(float(center.y), 5),
                 "z": round(float(center.z), 5),
             },
             "diameter_mm": round(float(diameter), 5),
+            "axis": thickness_axis,
+            "through": through,
+            "depth_mm": depth_mm,
         }
-        for center, diameter in hole_centers
-    ]
+        if through is False and depth_mm is not None:
+            blind_hole_count += 1
+        hole_groups.append(hole_group)
     unique_diameters = sorted({round(float(diameter), 4) for _, diameter in hole_centers})
     thread_core_diameter_mm = None
     if len(unique_diameters) >= 2:
@@ -1039,6 +1516,43 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
                 thread_core_diameter_mm = None
         except (ValueError, IndexError):
             pass
+
+    thread_depth_mm = None
+    thread_through = None
+    if thread_label and hole_groups:
+        thread_candidate = None
+        if thread_core_diameter_mm is not None:
+            tol = max(0.25, thread_core_diameter_mm * 0.08)
+            matching_candidates = [
+                group
+                for group in hole_groups
+                if abs(float(group.get("diameter_mm") or 0.0) - thread_core_diameter_mm) <= tol
+            ]
+            if matching_candidates:
+                thread_candidate = min(
+                    matching_candidates,
+                    key=lambda item: abs(float(item.get("diameter_mm") or 0.0) - thread_core_diameter_mm),
+                )
+        if thread_candidate is None and len(hole_groups) == 1:
+            thread_candidate = hole_groups[0]
+        if thread_candidate is not None:
+            if isinstance(thread_candidate.get("through"), bool):
+                thread_through = bool(thread_candidate["through"])
+            depth_value = _numeric_or_none(thread_candidate.get("depth_mm"))
+            if depth_value is not None and depth_value > 0:
+                thread_depth_mm = round(depth_value, 5)
+
+    groove_groups = (
+        _detect_turning_relief_grooves(
+            shape.BoundBox,
+            step_profile,
+            longest_axis,
+            thread_label=thread_label,
+        )
+        if rotational_profile
+        else []
+    )
+    thread_relief_recommended = bool(rotational_profile and thread_label and not groove_groups)
 
     hole_pitch_mm = None
     hole_pitch_source = None
@@ -1087,15 +1601,23 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
     if not rotational_profile:
         flat_pattern = compute_flat_pattern(shape, thickness_axis, measured_thickness_mm, k_factor_override)
 
-    # Only report bend_radius if there is a real sheet metal signal:
-    # face-type classification, flat pattern with bends, or thin wall
+    # Only report bend_radius if there is a real sheet metal signal.
+    # Flat laser/waterjet plates with circular cuts can otherwise masquerade as
+    # sheet metal because the slot/hole cylinders satisfy the face mix, even
+    # though there is no actual bend to dimension.
     bend_radius_mm = None
     if _raw_bend_radius_mm is not None:
         fp_bend_count = int((flat_pattern or {}).get("bend_count") or 0)
+        has_formed_sheet_signal = (
+            not is_flat
+            and (
+                is_sheet_metal_by_faces
+                or (measured_thickness_mm is not None and measured_thickness_mm <= 5.0)
+            )
+        )
         has_sheet_signal = (
-            is_sheet_metal_by_faces
-            or fp_bend_count > 0
-            or (measured_thickness_mm is not None and measured_thickness_mm <= 5.0)
+            fp_bend_count > 0
+            or has_formed_sheet_signal
         )
         if has_sheet_signal:
             bend_radius_mm = _raw_bend_radius_mm
@@ -1105,6 +1627,15 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
 
     # Slot detection: planar pockets with 2 semicircular arcs + 2 straight edges
     slot_groups = collect_slot_data(shape, thickness_axis, dims, longest_axis)
+    pocket_groups = collect_pocket_data(shape, thickness_axis, dims, longest_axis)
+    surface_finish = _extract_surface_finish_from_step_metadata(source_path)
+    surface_ra = None
+    surface_rz = None
+    if surface_finish:
+        if surface_finish.get("parameter") == "RA":
+            surface_ra = surface_finish.get("value")
+        elif surface_finish.get("parameter") == "RZ":
+            surface_rz = surface_finish.get("value")
 
     return {
         "ok": True,
@@ -1115,6 +1646,8 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
         "flat_ratio": round(flat_ratio, 5),
         "is_flat": is_flat,
         "rotational_profile": rotational_profile,
+        "step_count": len(step_profile),
+        "step_profile": step_profile,
         "hole_count": hole_count,
         "hole_diameter_mm": round(hole_diameter_mm, 5) if hole_diameter_mm else None,
         "hole_pitch_mm": round(hole_pitch_mm, 5) if hole_pitch_mm else None,
@@ -1122,9 +1655,15 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
         "preferred_hole_pitch_mm": round(preferred_hole_pitch_mm, 5) if preferred_hole_pitch_mm else None,
         "preferred_hole_pitch_source": preferred_hole_pitch_source,
         "hole_groups": hole_groups,
+        "blind_hole_count": blind_hole_count,
         "hole_diameters_mm": unique_diameters,
         "thread_core_diameter_mm": round(thread_core_diameter_mm, 5) if thread_core_diameter_mm else None,
         "thread_label": thread_label,
+        "thread_depth_mm": thread_depth_mm,
+        "thread_through": thread_through,
+        "groove_count": len(groove_groups),
+        "groove_groups": groove_groups,
+        "thread_relief_recommended": thread_relief_recommended,
         "bend_radius_mm": round(bend_radius_mm, 5) if bend_radius_mm else None,
         "circular_edge_count": len(all_diameters),
         "cylindrical_face_count": len(cylindrical_radii),
@@ -1139,6 +1678,11 @@ def compute_payload(shape: Part.Shape, k_factor_override: float | None = None) -
         "chamfers": chamfers,
         "slot_count": len(slot_groups),
         "slot_groups": slot_groups,
+        "pocket_count": len(pocket_groups),
+        "pocket_groups": pocket_groups,
+        "surface_finish": surface_finish,
+        "surface_ra": round(float(surface_ra), 5) if surface_ra is not None else None,
+        "surface_rz": round(float(surface_rz), 5) if surface_rz is not None else None,
     }
 
 
@@ -1175,7 +1719,11 @@ def main() -> int:
         if shape.isNull():
             write_json(output_path, {"ok": False, "error": "Imported shape is null."})
             return 3
-        payload = compute_payload(shape, k_factor_override=k_factor_override)
+        payload = compute_payload(
+            shape,
+            k_factor_override=k_factor_override,
+            source_path=input_path,
+        )
         write_json(output_path, payload)
         return 0
     except Exception as exc:

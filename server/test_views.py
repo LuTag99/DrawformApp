@@ -103,6 +103,7 @@ EXPECTED = {
         "alignment_ok": True,
         "dse_check": True,
         "part_type": "milling",
+        "part_type": "milling",
     },
     "rechteck": {
         "longest_axis": "Y",  # 300mm is Y
@@ -877,6 +878,9 @@ def check_dimension_plan(report: dict, expected: dict) -> tuple[bool, list[str]]
             issues.append("dimension_plan: Front view missing overall_length")
         if "overall_height" not in front_types:
             issues.append("dimension_plan: Front view missing overall_height")
+        groove_count = int(_float_or_none((report.get("features") or {}).get("groove_count")) or 0)
+        if groove_count > 0 and "groove_callout" not in front_types:
+            issues.append("dimension_plan: Front view missing groove_callout for detected relief groove")
 
     # No duplicate (dim_type, value_mm) across views
     seen_dims: set = set()
@@ -1486,6 +1490,67 @@ def _boxes_overlap(a: dict, b: dict, margin: float = 0.0) -> bool:
     )
 
 
+def _is_dimension_like_text(content: str) -> bool:
+    text = str(content or "").strip()
+    if len(text) <= 1:
+        return False
+    if text.lower() in {"a", "b", "c", "d", "e"}:
+        return False
+    if not re.match(r'^[\d.,Ã˜âŒ€Ã—xRMt\sÂ°\-]+$', text):
+        return False
+    return bool(re.search(r"\d", text))
+
+
+def _report_dimension_readability_issues(report: dict) -> tuple[bool, list[str]]:
+    issues: list[str] = []
+    views = report.get("views") or {}
+    if not isinstance(views, dict):
+        return False, issues
+
+    overall_geom_overlap_views: list[str] = []
+    feature_geom_overlap_views: list[str] = []
+    feature_overall_overlap_views: list[str] = []
+    text_overlap_views: list[str] = []
+
+    for view_name, view in views.items():
+        if not isinstance(view, dict):
+            continue
+        dq = view.get("dimension_quality") or {}
+        if not isinstance(dq, dict) or not dq:
+            continue
+        if int(dq.get("overall_geom_overlap_count") or 0) > 0:
+            overall_geom_overlap_views.append(str(view_name))
+        if int(dq.get("feature_geom_overlap_count") or 0) > 0:
+            feature_geom_overlap_views.append(str(view_name))
+        if int(dq.get("feature_overall_overlap_count") or 0) > 0:
+            feature_overall_overlap_views.append(str(view_name))
+        if int(dq.get("text_overlap_count") or 0) > 0:
+            text_overlap_views.append(str(view_name))
+
+    if overall_geom_overlap_views:
+        issues.append(
+            "readability: overall_dims_overlap_geometry: "
+            + ", ".join(sorted(overall_geom_overlap_views))
+        )
+    if feature_geom_overlap_views:
+        issues.append(
+            "readability: feature_dims_overlap_geometry: "
+            + ", ".join(sorted(feature_geom_overlap_views))
+        )
+    if feature_overall_overlap_views:
+        issues.append(
+            "readability: feature_dims_overlap_overall: "
+            + ", ".join(sorted(feature_overall_overlap_views))
+        )
+    if text_overlap_views:
+        issues.append(
+            "readability: dimension_text_overlap: "
+            + ", ".join(sorted(text_overlap_views))
+        )
+
+    return True, issues
+
+
 def check_readability(sample_name: str, report: dict) -> tuple[bool, list[str]]:
     """Check dimension readability via SVG analysis.
 
@@ -1501,12 +1566,14 @@ def check_readability(sample_name: str, report: dict) -> tuple[bool, list[str]]:
 
     svg_text = svg_path.read_text(encoding="utf-8", errors="replace")
     texts = _parse_svg_texts(svg_text)
+    report_quality_available, report_quality_issues = _report_dimension_readability_issues(report)
 
     # 1. Font size check (skip title block / meta texts — only check dim-like texts)
     dim_texts = [
         t for t in texts
         if re.match(r'^[\d.,Ø⌀×xRMt\s°\-]+$', t["content"])
     ]
+    dim_texts = [t for t in dim_texts if _is_dimension_like_text(t["content"])]
     small_texts = [t for t in dim_texts if 0 < t["font_size"] < _MIN_TEXT_HEIGHT_SVG]
     if small_texts:
         sizes = {t["font_size"] for t in small_texts}
@@ -1514,6 +1581,13 @@ def check_readability(sample_name: str, report: dict) -> tuple[bool, list[str]]:
             f"readability: {len(small_texts)} dimension text(s) below minimum "
             f"height {_MIN_TEXT_HEIGHT_SVG} (found sizes: {sorted(sizes)})"
         )
+
+    if report_quality_available:
+        # Prefer paper-space overlap metrics from the export report. Raw SVG
+        # coordinates are local to transformed view groups and otherwise create
+        # cross-view false positives in rotated layouts.
+        issues.extend(report_quality_issues)
+        return len(issues) == 0, issues
 
     # 2. Text overlap detection (pairwise among dimension texts)
     overlap_count = 0
@@ -1656,16 +1730,20 @@ def check_overdetermination(report: dict, expected: dict) -> tuple[bool, list[st
 # Preferred view per dim_type — feature should be dimensioned where most visible
 _PREFERRED_VIEW_FOR_DIM: dict[str, str] = {
     "hole_diameter": "Front",
+    "hole_depth": "Front",
     "hole_pitch": "Front",
     "hole_location_x": "Front",
     "hole_location_y": "Front",
     "thread_callout": "Front",
+    "groove_callout": "Front",
     "slot_width": "Front",
     "slot_length": "Front",
     "slot_location": "Front",
     "pocket_depth": "Left",
     "pocket_location": "Front",
     "step_height": "Left",
+    "step_length": "Front",
+    "step_diameter": "Front",
     "bend_radius": "Front",
     "sheet_thickness": "Front",
     "flat_length": "FlatPattern",

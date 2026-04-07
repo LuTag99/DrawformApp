@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-03-30T19:52:18+00:00",
+  "generated_at": "2026-04-07T11:02:26+00:00",
   "parts": {
     "202500521_Abdeckblech Motorstecker 1_V1.0": {
       "alignment": {
@@ -187,7 +187,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 7,
+        "total_dim_count": 9,
         "view_count": 4
       },
       "features": {
@@ -221,10 +221,10 @@
             176.5
           ],
           "paper_size": [
-            81.41,
-            48.39
+            2.47,
+            2.47
           ],
-          "rotation_deg": 0
+          "rotation_deg": 90
         },
         "Left": {
           "center": [

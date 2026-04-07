@@ -141,6 +141,74 @@ _MILLING_BLOCK_PRISMATIC = {
     "thread_label": None,
 }
 
+_MILLING_WITH_CHAMFERS = {
+    **_MILLING_BLOCK_PRISMATIC,
+    "chamfers": [
+        {
+            "size_mm": 0.5,
+            "angle_deg": 45.0,
+            "axis_pair": "X-Y",
+            "count": 6,
+            "center_mm": {"x": 12.0, "y": 8.0, "z": 60.0},
+        }
+    ],
+}
+
+_MILLING_WITH_BLIND_SLOT = {
+    **_MILLING_BLOCK_PRISMATIC,
+    "slot_count": 1,
+    "slot_groups": [
+        {
+            "width_mm": 10.0,
+            "length_mm": 36.0,
+            "depth_mm": 5.0,
+            "center_mm": {"x": 60.0, "y": 40.0, "z": 55.0},
+            "orientation": "H",
+        }
+    ],
+}
+
+_MILLING_WITH_BLIND_HOLE = {
+    **_MILLING_BLOCK_PRISMATIC,
+    "hole_count": 1,
+    "hole_diameter_mm": 10.0,
+    "hole_groups": [
+        {
+            "center_mm": {"x": 60.0, "y": 40.0, "z": 54.0},
+            "diameter_mm": 10.0,
+            "axis": "Z",
+            "through": False,
+            "depth_mm": 12.0,
+        }
+    ],
+}
+
+_MILLING_WITH_POCKETS = {
+    **_MILLING_BLOCK_PRISMATIC,
+    "bbox_mm": {"X": 180.0, "Y": 120.0, "Z": 30.0},
+    "flat_ratio": 0.25,
+    "is_flat": True,
+    "pocket_count": 2,
+    "pocket_groups": [
+        {
+            "axis": "Z",
+            "depth_mm": 8.0,
+            "length_mm": 80.0,
+            "width_mm": 30.0,
+            "center_mm": {"x": 90.0, "y": 60.0, "z": 22.0},
+            "orientation": "H",
+        },
+        {
+            "axis": "Z",
+            "depth_mm": 6.0,
+            "length_mm": 36.0,
+            "width_mm": 20.0,
+            "center_mm": {"x": 35.0, "y": 35.0, "z": 24.0},
+            "orientation": "H",
+        },
+    ],
+}
+
 # -- Sheet metal payloads --
 
 _SHEET_BIEGETEIL = {
@@ -231,6 +299,10 @@ _TURNING_SIMPLE = {
     "flat_pattern": None,
     "thread_label": None,
     "rotational_profile": True,
+    "step_count": 1,
+    "step_profile": [
+        {"axis": "Z", "diameter_mm": 30.0, "start_mm": 0.0, "end_mm": 100.0, "length_mm": 100.0},
+    ],
 }
 
 _TURNING_STEPPED_SHAFT = {
@@ -241,11 +313,7 @@ _TURNING_STEPPED_SHAFT = {
     "hole_count": 0,
     "hole_diameter_mm": None,
     "hole_pitch_mm": None,
-    "hole_groups": [
-        {"center_mm": {"x": 0, "y": 0, "z": 0}, "diameter_mm": 50.0},
-        {"center_mm": {"x": 0, "y": 0, "z": 80}, "diameter_mm": 30.0},
-        {"center_mm": {"x": 0, "y": 0, "z": 160}, "diameter_mm": 20.0},
-    ],
+    "hole_groups": [],
     "slot_count": 0,
     "slot_groups": [],
     "bend_radius_mm": None,
@@ -259,6 +327,12 @@ _TURNING_STEPPED_SHAFT = {
     "flat_pattern": None,
     "thread_label": None,
     "rotational_profile": True,
+    "step_count": 3,
+    "step_profile": [
+        {"axis": "Z", "diameter_mm": 50.0, "start_mm": 0.0, "end_mm": 80.0, "length_mm": 80.0},
+        {"axis": "Z", "diameter_mm": 30.0, "start_mm": 80.0, "end_mm": 160.0, "length_mm": 80.0},
+        {"axis": "Z", "diameter_mm": 20.0, "start_mm": 160.0, "end_mm": 200.0, "length_mm": 40.0},
+    ],
 }
 
 _TURNING_WITH_THREAD = {
@@ -285,6 +359,12 @@ _TURNING_WITH_THREAD = {
     "rotational_profile": True,
 }
 
+_TURNING_WITH_BLIND_THREAD = {
+    **_TURNING_WITH_THREAD,
+    "thread_through": False,
+    "thread_depth_mm": 18.0,
+}
+
 _TURNING_WITH_HOLE = {
     "ok": True,
     "bbox_mm": {"X": 60.0, "Y": 60.0, "Z": 80.0},
@@ -309,6 +389,39 @@ _TURNING_WITH_HOLE = {
     "flat_pattern": None,
     "thread_label": None,
     "rotational_profile": True,
+}
+
+_TURNING_WITH_RELIEF_GROOVE = {
+    **_TURNING_WITH_THREAD,
+    "step_count": 3,
+    "step_profile": [
+        {"axis": "Z", "diameter_mm": 30.0, "start_mm": 0.0, "end_mm": 58.0, "length_mm": 58.0},
+        {"axis": "Z", "diameter_mm": 24.0, "start_mm": 58.0, "end_mm": 62.0, "length_mm": 4.0},
+        {"axis": "Z", "diameter_mm": 30.0, "start_mm": 62.0, "end_mm": 150.0, "length_mm": 88.0},
+    ],
+    "groove_count": 1,
+    "groove_groups": [
+        {
+            "axis": "Z",
+            "kind": "freistich",
+            "din_ref": "DIN 509",
+            "start_mm": 58.0,
+            "end_mm": 62.0,
+            "width_mm": 4.0,
+            "diameter_mm": 24.0,
+            "center_mm": {"x": 0.0, "y": 0.0, "z": 60.0},
+        }
+    ],
+    "thread_relief_recommended": False,
+}
+
+_MILLING_WITH_SURFACE_FINISH = {
+    **_MILLING_BLOCK_PRISMATIC,
+    "surface_finish": {
+        "parameter": "RA",
+        "value": 3.2,
+        "source": "step_metadata",
+    },
 }
 
 
@@ -364,6 +477,98 @@ class TestMillingGuideline(unittest.TestCase):
         plan = build_dimension_plan(_MILLING_FEATURE_DENSE, "milling")
         types = _dim_types(plan)
         self.assertIn("thread_callout", types, "Prio A: thread detected but no callout")
+
+    def test_chamfer_dimension_when_chamfers_present(self):
+        plan = build_dimension_plan(_MILLING_WITH_CHAMFERS, "milling")
+        types = _dim_types(plan)
+        self.assertIn("chamfer", types, "Detected chamfers must become chamfer dimensions")
+
+    def test_section_view_for_blind_slot_depth(self):
+        plan = build_dimension_plan(_MILLING_WITH_BLIND_SLOT, "milling")
+        self.assertEqual(len(plan.section_views), 1)
+        self.assertEqual(plan.section_views[0].reason, "blind_slot_depth")
+
+    def test_blind_hole_depth_is_planned_and_sectioned(self):
+        plan = build_dimension_plan(_MILLING_WITH_BLIND_HOLE, "milling")
+        types = _dim_types(plan)
+        self.assertIn("hole_depth", types, "Blind hole needs explicit depth callout")
+        self.assertEqual(len(plan.section_views), 1)
+        self.assertEqual(plan.section_views[0].reason, "blind_hole_depth")
+
+    def test_pocket_location_and_depth_are_planned(self):
+        plan = build_dimension_plan(_MILLING_WITH_POCKETS, "milling")
+        types = _dim_types(plan)
+        self.assertIn("pocket_location", types, "Detected pockets need a location callout")
+        self.assertIn("pocket_depth", types, "Detected pockets need a depth callout")
+        self.assertEqual(plan.section_views, [])
+
+    def test_dense_feature_front_requests_detail_view(self):
+        plan = build_dimension_plan(_MILLING_FEATURE_DENSE, "milling")
+        self.assertEqual(len(plan.detail_views), 1)
+        self.assertEqual(plan.detail_views[0].reason, "dense_thread_pattern")
+
+    def test_section_view_takes_priority_over_detail_view(self):
+        payload = {
+            **_MILLING_FEATURE_DENSE,
+            "slot_count": 1,
+            "slot_groups": [
+                {
+                    "width_mm": 10.0,
+                    "length_mm": 36.0,
+                    "depth_mm": 5.0,
+                    "center_mm": {"x": 125.0, "y": 90.0, "z": 25.0},
+                    "orientation": "H",
+                }
+            ],
+        }
+        plan = build_dimension_plan(payload, "milling")
+        self.assertEqual(len(plan.section_views), 1)
+        self.assertEqual(plan.detail_views, [])
+
+    def test_single_pocket_requests_section(self):
+        payload = {
+            **_MILLING_WITH_POCKETS,
+            "hole_count": 0,
+            "hole_diameter_mm": None,
+            "hole_pitch_mm": None,
+            "hole_groups": [],
+            "pocket_count": 1,
+            "pocket_groups": [_MILLING_WITH_POCKETS["pocket_groups"][0]],
+        }
+        plan = build_dimension_plan(payload, "milling")
+        self.assertEqual(len(plan.section_views), 1)
+        self.assertEqual(plan.section_views[0].reason, "internal_pocket_depth")
+
+    def test_mixed_blind_holes_keep_depth_callout_without_forcing_section(self):
+        payload = {
+            **_MILLING_WITH_BLIND_HOLE,
+            "hole_count": 3,
+            "hole_groups": [
+                {
+                    "center_mm": {"x": 30.0, "y": 40.0, "z": 54.0},
+                    "diameter_mm": 10.0,
+                    "axis": "Z",
+                    "through": True,
+                    "depth_mm": None,
+                },
+                {
+                    "center_mm": {"x": 60.0, "y": 40.0, "z": 54.0},
+                    "diameter_mm": 10.0,
+                    "axis": "Z",
+                    "through": False,
+                    "depth_mm": 12.0,
+                },
+                {
+                    "center_mm": {"x": 90.0, "y": 40.0, "z": 54.0},
+                    "diameter_mm": 10.0,
+                    "axis": "Z",
+                    "through": True,
+                    "depth_mm": None,
+                },
+            ],
+        }
+        plan = build_dimension_plan(payload, "milling")
+        self.assertEqual(plan.section_views, [])
 
     # --- Prio A: Slots ---
 
@@ -582,12 +787,29 @@ class TestTurningGuideline(unittest.TestCase):
         types = _dim_types(plan)
         self.assertIn("thread_callout", types, "Prio A: thread detected but no callout")
 
+    def test_blind_thread_callout_includes_usable_depth(self):
+        plan = build_dimension_plan(_TURNING_WITH_BLIND_THREAD, "turning")
+        front_dims = _dims_in_view(plan, "Front")
+        thread_dim = next(d for d in front_dims if d.dim_type == "thread_callout")
+        self.assertIn("TIEF 18,0", thread_dim.label or "")
+        self.assertIn("thread_relief_warning", plan.policy_hints)
+
+    def test_groove_callout_when_relief_groove_detected(self):
+        plan = build_dimension_plan(_TURNING_WITH_RELIEF_GROOVE, "turning")
+        types = _dim_types(plan)
+        self.assertIn("groove_callout", types, "Detected relief groove must create groove_callout")
+
     # --- Prio A: Bohrungen ---
 
     def test_hole_diameter_when_hole_present(self):
         plan = build_dimension_plan(_TURNING_WITH_HOLE, "turning")
         types = _dim_types(plan)
         self.assertIn("hole_diameter", types, "Prio A: hole detected but no diameter")
+
+    def test_section_view_for_internal_bore(self):
+        plan = build_dimension_plan(_TURNING_WITH_HOLE, "turning")
+        self.assertEqual(len(plan.section_views), 1)
+        self.assertEqual(plan.section_views[0].reason, "internal_bore")
 
     # --- Stepped shaft ---
 
@@ -596,6 +818,18 @@ class TestTurningGuideline(unittest.TestCase):
         types = _dim_types(plan)
         self.assertIn("overall_length", types)
         self.assertIn("overall_height", types)
+
+    def test_stepped_shaft_uses_cumulative_step_lengths(self):
+        plan = build_dimension_plan(_TURNING_STEPPED_SHAFT, "turning")
+        front_dims = _dims_in_view(plan, "Front")
+        step_lengths = [d for d in front_dims if d.dim_type == "step_length"]
+        self.assertEqual([round(float(d.value_mm or 0.0), 1) for d in step_lengths], [80.0, 160.0])
+
+    def test_stepped_shaft_plans_reduced_step_diameters(self):
+        plan = build_dimension_plan(_TURNING_STEPPED_SHAFT, "turning")
+        front_dims = _dims_in_view(plan, "Front")
+        step_diameters = [d.label for d in front_dims if d.dim_type == "step_diameter"]
+        self.assertEqual(step_diameters, ["Ø30,0", "Ø20,0"])
 
     # --- No duplicate dims ---
 
@@ -663,6 +897,11 @@ class TestCrossCuttingGuideline(unittest.TestCase):
         # Every plan must have at least one view with dimensions
         total = sum(len(v.dimensions) for v in plan.views)
         self.assertGreater(total, 0, "Plan must have at least one dimension")
+
+    def test_surface_finish_note_when_metadata_present(self):
+        plan = build_dimension_plan(_MILLING_WITH_SURFACE_FINISH, "milling")
+        self.assertIn("surface_finish", _note_types(plan))
+        self.assertIsNotNone(plan.surface_finish)
 
         # No None dim_types
         for v in plan.views:

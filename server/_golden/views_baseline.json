@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-04T12:35:10+00:00",
+  "generated_at": "2026-04-07T11:06:08+00:00",
   "parts": {
     "10x10x10": {
       "alignment": {
@@ -187,7 +187,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 7,
+        "total_dim_count": 10,
         "view_count": 4
       },
       "features": {
@@ -207,7 +207,7 @@
         "Front": {
           "center": [
             110.0,
-            65.5
+            55.68
           ],
           "paper_size": [
             98.73,
@@ -229,7 +229,7 @@
         "Left": {
           "center": [
             310.0,
-            65.5
+            55.68
           ],
           "paper_size": [
             65.82,
@@ -240,7 +240,7 @@
         "Top": {
           "center": [
             110.0,
-            176.5
+            198.91
           ],
           "paper_size": [
             98.73,
@@ -270,7 +270,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 8,
+        "total_dim_count": 10,
         "view_count": 4
       },
       "features": {
@@ -436,7 +436,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 8,
+        "total_dim_count": 10,
         "view_count": 4
       },
       "features": {
@@ -455,7 +455,7 @@
       "views": {
         "Front": {
           "center": [
-            145.38,
+            158.12,
             67.8
           ],
           "paper_size": [
@@ -477,7 +477,7 @@
         },
         "Left": {
           "center": [
-            280.94,
+            315.38,
             67.8
           ],
           "paper_size": [
@@ -488,7 +488,7 @@
         },
         "Top": {
           "center": [
-            145.38,
+            158.12,
             189.29
           ],
           "paper_size": [
@@ -636,10 +636,10 @@
             176.5
           ],
           "paper_size": [
-            88.08,
-            74.7
+            26.57,
+            26.57
           ],
-          "rotation_deg": 0
+          "rotation_deg": 90
         },
         "Left": {
           "center": [
@@ -685,7 +685,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 4,
+        "total_dim_count": 6,
         "view_count": 4
       },
       "features": {
@@ -715,12 +715,12 @@
         },
         "Iso": {
           "center": [
-            368.08,
-            182.24
+            310.0,
+            176.5
           ],
           "paper_size": [
-            80.75,
-            93.24
+            41.05,
+            61.57
           ],
           "rotation_deg": 0
         },
@@ -855,7 +855,7 @@
         "view_count": 4
       },
       "features": {
-        "bend_radius_mm": 8.0,
+        "bend_radius_mm": null,
         "hole_count": 11,
         "hole_diameter_mm": 10.0,
         "hole_pitch_mm": 68.0,
@@ -934,7 +934,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 8,
+        "total_dim_count": 12,
         "view_count": 4
       },
       "features": {
@@ -1100,7 +1100,7 @@
         "detail_level": 1,
         "part_type": "turning",
         "process_note_count": 1,
-        "total_dim_count": 2,
+        "total_dim_count": 4,
         "view_count": 4
       },
       "features": {
@@ -1265,12 +1265,12 @@
       "dimension_plan_summary": {
         "detail_level": 1,
         "part_type": "sheet_metal",
-        "process_note_count": 2,
+        "process_note_count": 1,
         "total_dim_count": 5,
         "view_count": 4
       },
       "features": {
-        "bend_radius_mm": 8.0,
+        "bend_radius_mm": null,
         "hole_count": 1,
         "hole_diameter_mm": 16.0,
         "hole_pitch_mm": null,
@@ -1349,7 +1349,7 @@
         "detail_level": 1,
         "part_type": "turning",
         "process_note_count": 1,
-        "total_dim_count": 2,
+        "total_dim_count": 11,
         "view_count": 4
       },
       "features": {
@@ -1432,7 +1432,7 @@
         "detail_level": 1,
         "part_type": "milling",
         "process_note_count": 1,
-        "total_dim_count": 3,
+        "total_dim_count": 5,
         "view_count": 4
       },
       "features": {
@@ -1462,7 +1462,7 @@
         },
         "Iso": {
           "center": [
-            310.0,
+            380.22,
             176.5
           ],
           "paper_size": [
@@ -1632,10 +1632,10 @@
             176.5
           ],
           "paper_size": [
-            94.21,
-            93.24
+            29.57,
+            29.57
           ],
-          "rotation_deg": 0
+          "rotation_deg": 90
         },
         "Left": {
           "center": [

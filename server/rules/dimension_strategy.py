@@ -15,9 +15,12 @@ from typing import Any, Dict, List, Optional
 
 from .dimension_plan_schema import (
     DatumSystem,
+    DetailViewPlan,
     DimensionItem,
     DimensionPlan,
     ProcessNote,
+    SectionViewPlan,
+    SurfaceFinish,
     ViewPlan,
 )
 from .rule_engine import KnowledgeError, load_knowledge_base, select_applicable_rules
@@ -41,6 +44,242 @@ def _opt_float(value: Any) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _matching_hole_groups(
+    fp: dict,
+    diameter_mm: float | None = None,
+) -> List[dict]:
+    hole_groups = fp.get("hole_groups") or []
+    if diameter_mm is None:
+        return [group for group in hole_groups if isinstance(group, dict)]
+
+    tol = max(0.25, float(diameter_mm) * 0.08)
+    matching = [
+        group
+        for group in hole_groups
+        if isinstance(group, dict)
+        and _opt_float(group.get("diameter_mm")) is not None
+        and abs(float(group.get("diameter_mm")) - float(diameter_mm)) <= tol
+    ]
+    return matching or [group for group in hole_groups if isinstance(group, dict)]
+
+
+def _summarize_hole_extent(
+    fp: dict,
+    *,
+    diameter_mm: float | None = None,
+) -> Optional[Dict[str, Any]]:
+    groups = _matching_hole_groups(fp, diameter_mm=diameter_mm)
+    if not groups:
+        return None
+
+    classified = [
+        group
+        for group in groups
+        if isinstance(group.get("through"), bool) or _opt_float(group.get("depth_mm")) is not None
+    ]
+    if not classified:
+        return None
+
+    through_flags = [group.get("through") for group in classified if isinstance(group.get("through"), bool)]
+    if through_flags and all(flag is True for flag in through_flags):
+        return {"through": True, "depth_mm": None, "count": len(classified)}
+
+    blind_depths = [
+        _opt_float(group.get("depth_mm"))
+        for group in classified
+        if group.get("through") is False and _opt_float(group.get("depth_mm")) is not None
+    ]
+    blind_depths = [depth for depth in blind_depths if depth is not None and depth > 0]
+    if through_flags and all(flag is False for flag in through_flags) and blind_depths:
+        ref_depth = float(blind_depths[0])
+        tol = max(0.25, ref_depth * 0.08)
+        if all(abs(float(depth) - ref_depth) <= tol for depth in blind_depths):
+            return {
+                "through": False,
+                "depth_mm": float(sum(blind_depths) / len(blind_depths)),
+                "count": len(classified),
+            }
+    return None
+
+
+def _collect_blind_hole_groups(fp: dict) -> List[dict]:
+    blind_groups: List[dict] = []
+    for group in fp.get("hole_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        depth_mm = _opt_float(group.get("depth_mm"))
+        if group.get("through") is False and depth_mm is not None and depth_mm > 0.05:
+            blind_groups.append(group)
+    return blind_groups
+
+
+def _select_representative_pocket(fp: dict) -> Optional[Dict[str, Any]]:
+    pockets = [pocket for pocket in (fp.get("pocket_groups") or []) if isinstance(pocket, dict)]
+    if not pockets:
+        return None
+
+    def _rank(pocket: Dict[str, Any]) -> tuple[float, float, float, float]:
+        length_mm = _opt_float(pocket.get("length_mm")) or 0.0
+        width_mm = _opt_float(pocket.get("width_mm")) or 0.0
+        depth_mm = _opt_float(pocket.get("depth_mm")) or 0.0
+        center = pocket.get("center_mm") or {}
+        center_x = _opt_float(center.get("x")) or 0.0
+        return (
+            length_mm * width_mm,
+            depth_mm,
+            length_mm,
+            -center_x,
+        )
+
+    return max(pockets, key=_rank)
+
+
+def _should_request_pocket_section(fp: dict) -> bool:
+    pockets = [pocket for pocket in (fp.get("pocket_groups") or []) if isinstance(pocket, dict)]
+    if len(pockets) != 1:
+        return False
+    depth_mm = _opt_float(pockets[0].get("depth_mm"))
+    hole_count = int(_opt_float(fp.get("hole_count")) or 0)
+    slot_count = int(_opt_float(fp.get("slot_count")) or 0)
+    return (
+        depth_mm is not None
+        and depth_mm > 0.05
+        and hole_count <= 1
+        and slot_count == 0
+    )
+
+
+def _should_request_blind_hole_section(
+    fp: dict,
+    blind_groups: List[dict],
+) -> bool:
+    """Gate blind-hole sections to truly section-worthy milling cases.
+
+    A depth callout is already emitted for ordinary blind holes. Replacing the
+    iso slot with a section for every mixed or repeated blind-hole pattern
+    destabilises the layout and removes the isometric view too often. Keep the
+    section only for:
+    - a single isolated blind hole as the primary internal feature, or
+    - blind threaded holes where the section materially clarifies the thread/depth.
+    """
+
+    if not blind_groups:
+        return False
+
+    blind_count = len(blind_groups)
+    total_holes = max(int(fp.get("hole_count") or 0), blind_count)
+    thread_label = str(fp.get("thread_label") or "").strip()
+    thread_through = fp.get("thread_through")
+    thread_depth_mm = _opt_float(fp.get("thread_depth_mm"))
+
+    if blind_count != 1:
+        return False
+
+    if thread_label and (thread_through is False or thread_depth_mm is not None):
+        return True
+
+    return total_holes == 1
+
+
+def _format_hole_callout_label(
+    diameter_mm: float,
+    hole_extent: Optional[Dict[str, Any]],
+) -> str:
+    label = f"{_DIAMETER_SYMBOL}{_fmt(diameter_mm)}"
+    if not hole_extent:
+        return label
+    if hole_extent.get("through") is True:
+        return f"{label} DURCH"
+    depth_mm = _opt_float(hole_extent.get("depth_mm"))
+    if hole_extent.get("through") is False and depth_mm is not None and depth_mm > 0:
+        return f"{label} x {_fmt(depth_mm)} TIEF"
+    return label
+
+
+def _format_thread_callout_label(
+    thread_label: str,
+    *,
+    thread_through: Any = None,
+    thread_depth_mm: Any = None,
+) -> str:
+    label = f"{thread_label} GEWINDE"
+    if thread_through is True:
+        return f"{label} DURCH"
+    depth_mm = _opt_float(thread_depth_mm)
+    if thread_through is False and depth_mm is not None and depth_mm > 0:
+        return f"{label} TIEF {_fmt(depth_mm)}"
+    return label
+
+
+def _format_pocket_location_label(pocket: Dict[str, Any]) -> str:
+    length_mm = _opt_float(pocket.get("length_mm")) or 0.0
+    width_mm = _opt_float(pocket.get("width_mm")) or 0.0
+    if length_mm > 0.0 and width_mm > 0.0:
+        return f"TASCHE {_fmt(length_mm)}\u00D7{_fmt(width_mm)}"
+    return "TASCHE"
+
+
+def _format_pocket_depth_label(pocket: Dict[str, Any]) -> str:
+    depth_mm = _opt_float(pocket.get("depth_mm"))
+    if depth_mm is not None and depth_mm > 0.0:
+        return f"TASCHE TIEF {_fmt(depth_mm)}"
+    return "TASCHE"
+
+
+def _select_representative_groove(fp: dict) -> Optional[Dict[str, Any]]:
+    grooves = [groove for groove in (fp.get("groove_groups") or []) if isinstance(groove, dict)]
+    if not grooves:
+        return None
+
+    def _rank(groove: Dict[str, Any]) -> tuple[int, float, float]:
+        kind = str(groove.get("kind") or "").strip().lower()
+        width_mm = _opt_float(groove.get("width_mm")) or 0.0
+        diameter_mm = _opt_float(groove.get("diameter_mm")) or 0.0
+        return (
+            1 if kind == "freistich" else 0,
+            -width_mm,
+            -diameter_mm,
+        )
+
+    return max(grooves, key=_rank)
+
+
+def _format_groove_callout_label(groove: Dict[str, Any]) -> str:
+    kind = str(groove.get("kind") or "").strip().lower()
+    prefix = "FREISTICH" if kind == "freistich" else "EINSTICH"
+    din_ref = str(groove.get("din_ref") or "DIN 509").strip() or "DIN 509"
+    width_mm = _opt_float(groove.get("width_mm"))
+    diameter_mm = _opt_float(groove.get("diameter_mm"))
+    if width_mm is not None and diameter_mm is not None:
+        return f"{prefix} {din_ref} {_fmt(width_mm)}\u00D7{_DIAMETER_SYMBOL}{_fmt(diameter_mm)}"
+    if width_mm is not None:
+        return f"{prefix} {din_ref} b={_fmt(width_mm)}"
+    return f"{prefix} {din_ref}"
+
+
+def _normalized_surface_finish(fp: dict) -> Optional[Dict[str, Any]]:
+    raw = fp.get("surface_finish")
+    if isinstance(raw, dict):
+        parameter = str(raw.get("parameter") or "").strip().upper()
+        value = _opt_float(raw.get("value"))
+        if parameter in {"RA", "RZ"} and value is not None and value > 0.0:
+            return {
+                "parameter": parameter,
+                "value": float(value),
+                "source": str(raw.get("source") or "feature_probe"),
+            }
+
+    for key, parameter in (("surface_ra", "RA"), ("surface_rz", "RZ")):
+        value = _opt_float(fp.get(key))
+        if value is not None and value > 0.0:
+            return {
+                "parameter": parameter,
+                "value": float(value),
+                "source": "feature_probe",
+            }
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +340,7 @@ _DIMENSION_PRIMARY_VIEWS: Dict[str, tuple[str, ...]] = {
     "overall_height": ("Front", "Left", "Top"),
     "overall_depth": ("Top", "Left", "Front"),
     "hole_diameter": ("Front", "Top", "Left"),
+    "hole_depth": ("Front", "Left", "Top"),
     "hole_pitch": ("Front", "Top", "Left"),
     "hole_location_x": ("Front", "Top", "Left"),
     "hole_location_y": ("Front", "Top", "Left"),
@@ -112,6 +352,9 @@ _DIMENSION_PRIMARY_VIEWS: Dict[str, tuple[str, ...]] = {
     "pocket_depth": ("Left", "Front", "Top"),
     "pocket_location": ("Front", "Top", "Left"),
     "step_height": ("Left", "Front", "Top"),
+    "step_length": ("Front", "Left", "Top"),
+    "step_diameter": ("Front", "Left", "Top"),
+    "groove_callout": ("Front", "Left", "Top"),
 }
 
 def _rule_by_id(kb: dict, feature: str, context: dict) -> Dict[str, dict]:
@@ -368,6 +611,14 @@ def select_layout_profile_standalone(
     if _looks_like_turning_part(fp, dims):
         return "turning"
 
+    # Blind milled interior features are not a sheet-metal signal in the MVP.
+    # Pocket and blind-hole floors can otherwise satisfy the lightweight face
+    # mix and fake a bent-sheet classification on flat machining samples.
+    pocket_count = int(_opt_float(fp.get("pocket_count")) or 0)
+    blind_hole_count = int(_opt_float(fp.get("blind_hole_count")) or 0)
+    if pocket_count > 0 or blind_hole_count > 0:
+        return "milling"
+
     if _looks_like_compact_flat_milling_part(fp, dims, measured_t):
         return "milling"
 
@@ -416,13 +667,66 @@ def classify_milling_subtype(fp: dict) -> str:
 
     hole_count = int(_opt_float(fp.get("hole_count")) or 0)
     slot_count = int(_opt_float(fp.get("slot_count")) or 0)
+    pocket_count = int(_opt_float(fp.get("pocket_count")) or 0)
     flat_ratio = _opt_float(fp.get("flat_ratio"))
 
-    if hole_count >= 8 or slot_count >= 4 or (hole_count + slot_count) >= 6:
+    if (
+        hole_count >= 8
+        or slot_count >= 4
+        or pocket_count >= 2
+        or (hole_count + slot_count + pocket_count) >= 6
+    ):
         return "feature_dense"
     if flat_ratio is not None and flat_ratio < 0.25:
         return "plate_2p5d"
     return "block_prismatic"
+
+
+def _normalized_turning_step_profile(fp: dict) -> List[Dict[str, float]]:
+    profile: List[Dict[str, float]] = []
+    for step in fp.get("step_profile") or []:
+        if not isinstance(step, dict):
+            continue
+        diameter_mm = _opt_float(step.get("diameter_mm"))
+        start_mm = _opt_float(step.get("start_mm"))
+        end_mm = _opt_float(step.get("end_mm"))
+        length_mm = _opt_float(step.get("length_mm"))
+        if None in {diameter_mm, start_mm, end_mm}:
+            continue
+        if end_mm <= start_mm:
+            continue
+        if length_mm is None:
+            length_mm = end_mm - start_mm
+        if length_mm <= 0.05:
+            continue
+        profile.append(
+            {
+                "diameter_mm": float(diameter_mm),
+                "start_mm": float(start_mm),
+                "end_mm": float(end_mm),
+                "length_mm": float(length_mm),
+            }
+        )
+    profile.sort(key=lambda step: (float(step["start_mm"]), -float(step["diameter_mm"])))
+    return profile
+
+
+def classify_turning_subtype(fp: dict) -> str:
+    """Classify turning parts into simple rotational vs stepped shafts."""
+    if not isinstance(fp, dict):
+        return "simple_rotational"
+
+    step_profile = _normalized_turning_step_profile(fp)
+    step_count = max(int(_opt_float(fp.get("step_count")) or 0), len(step_profile))
+    hole_count = int(_opt_float(fp.get("hole_count")) or 0)
+    thread_label = str(fp.get("thread_label") or "").strip()
+    chamfer_count = len([item for item in fp.get("chamfers") or [] if isinstance(item, dict)])
+
+    if step_count >= 2:
+        return "stepped_shaft"
+    if hole_count > 0 or thread_label or chamfer_count > 0:
+        return "complex_turning"
+    return "simple_rotational"
 
 
 # ---------------------------------------------------------------------------
@@ -453,6 +757,179 @@ def _infer_datum_system(fp: dict) -> DatumSystem:
 def _dim(dim_type: str, view: str, **kwargs: Any) -> DimensionItem:
     """Shorthand for creating a DimensionItem."""
     return DimensionItem(dim_type=dim_type, target_view=view, **kwargs)
+
+
+def _collect_chamfer_dimensions(
+    fp: dict,
+    *,
+    target_view: str,
+    detail_level: int,
+) -> List[DimensionItem]:
+    """Translate detected chamfers into grouped DSE dimension intents."""
+
+    dimensions: List[DimensionItem] = []
+    for chamfer in fp.get("chamfers") or []:
+        if not isinstance(chamfer, dict):
+            continue
+        size_mm = _opt_float(chamfer.get("size_mm"))
+        angle_deg = _opt_float(chamfer.get("angle_deg")) or 45.0
+        if size_mm is None or size_mm <= 0:
+            continue
+        count = max(1, int(chamfer.get("count") or 1))
+        base_label = f"{_fmt(size_mm)}\u00D7{angle_deg:.0f}\u00B0"
+        label = f"{count}\u00D7{base_label}" if count > 1 else base_label
+        dimensions.append(
+            _dim(
+                "chamfer",
+                target_view,
+                axis="D",
+                value_mm=size_mm,
+                label=label,
+                priority="should",
+                detail_level=detail_level,
+            )
+        )
+    return dimensions
+
+
+def _collect_section_views(
+    fp: dict,
+    *,
+    layout_profile: str,
+) -> List[SectionViewPlan]:
+    """Plan section views for hidden/internal features that need clarification."""
+
+    sections: List[SectionViewPlan] = []
+    profile = str(layout_profile or "").strip().lower()
+
+    if profile == "milling":
+        blind_slots = []
+        for slot in fp.get("slot_groups") or []:
+            if not isinstance(slot, dict):
+                continue
+            depth_mm = _opt_float(slot.get("depth_mm"))
+            if depth_mm is None or depth_mm <= 0.05:
+                continue
+            blind_slots.append(slot)
+        blind_holes = _collect_blind_hole_groups(fp)
+        blind_hole_section = _should_request_blind_hole_section(fp, blind_holes)
+
+        pocket_section = _should_request_pocket_section(fp)
+        if blind_slots or blind_hole_section or pocket_section:
+            if blind_slots:
+                reason = "blind_slot_depth"
+            elif blind_hole_section:
+                reason = "blind_hole_depth"
+            else:
+                reason = "internal_pocket_depth"
+            sections.append(
+                SectionViewPlan(
+                    label="A",
+                    parent_view="Front",
+                    cut_axis="V",
+                    cut_position_ratio=0.5,
+                    reason=reason,
+                )
+            )
+        return sections
+
+    if profile == "turning":
+        rotational = bool(fp.get("rotational_profile"))
+        hole_count = int(fp.get("hole_count") or 0)
+        thread_label = str(fp.get("thread_label") or "").strip()
+        if rotational and (hole_count > 0 or thread_label):
+            sections.append(
+                SectionViewPlan(
+                    label="A",
+                    parent_view="Front",
+                    cut_axis="H",
+                    cut_position_ratio=0.5,
+                    reason="internal_bore" if hole_count > 0 else "internal_thread",
+                )
+            )
+        return sections
+
+    return sections
+
+
+def _planned_dim_types(views: List[ViewPlan], view_name: str) -> set[str]:
+    for view in views:
+        if view.view_name != view_name:
+            continue
+        return {
+            str(dim.dim_type)
+            for dim in view.dimensions
+            if isinstance(dim, DimensionItem) and str(dim.dim_type).strip()
+        }
+    return set()
+
+
+def _collect_detail_views(
+    fp: dict,
+    *,
+    layout_profile: str,
+    views: List[ViewPlan],
+    section_views: List[SectionViewPlan],
+    policy_hints: Dict[str, Any],
+) -> List[DetailViewPlan]:
+    """Plan a conservative detail view for dense front-side feature clusters.
+
+    v1 intentionally stays narrow:
+    - no competition with section views
+    - only milling/sheet-metal dense front patterns
+    - only when the Front view already carries the full hole coordinate callout set
+    """
+
+    if section_views:
+        return []
+    if not isinstance(policy_hints, dict) or not policy_hints.get("prefer_detail_views_for_dense_features"):
+        return []
+
+    profile = str(layout_profile or "").strip().lower()
+    if profile not in {"milling", "sheet_metal"}:
+        return []
+
+    front_types = _planned_dim_types(views, "Front")
+    required_front_dims = {"hole_diameter", "hole_location_x", "hole_location_y"}
+    if not required_front_dims.issubset(front_types):
+        return []
+
+    hole_count = int(fp.get("hole_count") or 0)
+    thread_label = str(fp.get("thread_label") or "").strip()
+    dense_front_pattern = hole_count >= 12 or (thread_label and hole_count >= 8)
+    if not dense_front_pattern:
+        return []
+
+    feature_dim_count = len(
+        front_types
+        & {
+            "hole_diameter",
+            "hole_pitch",
+            "hole_location_x",
+            "hole_location_y",
+            "thread_callout",
+            "chamfer",
+        }
+    )
+    if feature_dim_count < 4:
+        return []
+
+    hole_pitch = _opt_float(fp.get("hole_pitch_mm")) or 0.0
+    hole_diameter = _opt_float(fp.get("hole_diameter_mm")) or 0.0
+    radius_mm = max(12.0, min(36.0, hole_pitch * 0.65 if hole_pitch > 0 else hole_diameter * 3.2))
+    zoom_factor = 2.5 if hole_count >= 12 else 2.0
+    reason = "dense_thread_pattern" if thread_label and hole_count >= 8 else "dense_hole_pattern"
+
+    return [
+        DetailViewPlan(
+            label="Z",
+            parent_view="Front",
+            center_ratio=(0.5, 0.5),
+            zoom_factor=zoom_factor,
+            radius_mm=radius_mm,
+            reason=reason,
+        )
+    ]
 
 
 def _plan_milling(
@@ -489,19 +966,37 @@ def _plan_milling(
     hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
     hole_pitch = _opt_float(fp.get("hole_pitch_mm"))
     hole_groups = fp.get("hole_groups") or []
+    hole_extent = _summarize_hole_extent(fp, diameter_mm=hole_diameter)
 
     # Hole diameter — KB: hole_diameter_required (ISO 129-1)
     hd_rule_id = _kb_wants_dimension(kb, "hole", "diameter", {"visible": True})
     if hd_rule_id is not None and hole_diameter is not None:
         front_dims.append(
             _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}",
+                 label=_format_hole_callout_label(hole_diameter, hole_extent),
                  rule_id=hd_rule_id)
         )
     elif hole_count > 0 and hole_diameter is not None:  # fallback when KB absent
         front_dims.append(
             _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}")
+                 label=_format_hole_callout_label(hole_diameter, hole_extent))
+        )
+
+    blind_hole_depth = _opt_float((hole_extent or {}).get("depth_mm"))
+    blind_hole_rule_id = (
+        _kb_wants_dimension(kb, "hole", "depth_if_blind", {})
+        if hole_extent and hole_extent.get("through") is False and blind_hole_depth is not None
+        else None
+    )
+    if hole_extent and hole_extent.get("through") is False and blind_hole_depth is not None:
+        front_dims.append(
+            _dim(
+                "hole_depth",
+                "Front",
+                value_mm=blind_hole_depth,
+                label=f"TIEF {_fmt(blind_hole_depth)}",
+                rule_id=blind_hole_rule_id,
+            )
         )
 
     # Hole pitch — KB: hole_location_required (count_min=2, ISO 129-1)
@@ -531,18 +1026,48 @@ def _plan_milling(
         front_dims.append(_dim("hole_location_y", "Front", axis="V"))
 
     # Thread callout — KB: thread_callout_required (ISO 261/965)
-    tc_rule_id = (
-        _kb_wants_dimension(kb, "thread", "thread_designation", {})
-        if thread_label else None
-    )
+    thread_through = fp.get("thread_through")
+    thread_depth_mm = _opt_float(fp.get("thread_depth_mm"))
+    if thread_label and thread_through is None and thread_depth_mm is None:
+        thread_extent = _summarize_hole_extent(
+            fp,
+            diameter_mm=_opt_float(fp.get("thread_core_diameter_mm")),
+        )
+        if thread_extent:
+            thread_through = thread_extent.get("through")
+            thread_depth_mm = _opt_float(thread_extent.get("depth_mm"))
+    tc_rule_id = None
+    if thread_label:
+        if thread_through is False and thread_depth_mm is not None:
+            tc_rule_id = (
+                _kb_wants_dimension(kb, "thread", "usable_thread_length", {"thread_type": "blind"})
+                or _kb_wants_dimension(kb, "thread", "usable_thread_length_when_blind", {})
+                or _kb_wants_dimension(kb, "thread", "thread_designation", {})
+            )
+        else:
+            tc_rule_id = _kb_wants_dimension(kb, "thread", "thread_designation", {})
     if tc_rule_id is not None and thread_label:
         front_dims.append(
             _dim("thread_callout", "Front",
-                 label=f"{thread_label} GEWINDE",
+                 label=_format_thread_callout_label(
+                     str(thread_label),
+                     thread_through=thread_through,
+                     thread_depth_mm=thread_depth_mm,
+                 ),
                  rule_id=tc_rule_id)
         )
     elif thread_label:  # fallback when KB absent
-        front_dims.append(_dim("thread_callout", "Front", label=f"{thread_label} GEWINDE"))
+        front_dims.append(
+            _dim(
+                "thread_callout",
+                "Front",
+                label=_format_thread_callout_label(
+                    str(thread_label),
+                    thread_through=thread_through,
+                    thread_depth_mm=thread_depth_mm,
+                ),
+            )
+        )
 
     # Slot features — KB: slot_complete_definition (ISO 129-1)
     slot_groups = fp.get("slot_groups") or []
@@ -584,11 +1109,45 @@ def _plan_milling(
                      label=f"{slot_count}× LANGLOCH",
                      value_mm=float(slot_count), priority="should")
             )
+    representative_pocket = _select_representative_pocket(fp)
+    pocket_dimension_budget_ok = hole_count <= 8
+    if representative_pocket and pocket_dimension_budget_ok:
+        pocket_depth = _opt_float(representative_pocket.get("depth_mm"))
+        front_dims.append(
+            _dim(
+                "pocket_location",
+                "Front",
+                axis="H",
+                value_mm=_opt_float(representative_pocket.get("length_mm")),
+                label=_format_pocket_location_label(representative_pocket),
+                priority="should",
+            )
+        )
+        if pocket_depth is not None and pocket_depth > 0:
+            left_dims.append(
+                _dim(
+                    "pocket_depth",
+                    "Left",
+                    axis="H",
+                    value_mm=pocket_depth,
+                    label=_format_pocket_depth_label(representative_pocket),
+                    priority="should",
+                )
+            )
+
     if detail_level >= 2:
         left_dims.append(
             _dim("overall_height", "Left", axis="V", value_mm=shortest_val,
                  detail_level=2, priority="should")
         )
+
+    front_dims.extend(
+        _collect_chamfer_dimensions(
+            fp,
+            target_view="Front",
+            detail_level=detail_level,
+        )
+    )
 
     views = [
         ViewPlan(view_name="Front", dimensions=front_dims),
@@ -698,19 +1257,37 @@ def _plan_sheet_metal(
     hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
     hole_pitch = _opt_float(fp.get("hole_pitch_mm"))
     hole_groups = fp.get("hole_groups") or []
+    hole_extent = _summarize_hole_extent(fp, diameter_mm=hole_diameter)
 
     # Hole diameter
     hd_rule_id = _kb_wants_dimension(kb, "hole", "diameter", {"visible": True})
     if hd_rule_id is not None and hole_diameter is not None:
         front_dims.append(
             _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}",
+                 label=_format_hole_callout_label(hole_diameter, hole_extent),
                  rule_id=hd_rule_id)
         )
     elif hole_count > 0 and hole_diameter is not None:  # fallback when KB absent
         front_dims.append(
             _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}")
+                 label=_format_hole_callout_label(hole_diameter, hole_extent))
+        )
+
+    blind_hole_depth = _opt_float((hole_extent or {}).get("depth_mm"))
+    blind_hole_rule_id = (
+        _kb_wants_dimension(kb, "hole", "depth_if_blind", {})
+        if hole_extent and hole_extent.get("through") is False and blind_hole_depth is not None
+        else None
+    )
+    if hole_extent and hole_extent.get("through") is False and blind_hole_depth is not None:
+        front_dims.append(
+            _dim(
+                "hole_depth",
+                "Front",
+                value_mm=blind_hole_depth,
+                label=f"TIEF {_fmt(blind_hole_depth)}",
+                rule_id=blind_hole_rule_id,
+            )
         )
 
     # Hole pitch
@@ -740,18 +1317,56 @@ def _plan_sheet_metal(
 
     # Thread callout
     thread_label = fp.get("thread_label")
-    tc_rule_id = (
-        _kb_wants_dimension(kb, "thread", "thread_designation", {})
-        if thread_label else None
-    )
+    thread_through = fp.get("thread_through")
+    thread_depth_mm = _opt_float(fp.get("thread_depth_mm"))
+    if thread_label and thread_through is None and thread_depth_mm is None:
+        thread_extent = _summarize_hole_extent(
+            fp,
+            diameter_mm=_opt_float(fp.get("thread_core_diameter_mm")),
+        )
+        if thread_extent:
+            thread_through = thread_extent.get("through")
+            thread_depth_mm = _opt_float(thread_extent.get("depth_mm"))
+    tc_rule_id = None
+    if thread_label:
+        if thread_through is False and thread_depth_mm is not None:
+            tc_rule_id = (
+                _kb_wants_dimension(kb, "thread", "usable_thread_length", {"thread_type": "blind"})
+                or _kb_wants_dimension(kb, "thread", "usable_thread_length_when_blind", {})
+                or _kb_wants_dimension(kb, "thread", "thread_designation", {})
+            )
+        else:
+            tc_rule_id = _kb_wants_dimension(kb, "thread", "thread_designation", {})
     if tc_rule_id is not None and thread_label:
         front_dims.append(
             _dim("thread_callout", "Front",
-                 label=f"{thread_label} GEWINDE",
+                 label=_format_thread_callout_label(
+                     str(thread_label),
+                     thread_through=thread_through,
+                     thread_depth_mm=thread_depth_mm,
+                 ),
                  rule_id=tc_rule_id)
         )
     elif thread_label:
-        front_dims.append(_dim("thread_callout", "Front", label=f"{thread_label} GEWINDE"))
+        front_dims.append(
+            _dim(
+                "thread_callout",
+                "Front",
+                label=_format_thread_callout_label(
+                    str(thread_label),
+                    thread_through=thread_through,
+                    thread_depth_mm=thread_depth_mm,
+                ),
+            )
+        )
+
+    front_dims.extend(
+        _collect_chamfer_dimensions(
+            fp,
+            target_view="Front",
+            detail_level=detail_level,
+        )
+    )
 
     views = [
         ViewPlan(view_name="Front", dimensions=front_dims),
@@ -769,13 +1384,15 @@ def _plan_turning(
     fp: dict,
     detail_level: int,
 ) -> List[ViewPlan]:
-    """Dimension plan for turning parts (placeholder)."""
+    """Dimension plan for turning parts."""
     dims = _bbox_dims(fp)
     sorted_axes = sorted(dims.items(), key=lambda kv: kv[1], reverse=True)
     longest_val = sorted_axes[0][1] if sorted_axes else 0
     mid_val = sorted_axes[1][1] if len(sorted_axes) > 1 else 0
 
     kb = _get_kb()
+    turning_subtype = classify_turning_subtype(fp)
+    step_profile = _normalized_turning_step_profile(fp)
 
     # Overall dimensions — KB: overall_dimensions_required (ISO 129-1)
     outer_rule_id = _kb_wants_dimension(
@@ -794,33 +1411,155 @@ def _plan_turning(
     # Hole diameter — KB: hole_diameter_required (ISO 129-1)
     hole_count = int(fp.get("hole_count") or 0)
     hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
+    hole_extent = _summarize_hole_extent(fp, diameter_mm=hole_diameter)
     hd_rule_id = _kb_wants_dimension(kb, "hole", "diameter", {"visible": True})
     if hd_rule_id is not None and hole_diameter is not None:
         front_dims.append(
             _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}",
+                 label=_format_hole_callout_label(hole_diameter, hole_extent),
                  rule_id=hd_rule_id)
         )
     elif hole_count > 0 and hole_diameter is not None:  # fallback when KB absent
         front_dims.append(
             _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=f"{_DIAMETER_SYMBOL}{_fmt(hole_diameter)}")
+                 label=_format_hole_callout_label(hole_diameter, hole_extent))
+        )
+
+    blind_hole_depth = _opt_float((hole_extent or {}).get("depth_mm"))
+    blind_hole_rule_id = (
+        _kb_wants_dimension(kb, "hole", "depth_if_blind", {})
+        if hole_extent and hole_extent.get("through") is False and blind_hole_depth is not None
+        else None
+    )
+    if hole_extent and hole_extent.get("through") is False and blind_hole_depth is not None:
+        front_dims.append(
+            _dim(
+                "hole_depth",
+                "Front",
+                value_mm=blind_hole_depth,
+                label=f"TIEF {_fmt(blind_hole_depth)}",
+                rule_id=blind_hole_rule_id,
+            )
         )
 
     # Thread callout — KB: thread_callout_required (ISO 261/965)
     thread_label = fp.get("thread_label")
-    tc_rule_id = (
-        _kb_wants_dimension(kb, "thread", "thread_designation", {})
-        if thread_label else None
-    )
+    thread_through = fp.get("thread_through")
+    thread_depth_mm = _opt_float(fp.get("thread_depth_mm"))
+    if thread_label and thread_through is None and thread_depth_mm is None:
+        thread_extent = _summarize_hole_extent(
+            fp,
+            diameter_mm=_opt_float(fp.get("thread_core_diameter_mm")),
+        )
+        if thread_extent:
+            thread_through = thread_extent.get("through")
+            thread_depth_mm = _opt_float(thread_extent.get("depth_mm"))
+    tc_rule_id = None
+    if thread_label:
+        if thread_through is False and thread_depth_mm is not None:
+            tc_rule_id = (
+                _kb_wants_dimension(kb, "thread", "usable_thread_length", {"thread_type": "blind"})
+                or _kb_wants_dimension(kb, "thread", "usable_thread_length_when_blind", {})
+                or _kb_wants_dimension(kb, "thread", "thread_designation", {})
+            )
+        else:
+            tc_rule_id = _kb_wants_dimension(kb, "thread", "thread_designation", {})
     if tc_rule_id is not None and thread_label:
         front_dims.append(
             _dim("thread_callout", "Front",
-                 label=f"{thread_label} GEWINDE",
+                 label=_format_thread_callout_label(
+                     str(thread_label),
+                     thread_through=thread_through,
+                     thread_depth_mm=thread_depth_mm,
+                 ),
                  rule_id=tc_rule_id)
         )
     elif thread_label:  # fallback when KB absent
-        front_dims.append(_dim("thread_callout", "Front", label=f"{thread_label} GEWINDE"))
+        front_dims.append(
+            _dim(
+                "thread_callout",
+                "Front",
+                label=_format_thread_callout_label(
+                    str(thread_label),
+                    thread_through=thread_through,
+                    thread_depth_mm=thread_depth_mm,
+                ),
+            )
+        )
+
+    front_dims.extend(
+        _collect_chamfer_dimensions(
+            fp,
+            target_view="Front",
+            detail_level=detail_level,
+        )
+    )
+
+    representative_groove = _select_representative_groove(fp)
+    if representative_groove:
+        front_dims.append(
+            _dim(
+                "groove_callout",
+                "Front",
+                value_mm=_opt_float(representative_groove.get("width_mm")),
+                label=_format_groove_callout_label(representative_groove),
+                priority="should",
+            )
+        )
+
+    if turning_subtype == "stepped_shaft" and step_profile:
+        step_length_rule_id = (
+            _kb_wants_dimension(kb, "turning", "step_length", {})
+            or outer_rule_id
+        )
+        step_diameter_rule_id = (
+            _kb_wants_dimension(kb, "turning", "step_diameter", {})
+            or diam_rule_id
+            or outer_rule_id
+        )
+        part_start_mm = float(step_profile[0]["start_mm"])
+        overall_diameter_mm = _opt_float(fp.get("bbox_mm", {}).get("Y")) or mid_val
+        seen_length_values: set[float] = set()
+        seen_diameter_values: set[float] = set()
+
+        for step in step_profile[:-1]:
+            shoulder_mm = float(step["end_mm"]) - part_start_mm
+            shoulder_key = round(shoulder_mm, 3)
+            if shoulder_mm <= 0.05 or shoulder_key in seen_length_values:
+                continue
+            seen_length_values.add(shoulder_key)
+            front_dims.append(
+                _dim(
+                    "step_length",
+                    "Front",
+                    axis="H",
+                    value_mm=shoulder_mm,
+                    label=_fmt(shoulder_mm),
+                    priority="should",
+                    rule_id=step_length_rule_id,
+                )
+            )
+
+        diameter_tol = max(0.25, float(overall_diameter_mm) * 0.02 if overall_diameter_mm else 0.25)
+        for step in step_profile:
+            diameter_mm = float(step["diameter_mm"])
+            diameter_key = round(diameter_mm, 3)
+            if diameter_key in seen_diameter_values:
+                continue
+            if overall_diameter_mm and abs(diameter_mm - float(overall_diameter_mm)) <= diameter_tol:
+                continue
+            seen_diameter_values.add(diameter_key)
+            front_dims.append(
+                _dim(
+                    "step_diameter",
+                    "Front",
+                    axis=None,
+                    value_mm=diameter_mm,
+                    label=f"{_DIAMETER_SYMBOL}{_fmt(diameter_mm)}",
+                    priority="should",
+                    rule_id=step_diameter_rule_id,
+                )
+            )
 
     return [
         ViewPlan(view_name="Front", dimensions=front_dims),
@@ -865,6 +1604,15 @@ def _collect_process_notes(
                 note_type="k_factor",
                 text=f"K = {_fmt(k_factor, 2)}",
             ))
+
+    surface_finish = _normalized_surface_finish(fp)
+    if surface_finish:
+        notes.append(
+            ProcessNote(
+                note_type="surface_finish",
+                text=f"{surface_finish['parameter'].title()} {_fmt(float(surface_finish['value']))}",
+            )
+        )
 
     # General tolerance note — driven by KB rule general_tolerance_required (ISO 2768)
     kb = _get_kb()
@@ -1038,6 +1786,14 @@ def build_dimension_plan(
         views = _plan_turning(fp, detail_level)
     else:
         views = _plan_milling(fp, detail_level)
+    section_views = _collect_section_views(fp, layout_profile=layout_profile)
+    detail_views = _collect_detail_views(
+        fp,
+        layout_profile=layout_profile,
+        views=views,
+        section_views=section_views,
+        policy_hints=policy_hints,
+    )
 
     # Remove dimensions above requested detail level
     for view in views:
@@ -1048,17 +1804,40 @@ def build_dimension_plan(
 
     process_notes = _collect_process_notes(fp, layout_profile, unfold_result, detail_level)
     process_notes = [n for n in process_notes if n.detail_level <= detail_level]
+    surface_finish_payload = _normalized_surface_finish(fp)
+    surface_finish = (
+        SurfaceFinish(
+            parameter=str(surface_finish_payload["parameter"]),
+            value=float(surface_finish_payload["value"]),
+            source=str(surface_finish_payload.get("source") or "feature_probe"),
+        )
+        if surface_finish_payload
+        else None
+    )
 
     plan = DimensionPlan(
         part_type=layout_profile,
         detail_level=detail_level,
         datum_system=datum_system,
         views=views,
+        section_views=section_views,
+        detail_views=detail_views,
         process_notes=process_notes,
+        surface_finish=surface_finish,
         policy_hints=policy_hints,
     )
     if layout_profile == "milling":
         plan.milling_subtype = classify_milling_subtype(fp)
+    elif layout_profile == "turning":
+        plan.turning_subtype = classify_turning_subtype(fp)
+        groove_count = max(
+            int(_opt_float(fp.get("groove_count")) or 0),
+            len([groove for groove in (fp.get("groove_groups") or []) if isinstance(groove, dict)]),
+        )
+        if str(fp.get("thread_label") or "").strip() and (fp.get("thread_relief_recommended") or groove_count == 0):
+            plan.policy_hints["thread_relief_warning"] = (
+                "Gewinde erkannt, aber kein Freistich/Einstich nach DIN 509 erkannt"
+            )
 
     if overrides:
         plan = apply_overrides(plan, overrides)
