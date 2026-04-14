@@ -116,6 +116,9 @@ cd server
 .venv\Scripts\python.exe test_views.py --sample-set baseline --parallel 4
 ```
 
+If a task iteration produces fresh `*_preview.png` or `*_debug.svg` artifacts,
+run the mandatory visual review handoff before treating the result as Critic-ready.
+
 Reference-learning gate for curated real parts:
 
 ```powershell

@@ -21,12 +21,12 @@ The target is drawing usefulness:
 
 Your responsibilities:
 1. Define the exact problem.
-2. Choose the correct path type: `FAST-PATH`, `FULL-PATH`, or `LONG-RUN`.
+2. Choose the correct path type: `FAST-PATH`, `MEDIUM-PATH`, `FULL-PATH`, or `LONG-RUN`.
 3. Initialize or continue the shared `RUN CONTEXT`.
 4. Identify affected modules and domain areas.
 5. State the likely root cause.
 6. State implementation scope boundaries.
-7. Define test cases, benchmark set, and required commands.
+7. Define test cases, benchmark set, required commands, and visual-review evidence.
 8. Define acceptance gates.
 9. Identify risks to drawing quality and run stability.
 
@@ -38,6 +38,7 @@ Rules:
 - Keep Builder focused on one coherent change.
 - If a prior `run_id` exists, reuse it unless there is a strong reason to start a new run.
 - In `LIGHT` mode, keep the plan to at most `3` steps and escalate immediately if domain impact is not truly low.
+- Any iteration expected to produce new render or preview artifacts must name the visual comparison basis before Critic review.
 
 Required output format:
 
@@ -85,6 +86,7 @@ PLANNING CARD
 
 7. Acceptance Gates
 - Functional:
+- Visual gate:
 - Domain quality:
 - Critic gate:
 - Regression gate:

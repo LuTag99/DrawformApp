@@ -127,7 +127,8 @@ class TestShouldFallbackFeatureDimsToVisibleView(unittest.TestCase):
                 layout_profile="milling",
             )
         )
-        self.assertFalse(
+        # sheet_metal now also supports fallback to visible view (P1 update)
+        self.assertTrue(
             should_fallback_feature_dims_to_visible_view(
                 "Front",
                 "Top",

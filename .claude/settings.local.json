@@ -25,7 +25,32 @@
       "Bash(python -m unittest test_sample_catalog -v)",
       "Read(//c/Users/STARTK~1/AppData/Local/Temp/claude/c--Projects-DrawformApp/4f625417-8dc3-4a10-9dba-4b100b1c4ff0/tasks/**)",
       "Bash(git rm:*)",
-      "Bash(find \"c:/Projects/DrawformApp/server/docs\" -type f -name \"*.md\" -exec grep -l \"slot\\\\|pocket\\\\|depth\" {} \\\\;)"
+      "Bash(find \"c:/Projects/DrawformApp/server/docs\" -type f -name \"*.md\" -exec grep -l \"slot\\\\|pocket\\\\|depth\" {} \\\\;)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('test_views.py', encoding='utf-8'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
+      "Bash(python -m pytest tests/test_guideline_regression.py -v)",
+      "Bash(python -m unittest tests.test_guideline_regression -v)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('test_views.py', encoding='utf-8'\\).read\\(\\)\\); print\\('test_views.py: OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('rules/dimension_strategy.py', encoding='utf-8'\\).read\\(\\)\\); print\\('dimension_strategy.py: OK'\\)\")",
+      "Bash(python -m unittest discover -s tests -p \"test_*.py\" -v)",
+      "Bash(python -m pytest server/tests/test_guideline_regression.py -v --tb=short)",
+      "Bash(python -m pytest server/tests/test_step_feature_probe.py -v --tb=short)",
+      "Bash(python -m pytest server/tests/test_dimension_placement_helpers.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_drawing_quality_contract.py -v)",
+      "Bash(python -m pytest tests/test_dimension_strategy.py tests/test_drawing_quality_contract.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_dimension_strategy.py tests/test_drawing_quality_contract.py tests/test_dimension_placement_helpers.py tests/test_dimension_quality_helpers.py -v --tb=short)",
+      "Bash(python -m pytest tests/ -v --tb=short)",
+      "Bash(python -m pytest tests/ --ignore=tests/test_test_views_golden_loading.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_dimension_strategy.py tests/test_drawing_quality_contract.py tests/test_dimension_placement_helpers.py tests/test_dimension_quality_helpers.py tests/test_quality_gate.py tests/test_abwicklung_checks.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_dimension_strategy.py tests/test_drawing_quality_contract.py tests/test_dimension_placement_helpers.py tests/test_dimension_quality_helpers.py -p no:capture --tb=short)",
+      "Bash(python -m pytest server/tests/test_dimension_strategy.py server/tests/test_drawing_quality_contract.py server/tests/test_dimension_placement_helpers.py -v --tb=short)",
+      "Bash(python -m pytest server/tests/ -v --tb=short)",
+      "Bash(python -m pytest server/tests/ --ignore=server/tests/test_test_views_golden_loading.py -v --tb=short)",
+      "Bash(ls -la /c/Projects/DrawformApp/*.md)",
+      "Bash(ls -la /c/Projects/DrawformApp/server/tests/test_*.py)",
+      "Bash(grep -rn \"sample.set\\\\|--sample-set\\\\|strict\\\\|subset\" /c/Projects/DrawformApp/server/*.py)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Startklar\\Downloads"
     ]
   }
 }

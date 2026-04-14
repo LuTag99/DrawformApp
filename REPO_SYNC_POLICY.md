@@ -20,6 +20,7 @@ drift apart again.
 | GitHub CI behavior | `.github/workflows/quality-gate.yml` | docs may mention it | CI is authoritative for automated repo gates. |
 | VS Code editor behavior | `.vscode/*` | none | Local editor configuration only. Do not treat it as workflow authority. |
 | Versioned-vs-local artifact boundaries | `.gitignore`, `.gitattributes` | docs may mention them | Ignore rules are canonical for what stays local. |
+| TODO lifecycle and archive rules | `server/docs/todos/README.md` | archived TODO files under `server/docs/todos/archive/` | Active TODOs stay in `server/docs/todos/`; completed TODOs move to `archive/` with `Status: erledigt`. |
 
 ## Sync Rules
 
@@ -34,6 +35,8 @@ drift apart again.
    instead of re-stating volatile status.
 6. `settings.local.json` may differ locally, but it must not be used as the
    project source of truth.
+7. Active TODOs belong in `server/docs/todos/`; archived TODOs belong in
+   `server/docs/todos/archive/` and must clearly state `Status: erledigt`.
 
 ## Live Status Sources
 

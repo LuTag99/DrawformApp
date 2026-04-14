@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 class PathType(StrEnum):
     FAST_PATH = "FAST-PATH"
+    MEDIUM_PATH = "MEDIUM-PATH"
     FULL_PATH = "FULL-PATH"
     LONG_RUN = "LONG-RUN"
 
@@ -19,6 +20,7 @@ class RunStage(StrEnum):
     PLANNER = "planner"
     BUILDER = "builder"
     ARTIFACT_STEWARD = "artifact_steward"
+    VISUAL_REVIEW = "visual_review"
     CRITIC = "critic"
     REGRESSION = "regression"
     REPORT = "report"
@@ -46,6 +48,7 @@ class ArtifactRecord(BaseModel):
 class GateState(BaseModel):
     """Outcome of the critic / regression gates."""
 
+    visual_review_passed: bool | None = None
     critic_passed: bool | None = None
     regression_passed: bool | None = None
     release_passed: bool | None = None
@@ -78,6 +81,9 @@ class RunState(BaseModel):
     required_commands: list[str] = Field(default_factory=list)
     latest_builder_change: list[str] = Field(default_factory=list)
     latest_artifacts: ArtifactRecord = Field(default_factory=ArtifactRecord)
+    visual_review_verdict: str | None = None
+    visual_review_findings: list[str] = Field(default_factory=list)
+    visual_delta_summary: list[str] = Field(default_factory=list)
     critic_verdict: str | None = None
     critic_scores: dict[str, int] | None = None
     failure_classes: list[str] = Field(default_factory=list)

@@ -53,7 +53,7 @@ Diese Datei ist der schnelle Einstieg fuer Entwickler und KI-Agenten.
 - `REPO_SYNC_POLICY.md`: Besitzverhaeltnisse und Synchronisationsregeln fuer Repo-Doku, `.claude`, `.github` und `.vscode`
 - `DEVELOPER_DOCS.md`: technische Uebergabe mit Architektur, Pipeline und stabilen Systemvertraegen
 - `.github/copilot-instructions.md`: kompakte Repo-Instruktionen fuer KI-gestuetzte Bearbeitung
-- `Agent_planner.md`, `Agent_builder.md`, `Agent_artifact_steward.md`, `Agent_critic.md`, `Agent_regression.md`, `Agent_report.md`: rollenbezogene Prompts
+- `Agent_planner.md`, `Agent_builder.md`, `Agent_artifact_steward.md`, `Agent_visual_review.md`, `Agent_critic.md`, `Agent_regression.md`, `Agent_report.md`: rollenbezogene Prompts
 - `server/orchestration/`: CLI-Grundgeruest fuer Run-State, Artefakt-Sync und Stage-Steuerung
 
 ## Arbeitsweise ab jetzt
@@ -61,14 +61,15 @@ Diese Datei ist der schnelle Einstieg fuer Entwickler und KI-Agenten.
 - Fuer Aufgaben mit Zeichnungs-, Benchmark- oder Agentenlogik zuerst in `AGENTS.md` den korrekten Pfad waehlen
 - Ab `FULL-PATH` denselben `run_id` ueber alle Handoffs halten und Artefakte unter `server/_debug/agent_runs/<run_id>/` sammeln
 - Zu jedem relevanten Lauf gehoeren exakte Commands, `*_debug.svg`, `*_preview.png`, `*_report.json` und ein `run_state.json`
+- Jede Iteration mit frischen Render- oder Preview-Artefakten braucht vor dem `Critic` eine dokumentierte visuelle Review
 - `step_to_pdf.py`-Aenderungen sind Hochrisiko; nach jeder Aenderung mindestens einen gezielten `test_views.py`-Case ausfuehren
 
 ## Pflichttests nach Aenderungstyp
 
 - Reine Test-/Doku-/Logging-Aenderung ohne Einfluss auf Zeichnungslogik: `FAST-PATH`; mindestens `cd server && .venv\\Scripts\\python.exe -m unittest discover`
-- DSE-Regeln, Schema, KB oder Feature-Probe ohne direkte Layout-Aenderung: `MEDIUM-PATH`; `cd server && .venv\\Scripts\\python.exe -m pytest tests/test_dimension_strategy.py` plus mindestens ein gezielter Renderfall
+- DSE-Regeln, Schema, KB oder Feature-Probe ohne direkte Layout-Aenderung: `MEDIUM-PATH`; `cd server && .venv\\Scripts\\python.exe -m pytest tests/test_dimension_strategy.py` plus mindestens ein gezielter Renderfall und visuelle Delta-Pruefung
 - API-/Orchestrierungslogik ohne Renderer-Eingriff: `FAST-PATH`; `cd server && .venv\\Scripts\\python.exe -m unittest discover`, bei neuen Routen zusaetzlich gezielte Endpoint-Tests
-- Render-, Layout-, View-Selection-, Bemaessungs- oder `step_to_pdf.py`-Aenderung: `FULL-PATH`; gezielter Renderlauf mit Artefakten plus `cd server && .venv\\Scripts\\python.exe test_views.py --sample-set baseline`
+- Render-, Layout-, View-Selection-, Bemaessungs- oder `step_to_pdf.py`-Aenderung: `FULL-PATH`; gezielter Renderlauf mit Artefakten plus `cd server && .venv\\Scripts\\python.exe test_views.py --sample-set baseline` und Visual-Review-Handoff vor dem `Critic`
 - Lokales Schnell-Gate fuer Backend-Aenderungen: `cd server && .venv\\Scripts\\python.exe run_quality_gate.py --mode fast`
 - Lokales volles Gate vor riskanten Freigaben: `cd server && .venv\\Scripts\\python.exe run_quality_gate.py --mode full --stability-runs 2`
 

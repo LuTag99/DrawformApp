@@ -159,11 +159,33 @@ def _should_request_blind_hole_section(
     return total_holes == 1
 
 
+def _count_holes_by_diameter(
+    hole_groups: list,
+    diameter_mm: Optional[float],
+    tolerance: float = 0.1,
+) -> int:
+    """Count holes matching the given diameter (within tolerance)."""
+    if not hole_groups or diameter_mm is None:
+        return 1
+    count = sum(
+        1 for hg in hole_groups
+        if isinstance(hg, dict)
+        and abs(float(hg.get("diameter_mm") or 0) - diameter_mm) <= tolerance
+    )
+    return max(count, 1)
+
+
 def _format_hole_callout_label(
     diameter_mm: float,
     hole_extent: Optional[Dict[str, Any]],
+    count: int = 1,
 ) -> str:
-    label = f"{_DIAMETER_SYMBOL}{_fmt(diameter_mm)}"
+    """Format hole callout per ISO 129-1: ``n\u00d7\u00d8d`` when count > 1."""
+    dim_label = f"{_DIAMETER_SYMBOL}{_fmt(diameter_mm)}"
+    if count > 1:
+        label = f"{count}\u00d7{dim_label}"
+    else:
+        label = dim_label
     if not hole_extent:
         return label
     if hole_extent.get("through") is True:
@@ -311,10 +333,35 @@ def _kb_wants_dimension(
 
 
 _VIEW_FALLBACK_ORDER = ("Front", "Top", "Left", "FlatPattern", "Iso")
+
+# Maps hole axis direction to the view where the hole appears as a circle.
+# First-angle projection: Front looks along -Y, Top looks along -Z, Left looks along +X.
+_HOLE_AXIS_TO_CIRCLE_VIEW: Dict[str, str] = {
+    "Y": "Front",  # Hole along Y → circle visible in Front (XZ plane)
+    "Z": "Top",    # Hole along Z → circle visible in Top (XY plane)
+    "X": "Left",   # Hole along X → circle visible in Left (YZ plane)
+}
+
+
+def _best_view_for_hole(feature_payload: dict) -> str:
+    """Return the view where holes appear as visible circles based on hole axis."""
+    hole_groups = (feature_payload or {}).get("hole_groups") or []
+    if hole_groups:
+        # Use the axis of the first hole group (typically all holes share the same axis)
+        axis = str(hole_groups[0].get("axis", "")).strip().upper()
+        if axis in _HOLE_AXIS_TO_CIRCLE_VIEW:
+            return _HOLE_AXIS_TO_CIRCLE_VIEW[axis]
+    # Fallback: use thickness_axis (holes typically go through the thin direction)
+    thickness_axis = str((feature_payload or {}).get("thickness_axis", "")).strip().upper()
+    return _HOLE_AXIS_TO_CIRCLE_VIEW.get(thickness_axis, "Front")
+
+
 _DIMENSION_PRIMARY_VIEWS: Dict[str, tuple[str, ...]] = {
     "overall_length": ("Front", "Top", "Left"),
     "overall_height": ("Front", "Left", "Top"),
     "overall_depth": ("Top", "Left", "Front"),
+    # Hole views are now determined dynamically via _best_view_for_hole()
+    # These static fallbacks are used only for deduplication ranking.
     "hole_diameter": ("Front", "Top", "Left"),
     "hole_depth": ("Front", "Left", "Top"),
     "hole_pitch": ("Front", "Top", "Left"),
@@ -791,13 +838,20 @@ def _collect_section_views(
         blind_hole_section = _should_request_blind_hole_section(fp, blind_holes)
 
         pocket_section = _should_request_pocket_section(fp)
-        if blind_slots or blind_hole_section or pocket_section:
+
+        # Step profiles with internal geometry need section to clarify depth changes
+        step_count = int(fp.get("step_count") or 0)
+        step_section = step_count >= 2 and not blind_slots and not pocket_section
+
+        if blind_slots or blind_hole_section or pocket_section or step_section:
             if blind_slots:
                 reason = "blind_slot_depth"
             elif blind_hole_section:
                 reason = "blind_hole_depth"
-            else:
+            elif pocket_section:
                 reason = "internal_pocket_depth"
+            else:
+                reason = "internal_step_profile"
             sections.append(
                 SectionViewPlan(
                     label="A",
@@ -865,9 +919,17 @@ def _collect_detail_views(
     if profile not in {"milling", "sheet_metal"}:
         return []
 
-    front_types = _planned_dim_types(views, "Front")
-    required_front_dims = {"hole_diameter", "hole_location_x", "hole_location_y"}
-    if not required_front_dims.issubset(front_types):
+    # Check all orthographic views for the required hole dims (axis-aware placement)
+    all_ortho_types: set = set()
+    hole_view_name = "Front"
+    for v in views:
+        if v.view_name in ("Front", "Top", "Left"):
+            vtypes = {str(d.dim_type) for d in v.dimensions if isinstance(d, DimensionItem)}
+            all_ortho_types |= vtypes
+            if "hole_diameter" in vtypes:
+                hole_view_name = v.view_name
+    required_hole_dims = {"hole_diameter", "hole_location_x", "hole_location_y"}
+    if not required_hole_dims.issubset(all_ortho_types):
         return []
 
     hole_count = int(fp.get("hole_count") or 0)
@@ -877,7 +939,7 @@ def _collect_detail_views(
         return []
 
     feature_dim_count = len(
-        front_types
+        all_ortho_types
         & {
             "hole_diameter",
             "hole_pitch",
@@ -899,7 +961,7 @@ def _collect_detail_views(
     return [
         DetailViewPlan(
             label="Z",
-            parent_view="Front",
+            parent_view=hole_view_name,
             center_ratio=(0.5, 0.5),
             zoom_factor=zoom_factor,
             radius_mm=radius_mm,
@@ -937,25 +999,38 @@ def _plan_milling(
         _dim("overall_depth", "Top", axis="V", value_mm=shortest_val,
              rule_id=outer_rule_id),
     ]
+    left_dims: List[DimensionItem] = []
 
-    # Hole features
+    # Hole features — place in view where holes are visible as circles (axis-aware)
     hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
     hole_pitch = _opt_float(fp.get("hole_pitch_mm"))
     hole_groups = fp.get("hole_groups") or []
     hole_extent = _summarize_hole_extent(fp, diameter_mm=hole_diameter)
+    hole_view = _best_view_for_hole(fp)
+
+    # Helper to append dims to the correct view list
+    def _append_to_view(dim_item: DimensionItem) -> None:
+        if dim_item.target_view == "Top":
+            top_dims.append(dim_item)
+        elif dim_item.target_view == "Left":
+            left_dims.append(dim_item)
+        else:
+            front_dims.append(dim_item)
 
     # Hole diameter — KB: hole_diameter_required (ISO 129-1)
+    # Count holes per diameter for n×Ø notation
+    _hole_count_for_diameter = _count_holes_by_diameter(hole_groups, hole_diameter)
     hd_rule_id = _kb_wants_dimension(kb, "hole", "diameter", {"visible": True})
     if hd_rule_id is not None and hole_diameter is not None:
-        front_dims.append(
-            _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=_format_hole_callout_label(hole_diameter, hole_extent),
+        _append_to_view(
+            _dim("hole_diameter", hole_view, value_mm=hole_diameter,
+                 label=_format_hole_callout_label(hole_diameter, hole_extent, count=_hole_count_for_diameter),
                  rule_id=hd_rule_id)
         )
     elif hole_count > 0 and hole_diameter is not None:  # fallback when KB absent
-        front_dims.append(
-            _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=_format_hole_callout_label(hole_diameter, hole_extent))
+        _append_to_view(
+            _dim("hole_diameter", hole_view, value_mm=hole_diameter,
+                 label=_format_hole_callout_label(hole_diameter, hole_extent, count=_hole_count_for_diameter))
         )
 
     blind_hole_depth = _opt_float((hole_extent or {}).get("depth_mm"))
@@ -965,10 +1040,10 @@ def _plan_milling(
         else None
     )
     if hole_extent and hole_extent.get("through") is False and blind_hole_depth is not None:
-        front_dims.append(
+        _append_to_view(
             _dim(
                 "hole_depth",
-                "Front",
+                hole_view,
                 value_mm=blind_hole_depth,
                 label=f"TIEF {_fmt(blind_hole_depth)}",
                 rule_id=blind_hole_rule_id,
@@ -980,13 +1055,13 @@ def _plan_milling(
         kb, "hole_pattern", "pitch_or_spacing", {"count": hole_count}
     )
     if hp_rule_id is not None and hole_pitch is not None and hole_pitch > 0:
-        front_dims.append(
-            _dim("hole_pitch", "Front", axis="H", value_mm=hole_pitch,
+        _append_to_view(
+            _dim("hole_pitch", hole_view, axis="H", value_mm=hole_pitch,
                  rule_id=hp_rule_id)
         )
     elif hole_count >= 2 and hole_pitch is not None and hole_pitch > 0:  # fallback when KB absent
-        front_dims.append(
-            _dim("hole_pitch", "Front", axis="H", value_mm=hole_pitch)
+        _append_to_view(
+            _dim("hole_pitch", hole_view, axis="H", value_mm=hole_pitch)
         )
 
     # Hole locations from datum — KB: hole_location_required (count_min=2, ISO 129-1)
@@ -995,11 +1070,11 @@ def _plan_milling(
         kb, "hole_pattern", "position_from_datums", {"count": hole_count}
     )
     if hl_rule_id is not None and hole_groups:
-        front_dims.append(_dim("hole_location_x", "Front", axis="H", rule_id=hl_rule_id))
-        front_dims.append(_dim("hole_location_y", "Front", axis="V", rule_id=hl_rule_id))
+        _append_to_view(_dim("hole_location_x", hole_view, axis="H", rule_id=hl_rule_id))
+        _append_to_view(_dim("hole_location_y", hole_view, axis="V", rule_id=hl_rule_id))
     elif hole_count >= 1 and hole_groups:  # fallback when KB absent
-        front_dims.append(_dim("hole_location_x", "Front", axis="H"))
-        front_dims.append(_dim("hole_location_y", "Front", axis="V"))
+        _append_to_view(_dim("hole_location_x", hole_view, axis="H"))
+        _append_to_view(_dim("hole_location_y", hole_view, axis="V"))
 
     # Thread callout — KB: thread_callout_required (ISO 261/965)
     thread_through = fp.get("thread_through")
@@ -1023,8 +1098,8 @@ def _plan_milling(
         else:
             tc_rule_id = _kb_wants_dimension(kb, "thread", "thread_designation", {})
     if tc_rule_id is not None and thread_label:
-        front_dims.append(
-            _dim("thread_callout", "Front",
+        _append_to_view(
+            _dim("thread_callout", hole_view,
                  label=_format_thread_callout_label(
                      str(thread_label),
                      thread_through=thread_through,
@@ -1033,10 +1108,10 @@ def _plan_milling(
                  rule_id=tc_rule_id)
         )
     elif thread_label:  # fallback when KB absent
-        front_dims.append(
+        _append_to_view(
             _dim(
                 "thread_callout",
-                "Front",
+                hole_view,
                 label=_format_thread_callout_label(
                     str(thread_label),
                     thread_through=thread_through,
@@ -1051,9 +1126,9 @@ def _plan_milling(
 
     # Milling parts need a third orthographic overall size to expose the
     # remaining stock / thickness axis even at detail level 1.
-    left_dims: List[DimensionItem] = [
+    left_dims.append(
         _dim("overall_depth", "Left", axis="H", value_mm=mid_val, priority="should")
-    ]
+    )
 
     if slot_count > 0 and slot_groups:
         representative = slot_groups[0]
@@ -1229,24 +1304,27 @@ def _plan_sheet_metal(
         )
 
     # Hole features — sheet metal (Prio B in Blechteil-Leitlinie)
+    # Place in view where holes are visible as circles (axis-aware)
     hole_count = int(fp.get("hole_count") or 0)
     hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
     hole_pitch = _opt_float(fp.get("hole_pitch_mm"))
     hole_groups = fp.get("hole_groups") or []
     hole_extent = _summarize_hole_extent(fp, diameter_mm=hole_diameter)
+    hole_view = _best_view_for_hole(fp)
 
     # Hole diameter
+    _sm_hole_count = _count_holes_by_diameter(hole_groups, hole_diameter)
     hd_rule_id = _kb_wants_dimension(kb, "hole", "diameter", {"visible": True})
     if hd_rule_id is not None and hole_diameter is not None:
         front_dims.append(
-            _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=_format_hole_callout_label(hole_diameter, hole_extent),
+            _dim("hole_diameter", hole_view, value_mm=hole_diameter,
+                 label=_format_hole_callout_label(hole_diameter, hole_extent, count=_sm_hole_count),
                  rule_id=hd_rule_id)
         )
     elif hole_count > 0 and hole_diameter is not None:  # fallback when KB absent
         front_dims.append(
-            _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=_format_hole_callout_label(hole_diameter, hole_extent))
+            _dim("hole_diameter", hole_view, value_mm=hole_diameter,
+                 label=_format_hole_callout_label(hole_diameter, hole_extent, count=_sm_hole_count))
         )
 
     blind_hole_depth = _opt_float((hole_extent or {}).get("depth_mm"))
@@ -1259,7 +1337,7 @@ def _plan_sheet_metal(
         front_dims.append(
             _dim(
                 "hole_depth",
-                "Front",
+                hole_view,
                 value_mm=blind_hole_depth,
                 label=f"TIEF {_fmt(blind_hole_depth)}",
                 rule_id=blind_hole_rule_id,
@@ -1272,12 +1350,12 @@ def _plan_sheet_metal(
     )
     if hp_rule_id is not None and hole_pitch is not None and hole_pitch > 0:
         front_dims.append(
-            _dim("hole_pitch", "Front", axis="H", value_mm=hole_pitch,
+            _dim("hole_pitch", hole_view, axis="H", value_mm=hole_pitch,
                  rule_id=hp_rule_id)
         )
     elif hole_count >= 2 and hole_pitch is not None and hole_pitch > 0:
         front_dims.append(
-            _dim("hole_pitch", "Front", axis="H", value_mm=hole_pitch)
+            _dim("hole_pitch", hole_view, axis="H", value_mm=hole_pitch)
         )
 
     # Hole locations from datum
@@ -1285,11 +1363,11 @@ def _plan_sheet_metal(
         kb, "hole_pattern", "position_from_datums", {"count": hole_count}
     )
     if hl_rule_id is not None and hole_groups:
-        front_dims.append(_dim("hole_location_x", "Front", axis="H", rule_id=hl_rule_id))
-        front_dims.append(_dim("hole_location_y", "Front", axis="V", rule_id=hl_rule_id))
+        front_dims.append(_dim("hole_location_x", hole_view, axis="H", rule_id=hl_rule_id))
+        front_dims.append(_dim("hole_location_y", hole_view, axis="V", rule_id=hl_rule_id))
     elif hole_count >= 1 and hole_groups:
-        front_dims.append(_dim("hole_location_x", "Front", axis="H"))
-        front_dims.append(_dim("hole_location_y", "Front", axis="V"))
+        front_dims.append(_dim("hole_location_x", hole_view, axis="H"))
+        front_dims.append(_dim("hole_location_y", hole_view, axis="V"))
 
     # Thread callout
     thread_label = fp.get("thread_label")
@@ -1315,7 +1393,7 @@ def _plan_sheet_metal(
             tc_rule_id = _kb_wants_dimension(kb, "thread", "thread_designation", {})
     if tc_rule_id is not None and thread_label:
         front_dims.append(
-            _dim("thread_callout", "Front",
+            _dim("thread_callout", hole_view,
                  label=_format_thread_callout_label(
                      str(thread_label),
                      thread_through=thread_through,
@@ -1327,7 +1405,7 @@ def _plan_sheet_metal(
         front_dims.append(
             _dim(
                 "thread_callout",
-                "Front",
+                hole_view,
                 label=_format_thread_callout_label(
                     str(thread_label),
                     thread_through=thread_through,
@@ -1387,18 +1465,20 @@ def _plan_turning(
     # Hole diameter — KB: hole_diameter_required (ISO 129-1)
     hole_count = int(fp.get("hole_count") or 0)
     hole_diameter = _opt_float(fp.get("hole_diameter_mm"))
+    hole_groups = fp.get("hole_groups") or []
     hole_extent = _summarize_hole_extent(fp, diameter_mm=hole_diameter)
+    _turn_hole_count = _count_holes_by_diameter(hole_groups, hole_diameter)
     hd_rule_id = _kb_wants_dimension(kb, "hole", "diameter", {"visible": True})
     if hd_rule_id is not None and hole_diameter is not None:
         front_dims.append(
             _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=_format_hole_callout_label(hole_diameter, hole_extent),
+                 label=_format_hole_callout_label(hole_diameter, hole_extent, count=_turn_hole_count),
                  rule_id=hd_rule_id)
         )
     elif hole_count > 0 and hole_diameter is not None:  # fallback when KB absent
         front_dims.append(
             _dim("hole_diameter", "Front", value_mm=hole_diameter,
-                 label=_format_hole_callout_label(hole_diameter, hole_extent))
+                 label=_format_hole_callout_label(hole_diameter, hole_extent, count=_turn_hole_count))
         )
 
     blind_hole_depth = _opt_float((hole_extent or {}).get("depth_mm"))

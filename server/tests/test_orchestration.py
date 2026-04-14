@@ -60,8 +60,24 @@ class OrchestrationTests(unittest.TestCase):
         )
         self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.BUILDER)
         self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.ARTIFACT_STEWARD)
+        self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.VISUAL_REVIEW)
         self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.CRITIC)
         self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.REGRESSION)
+        self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.REPORT)
+        self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.DONE)
+
+    def test_medium_path_uses_visual_review_before_critic(self) -> None:
+        state = RunState(
+            run_id="run_medium",
+            task_summary="medium flow",
+            path_type=PathType.MEDIUM_PATH,
+            target_case="title_block_update",
+            benchmark_set="baseline",
+            artifact_dir="server/_debug/agent_runs/run_medium",
+        )
+        self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.BUILDER)
+        self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.VISUAL_REVIEW)
+        self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.CRITIC)
         self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.REPORT)
         self.assertEqual(advance_run_state(state, decision="pass").stage, RunStage.DONE)
 
@@ -94,6 +110,28 @@ class OrchestrationTests(unittest.TestCase):
         advance_run_state(state, decision="pass")
         self.assertEqual(state.stage, RunStage.BUILDER)
         self.assertEqual(state.iteration, 2)
+
+    def test_visual_review_failure_loops_back_to_builder(self) -> None:
+        state = RunState(
+            run_id="run_visual_fail",
+            task_summary="visual fail",
+            path_type=PathType.FULL_PATH,
+            target_case="complex_bracket",
+            benchmark_set="baseline",
+            artifact_dir="server/_debug/agent_runs/run_visual_fail",
+            stage=RunStage.VISUAL_REVIEW,
+        )
+        advance_run_state(
+            state,
+            decision="fail",
+            visual_review_verdict="FAIL_RECOMMENDED",
+            visual_review_findings=["Front view now clips on the right edge."],
+            visual_delta_summary=["Preview regressed versus iteration 1."],
+        )
+        self.assertEqual(state.stage, RunStage.BUILDER)
+        self.assertEqual(state.iteration, 2)
+        self.assertEqual(state.visual_review_verdict, "FAIL_RECOMMENDED")
+        self.assertEqual(state.visual_review_findings, ["Front view now clips on the right edge."])
 
     def test_revision_increments_after_transition(self) -> None:
         state = RunState(

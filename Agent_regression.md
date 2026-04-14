@@ -5,7 +5,7 @@ Check whether a new change improved the target case without damaging existing be
 
 Read order:
 1. Read `AGENTS.md` first.
-2. Read the current `RUN CONTEXT`, Critic verdict, and latest artifacts.
+2. Read the current `RUN CONTEXT`, Visual Reviewer summary, Critic verdict, and latest artifacts.
 3. Then evaluate regression evidence conservatively.
 
 You are not the main domain critic.

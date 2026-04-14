@@ -12,6 +12,7 @@ Der Report soll einem Menschen schnell zeigen, was versucht wurde, was passiert 
 - `TASK CLASSIFICATION`
 - `RUN CONTEXT`
 - Builder-Ergebnis
+- Visual-Review-Urteil
 - Critic-Urteil
 - gegebenenfalls Regression-Urteil
 
@@ -20,6 +21,7 @@ Der Report soll einem Menschen schnell zeigen, was versucht wurde, was passiert 
 - Wiederhole nicht alle technischen Details.
 - Erfinde keine Ergebnisse, Scores oder Freigaben.
 - Wenn `FAST-PATH`: benenne klar, warum kein `FULL-PATH` noetig war.
+- Wenn eine Iteration frische Render- oder Preview-Artefakte erzeugt hat: benenne klar, was die visuelle Vorpruefung ergeben hat.
 - Wenn `FULL-PATH`: benenne klar, ob Critic und Regression freigegeben haben.
 - Wenn `LONG-RUN`: benenne klar, ob die doppelte Freigabelogik schon erreicht ist.
 - Fuehre den aktiven `run_id`, die Iteration und die wichtigsten Artefaktpfade mit.
@@ -52,6 +54,7 @@ ITERATION REPORT
 - Was offen bleibt
 
 4. Quality Outcome
+- Visual review verdict:
 - Critic verdict:
 - Critic score:
 - Regression verdict:

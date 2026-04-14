@@ -1,0 +1,90 @@
+{
+  "generated_at": "2026-04-14T16:32:49+00:00",
+  "parts": {
+    "202500220_03_Doppelbacke_V1.0": {
+      "alignment": {
+        "front_left_top_match": true,
+        "front_top_left_match": true
+      },
+      "bounding_box": {
+        "X": 50.0,
+        "Y": 20.0,
+        "Z": 45.0
+      },
+      "detection": {
+        "flatness_ratio": 0.444,
+        "is_flat": false,
+        "longest_axis": "X",
+        "method": "first_angle_projection"
+      },
+      "dimension_plan_summary": {
+        "detail_level": 1,
+        "part_type": "milling",
+        "process_note_count": 1,
+        "total_dim_count": 8,
+        "view_count": 4
+      },
+      "features": {
+        "bend_radius_mm": 2.75,
+        "chamfer_count": 0,
+        "hole_count": 4,
+        "hole_diameter_mm": 9.0,
+        "hole_pitch_mm": 18.5,
+        "ok": true
+      },
+      "quality": {
+        "centerline_total": 10,
+        "fits_inside_drawing_area": true,
+        "overflow_max_mm": 0.0,
+        "scale_reduction_needed": false
+      },
+      "views": {
+        "Front": {
+          "center": [
+            110.0,
+            65.5
+          ],
+          "paper_size": [
+            74.75,
+            67.27
+          ],
+          "rotation_deg": 90
+        },
+        "Iso": {
+          "center": [
+            310.0,
+            176.5
+          ],
+          "paper_size": [
+            57.3,
+            51.39
+          ],
+          "rotation_deg": 0
+        },
+        "Left": {
+          "center": [
+            310.0,
+            65.5
+          ],
+          "paper_size": [
+            29.9,
+            67.27
+          ],
+          "rotation_deg": 270
+        },
+        "Top": {
+          "center": [
+            110.0,
+            192.6
+          ],
+          "paper_size": [
+            74.75,
+            29.9
+          ],
+          "rotation_deg": 180
+        }
+      }
+    }
+  },
+  "sample_count": 1
+}

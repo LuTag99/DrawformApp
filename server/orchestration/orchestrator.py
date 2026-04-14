@@ -53,6 +53,7 @@ def _format_summary(state: RunState) -> str:
             f"target_case={state.target_case}",
             f"benchmark_set={state.benchmark_set}",
             f"artifact_dir={state.artifact_dir}",
+            f"visual_review_verdict={state.visual_review_verdict or '-'}",
             f"critic_verdict={state.critic_verdict or '-'}",
             f"failure_classes={','.join(state.failure_classes) or '-'}",
             f"consecutive_passes={state.gates.consecutive_passes}",
@@ -66,11 +67,15 @@ def _next_stage_for_pass(state: RunState) -> RunStage:
     if state.stage == RunStage.BUILDER:
         if state.path_type == PathType.FAST_PATH:
             return RunStage.CRITIC
+        if state.path_type == PathType.MEDIUM_PATH:
+            return RunStage.VISUAL_REVIEW
         return RunStage.ARTIFACT_STEWARD
     if state.stage == RunStage.ARTIFACT_STEWARD:
+        return RunStage.VISUAL_REVIEW
+    if state.stage == RunStage.VISUAL_REVIEW:
         return RunStage.CRITIC
     if state.stage == RunStage.CRITIC:
-        if state.path_type == PathType.FAST_PATH:
+        if state.path_type in {PathType.FAST_PATH, PathType.MEDIUM_PATH}:
             return RunStage.REPORT
         return RunStage.REGRESSION
     if state.stage == RunStage.REGRESSION:
@@ -90,6 +95,9 @@ def advance_run_state(
     expected_stage: RunStage | None = None,
     expected_iteration: int | None = None,
     expected_revision: int | None = None,
+    visual_review_verdict: str | None = None,
+    visual_review_findings: list[str] | None = None,
+    visual_delta_summary: list[str] | None = None,
     critic_verdict: str | None = None,
     critic_scores: dict[str, int] | None = None,
     regression_summary: dict[str, Any] | None = None,
@@ -110,6 +118,12 @@ def advance_run_state(
     if expected_revision is not None and state.revision != expected_revision:
         raise ValueError(f"Revision mismatch: expected {expected_revision}, found {state.revision}")
 
+    if visual_review_verdict is not None:
+        state.visual_review_verdict = visual_review_verdict
+    if visual_review_findings is not None:
+        state.visual_review_findings = list(dict.fromkeys(visual_review_findings))
+    if visual_delta_summary is not None:
+        state.visual_delta_summary = list(dict.fromkeys(visual_delta_summary))
     if critic_verdict is not None:
         state.critic_verdict = critic_verdict
     if critic_scores is not None:
@@ -132,6 +146,8 @@ def advance_run_state(
         state.bump_revision()
         return state
 
+    if current_stage == RunStage.VISUAL_REVIEW:
+        state.gates.visual_review_passed = decision == "pass"
     if current_stage == RunStage.CRITIC:
         state.gates.critic_passed = decision == "pass"
         if decision != "pass":
@@ -144,7 +160,7 @@ def advance_run_state(
             state.gates.consecutive_passes = 0
 
     if decision == "fail":
-        if current_stage in {RunStage.CRITIC, RunStage.REGRESSION, RunStage.REPORT}:
+        if current_stage in {RunStage.VISUAL_REVIEW, RunStage.CRITIC, RunStage.REGRESSION, RunStage.REPORT}:
             state.iteration += 1
             state.stage = RunStage.BUILDER
             state.status = RunStatus.IN_PROGRESS
@@ -201,6 +217,9 @@ def _build_parser() -> argparse.ArgumentParser:
     advance.add_argument("--expect-stage", choices=[item.value for item in RunStage], default=None)
     advance.add_argument("--expect-iteration", type=int, default=None)
     advance.add_argument("--expect-revision", type=int, default=None)
+    advance.add_argument("--visual-review-verdict", default=None)
+    advance.add_argument("--visual-finding", action="append", default=None)
+    advance.add_argument("--visual-delta", action="append", default=None)
     advance.add_argument("--critic-verdict", default=None)
     advance.add_argument("--critic-scores-json", default=None)
     advance.add_argument("--critic-scores-file", default=None)
@@ -261,6 +280,9 @@ def _cmd_advance(args: argparse.Namespace) -> int:
         expected_stage=RunStage(args.expect_stage) if args.expect_stage else None,
         expected_iteration=args.expect_iteration,
         expected_revision=args.expect_revision,
+        visual_review_verdict=args.visual_review_verdict,
+        visual_review_findings=args.visual_finding,
+        visual_delta_summary=args.visual_delta,
         critic_verdict=args.critic_verdict,
         critic_scores=_parse_scores(args.critic_scores_json, file_path=args.critic_scores_file),
         regression_summary=_parse_mapping(args.regression_summary_json, file_path=args.regression_summary_file),

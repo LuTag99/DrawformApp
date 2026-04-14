@@ -54,8 +54,8 @@ _FLANGE = {
     "hole_diameter_mm": 14.0,
     "hole_pitch_mm": 180.0,
     "hole_groups": [
-        {"center_mm": {"x": 10, "y": 75, "z": 6}, "diameter_mm": 14.0},
-        {"center_mm": {"x": 190, "y": 75, "z": 6}, "diameter_mm": 14.0},
+        {"center_mm": {"x": 10, "y": 75, "z": 6}, "diameter_mm": 14.0, "axis": "Z"},
+        {"center_mm": {"x": 190, "y": 75, "z": 6}, "diameter_mm": 14.0, "axis": "Z"},
     ],
     "bend_radius_mm": None,
     "measured_thickness_mm": None,
@@ -503,60 +503,55 @@ class TestMillingBasic(unittest.TestCase):
 class TestMillingWithHoles(unittest.TestCase):
     def setUp(self):
         self.plan = build_dimension_plan(_FLANGE, "milling")
+        # Hole view is determined by axis — _FLANGE has thickness_axis=Z → Top
+        self.hole_view = next(
+            v for v in self.plan.views
+            if v.view_name == "Top"
+        )
 
     def test_has_hole_diameter(self):
-        front = next(v for v in self.plan.views if v.view_name == "Front")
-        types = {d.dim_type for d in front.dimensions}
+        types = {d.dim_type for d in self.hole_view.dimensions}
         self.assertIn("hole_diameter", types)
 
     def test_has_hole_pitch(self):
-        front = next(v for v in self.plan.views if v.view_name == "Front")
-        types = {d.dim_type for d in front.dimensions}
+        types = {d.dim_type for d in self.hole_view.dimensions}
         self.assertIn("hole_pitch", types)
 
     def test_has_hole_locations(self):
-        front = next(v for v in self.plan.views if v.view_name == "Front")
-        types = {d.dim_type for d in front.dimensions}
+        types = {d.dim_type for d in self.hole_view.dimensions}
         self.assertIn("hole_location_x", types)
         self.assertIn("hole_location_y", types)
 
     def test_has_thread_callout(self):
-        front = next(v for v in self.plan.views if v.view_name == "Front")
-        types = {d.dim_type for d in front.dimensions}
+        types = {d.dim_type for d in self.hole_view.dimensions}
         self.assertIn("thread_callout", types)
 
     def test_hole_diameter_value(self):
-        front = next(v for v in self.plan.views if v.view_name == "Front")
-        hd = next(d for d in front.dimensions if d.dim_type == "hole_diameter")
+        hd = next(d for d in self.hole_view.dimensions if d.dim_type == "hole_diameter")
         self.assertAlmostEqual(hd.value_mm, 14.0)
 
     def test_hole_pitch_value(self):
-        front = next(v for v in self.plan.views if v.view_name == "Front")
-        hp = next(d for d in front.dimensions if d.dim_type == "hole_pitch")
+        hp = next(d for d in self.hole_view.dimensions if d.dim_type == "hole_pitch")
         self.assertAlmostEqual(hp.value_mm, 180.0)
 
     def test_hole_diameter_rule_id_from_kb(self):
         """KB drives the hole_diameter gate — rule_id must be set by KB rule."""
-        front = next(v for v in self.plan.views if v.view_name == "Front")
-        hd = next(d for d in front.dimensions if d.dim_type == "hole_diameter")
+        hd = next(d for d in self.hole_view.dimensions if d.dim_type == "hole_diameter")
         self.assertEqual(hd.rule_id, "hole_diameter_required")
 
     def test_hole_pitch_rule_id_from_kb(self):
         """KB drives the hole_pitch gate — rule_id must be set by KB rule."""
-        front = next(v for v in self.plan.views if v.view_name == "Front")
-        hp = next(d for d in front.dimensions if d.dim_type == "hole_pitch")
+        hp = next(d for d in self.hole_view.dimensions if d.dim_type == "hole_pitch")
         self.assertEqual(hp.rule_id, "hole_location_required")
 
     def test_hole_location_rule_id_from_kb(self):
         """KB drives the hole_location gate — rule_id must be set by KB rule."""
-        front = next(v for v in self.plan.views if v.view_name == "Front")
-        hlx = next(d for d in front.dimensions if d.dim_type == "hole_location_x")
+        hlx = next(d for d in self.hole_view.dimensions if d.dim_type == "hole_location_x")
         self.assertEqual(hlx.rule_id, "hole_location_required")
 
     def test_thread_callout_rule_id_from_kb(self):
         """KB drives the thread_callout gate — rule_id must be set by KB rule."""
-        front = next(v for v in self.plan.views if v.view_name == "Front")
-        tc = next(d for d in front.dimensions if d.dim_type == "thread_callout")
+        tc = next(d for d in self.hole_view.dimensions if d.dim_type == "thread_callout")
         self.assertEqual(tc.rule_id, "thread_callout_required")
 
     def test_overall_dims_rule_id_from_kb(self):
@@ -567,26 +562,33 @@ class TestMillingWithHoles(unittest.TestCase):
 
 
 class TestHoleDepthAndThreadCallouts(unittest.TestCase):
+    def _find_hole_view(self, plan):
+        """Find the view containing hole dimensions (axis-aware, not hardcoded Front)."""
+        for v in plan.views:
+            if any(d.dim_type == "hole_diameter" for d in v.dimensions):
+                return v
+        return next(v for v in plan.views if v.view_name == "Front")
+
     def test_blind_hole_adds_depth_dimension_and_label(self):
         plan = build_dimension_plan(_BLIND_HOLE_BLOCK, "milling")
-        front = next(v for v in plan.views if v.view_name == "Front")
-        hole_dim = next(d for d in front.dimensions if d.dim_type == "hole_diameter")
-        hole_depth = next(d for d in front.dimensions if d.dim_type == "hole_depth")
+        hole_view = self._find_hole_view(plan)
+        hole_dim = next(d for d in hole_view.dimensions if d.dim_type == "hole_diameter")
+        hole_depth = next(d for d in hole_view.dimensions if d.dim_type == "hole_depth")
         self.assertEqual(hole_dim.label, "Ø10,0 x 12,0 TIEF")
         self.assertAlmostEqual(hole_depth.value_mm, 12.0)
         self.assertEqual(hole_depth.rule_id, "hole_callout_complete_for_special_holes")
 
     def test_through_hole_callout_marks_durch(self):
         plan = build_dimension_plan(_THROUGH_HOLE_BLOCK, "milling")
-        front = next(v for v in plan.views if v.view_name == "Front")
-        hole_dim = next(d for d in front.dimensions if d.dim_type == "hole_diameter")
+        hole_view = self._find_hole_view(plan)
+        hole_dim = next(d for d in hole_view.dimensions if d.dim_type == "hole_diameter")
         self.assertEqual(hole_dim.label, "Ø8,0 DURCH")
-        self.assertFalse(any(d.dim_type == "hole_depth" for d in front.dimensions))
+        self.assertFalse(any(d.dim_type == "hole_depth" for d in hole_view.dimensions))
 
     def test_blind_thread_callout_includes_depth(self):
         plan = build_dimension_plan(_BLIND_THREAD_BLOCK, "milling")
-        front = next(v for v in plan.views if v.view_name == "Front")
-        thread = next(d for d in front.dimensions if d.dim_type == "thread_callout")
+        hole_view = self._find_hole_view(plan)
+        thread = next(d for d in hole_view.dimensions if d.dim_type == "thread_callout")
         self.assertEqual(thread.label, "M8 GEWINDE TIEF 10,0")
         self.assertEqual(thread.rule_id, "hole_blind_thread_depth")
 
@@ -921,11 +923,12 @@ class TestSectionPlanning(unittest.TestCase):
 
 
 class TestDetailViewPlanning(unittest.TestCase):
-    def test_dense_front_pattern_requests_detail_view(self):
+    def test_dense_hole_pattern_requests_detail_view(self):
         plan = build_dimension_plan(_DENSE_DETAIL_BLOCK, "milling")
         self.assertEqual(len(plan.detail_views), 1)
         detail = plan.detail_views[0]
-        self.assertEqual(detail.parent_view, "Front")
+        # Parent view follows hole axis — Z-axis holes → Top view
+        self.assertEqual(detail.parent_view, "Top")
         self.assertEqual(detail.label, "Z")
         self.assertEqual(detail.reason, "dense_hole_pattern")
 
@@ -1190,18 +1193,22 @@ class TestOverrideAdd(unittest.TestCase):
 class TestOverrideRemove(unittest.TestCase):
     def test_remove_dimension(self):
         plan = build_dimension_plan(_FLANGE, "milling")
-        front = next(v for v in plan.views if v.view_name == "Front")
-        self.assertTrue(any(d.dim_type == "hole_pitch" for d in front.dimensions))
+        # Hole dims are on Top view (Z-axis holes)
+        hole_view = next(
+            v for v in plan.views
+            if any(d.dim_type == "hole_pitch" for d in v.dimensions)
+        )
+        self.assertTrue(any(d.dim_type == "hole_pitch" for d in hole_view.dimensions))
 
         plan = apply_overrides(plan, [
             {
                 "action": "remove",
-                "target_view": "Front",
+                "target_view": hole_view.view_name,
                 "dim_type": "hole_pitch",
             }
         ])
-        front = next(v for v in plan.views if v.view_name == "Front")
-        self.assertFalse(any(d.dim_type == "hole_pitch" for d in front.dimensions))
+        hole_view_after = next(v for v in plan.views if v.view_name == hole_view.view_name)
+        self.assertFalse(any(d.dim_type == "hole_pitch" for d in hole_view_after.dimensions))
         self.assertEqual(len(plan.overrides_applied), 1)
 
 

@@ -52,6 +52,7 @@ Kurzfassung:
 - `MEDIUM-PATH`: vorhersagbare Output-Aenderungen ohne neue Kern-Renderlogik
 - `FULL-PATH`: Pflicht fuer Zeichnungslogik, Heuristiken, Bemaessung, Layout, Benchmark-Verhalten und Freigaben
 - `LONG-RUN`: verschaerfter `FULL-PATH` fuer stabile, release-nahe Mehrfachlaeufe
+- Neue oder geaenderte Render-/Preview-Artefakte muessen vor dem finalen Domain-Urteil visuell geprueft werden
 
 Ab `FULL-PATH` gilt:
 
@@ -59,6 +60,7 @@ Ab `FULL-PATH` gilt:
 - ein gemeinsamer Artefaktordner unter `server/_debug/agent_runs/<run_id>/`
 - exakte Commands
 - `*_debug.svg`, `*_preview.png`, `*_report.json`
+- ein dokumentiertes Visual-Review-Handoff vor dem `Critic`
 - `run_state.json`
 
 ## 4) Systemueberblick
@@ -192,6 +194,9 @@ Begleitdokumente:
 - `server/_debug/*_report.json`
 - `server/_debug/agent_runs/<run_id>/run_state.json`
 
+Ab Iterationen mit frischen Renderartefakten gehoeren auch visuelle Delta-Befunde
+in den Handoff: mindestens Vergleichsbasis, sichtbarer Effekt und Visual-Verdikt.
+
 ## 9) Entwicklungsrisiken
 
 ### 1. Renderer-Monolith
@@ -242,6 +247,7 @@ server\.venv\Scripts\python.exe server\test_views.py
 
 - Fuer Aufgaben mit Zeichnungs-, Benchmark- oder Agentenlogik zuerst den Pfad in `AGENTS.md` waehlen
 - Nach `step_to_pdf.py`-Aenderungen immer mindestens einen gezielten Renderfall fahren
+- Vor dem finalen Critic-Urteil jede Iteration mit neuen Preview-Artefakten visuell gegen die Voriteration oder eine benannte Vergleichsbasis pruefen
 - Erfolge nicht ueber Export, sondern ueber Zeichnungsqualitaet begruenden
 - Spiegel-Dokumente frei von Live-Statuszahlen halten
 - Bei Governance-Aenderungen immer auch `scripts/validate_repo_sync.py` und CI mitdenken

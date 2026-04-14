@@ -6,6 +6,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+TODO_ROOT = ROOT / "server" / "docs" / "todos"
+TODO_ARCHIVE_ROOT = TODO_ROOT / "archive"
 
 
 FILE_RULES = {
@@ -90,6 +92,8 @@ def main() -> int:
             if re.search(pattern, text):
                 errors.append(f"{rel_path}: forbidden sync-drift pattern '{pattern}'")
 
+    errors.extend(validate_todo_lifecycle())
+
     if errors:
         print("Repo sync validation FAILED")
         for error in errors:
@@ -98,6 +102,39 @@ def main() -> int:
 
     print("Repo sync validation OK")
     return 0
+
+
+def validate_todo_lifecycle() -> list[str]:
+    errors: list[str] = []
+
+    if not TODO_ROOT.exists():
+        return errors
+
+    active_readme = TODO_ROOT / "README.md"
+    archive_readme = TODO_ARCHIVE_ROOT / "README.md"
+    if not active_readme.exists():
+        errors.append("Missing TODO lifecycle guide: server/docs/todos/README.md")
+    if not archive_readme.exists():
+        errors.append("Missing TODO archive guide: server/docs/todos/archive/README.md")
+
+    active_todos = sorted(path for path in TODO_ROOT.glob("TODO*.md") if path.is_file())
+    archived_todos = sorted(path for path in TODO_ARCHIVE_ROOT.glob("TODO*.md") if path.is_file())
+
+    for path in active_todos:
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"^Status:\s*erledigt\s*$", text, flags=re.IGNORECASE | re.MULTILINE):
+            errors.append(
+                f"{path.relative_to(ROOT).as_posix()}: completed TODO must be moved to server/docs/todos/archive/"
+            )
+
+    for path in archived_todos:
+        text = path.read_text(encoding="utf-8")
+        if not re.search(r"^Status:\s*erledigt\s*$", text, flags=re.IGNORECASE | re.MULTILINE):
+            errors.append(
+                f"{path.relative_to(ROOT).as_posix()}: archived TODO must declare 'Status: erledigt'"
+            )
+
+    return errors
 
 
 if __name__ == "__main__":

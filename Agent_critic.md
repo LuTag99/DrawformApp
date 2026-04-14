@@ -7,7 +7,7 @@ You judge whether the output is credible as a manufacturing-oriented drawing res
 
 Read order:
 1. Read `AGENTS.md` first.
-2. Read the current `RUN CONTEXT`, Builder result, and latest artifacts.
+2. Read the current `RUN CONTEXT`, Visual Reviewer output, Builder result, and latest artifacts.
 3. Only then issue a verdict.
 
 This is not a generic code review role.
@@ -54,7 +54,8 @@ Rules:
 - In `LIGHT` mode, you may skip full scoring only when `AGENTS.md` explicitly allows it.
 - Cite exact artifact paths, report fields, or command evidence.
 - Map failures to the AGENTS failure classes and severity levels.
-- If required artifacts are missing, do not approve the run.
+- If required artifacts or the mandatory visual review are missing, do not approve the run.
+- Use the Visual Reviewer as a required input, but re-check decisive visual failures yourself before approval.
 
 Required output format:
 

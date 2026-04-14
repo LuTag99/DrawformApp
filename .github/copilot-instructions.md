@@ -18,6 +18,7 @@ Vite proxies `/api` to `http://localhost:8000` in dev via `vite.config.ts`.
 - Use `FULL-PATH` for drawing logic, heuristics, scoring, benchmark behavior, and agent workflow changes.
 - Use `LONG-RUN` when the work must be stable across repeated runs or is release-facing.
 - From `FULL-PATH` onward, keep a shared `RUN CONTEXT` with one `run_id`, exact commands, and artifacts under `server/_debug/agent_runs/<run_id>/`.
+- Any iteration that produces fresh drawing artifacts must get a visual review before the final Critic verdict.
 
 ## Status Discipline
 
@@ -39,6 +40,7 @@ Vite proxies `/api` to `http://localhost:8000` in dev via `vite.config.ts`.
 - `server/test_views.py`: view regression and drawing-quality checks
 - `server/tests/test_dimension_strategy.py`: DSE unit tests
 - `server/run_quality_gate.py`: unit + regression + stability runner
+- `Agent_visual_review.md`: mandatory visual delta review before Critic on artifact-producing iterations
 - `server/README.md`: canonical backend commands
 
 ## Dev Commands
@@ -51,8 +53,32 @@ list in `server/README.md`.
 - UI copy is German. Keep code identifiers and most technical docs in English.
 - For drawing-quality work, inspect `server/_debug/*_debug.svg`, `*_preview.png`, and `*_report.json` before claiming success.
 - For `FULL-PATH` and `LONG-RUN`, also persist the latest artifacts and a `run_state.json` under `server/_debug/agent_runs/<run_id>/`.
+- If you generated fresh render or preview artifacts, document the visual delta before the final Critic handoff.
 - Do not describe the analyzer as "local-only". It has a real backend path plus a local fallback.
 - Do not claim the current view baseline is green unless you have rerun it.
 - Treat `step_to_pdf.py` edits as high-risk. Re-run at least a targeted `test_views.py` case after touching it.
 - Auth credentials are stored in `localStorage`; this is a known MVP shortcut, not production-safe.
 - Keep mirror docs free of live status counters; the sync validator enforces this.
+
+<!-- agent-architect:start -->
+# Repository Instructions fuer GitHub Copilot
+
+Hinweis: Der Block unten wird vom Agent Architect verwaltet.
+
+## Tech-Stack
+- frontend: React 19 + TypeScript (Vite 7)
+- backend: FastAPI (Python)
+- rendering: FreeCAD subprocess pipeline
+
+## Command Policy
+- Frontend: `npm install`, `npm run dev`, `npm run build`, `npm run lint`
+- Backend Tests: `cd server && python -m pytest tests/`
+- View Regression: `cd server && python test_views.py`
+- Quality Gate: `cd server && python run_quality_gate.py`
+
+## Output Policy
+- Bevor du Code schreibst: Plan + betroffene Dateien nennen.
+- Pro Task: kleine Aenderungen + Tests/Checks gemaess Command Policy.
+- Workflow und Gates: siehe `AGENTS.md`.
+<!-- agent-architect:end -->
+

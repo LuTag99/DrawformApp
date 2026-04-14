@@ -174,11 +174,12 @@ def should_fallback_feature_dims_to_visible_view(
     visible circles.
     """
 
-    if str(layout_profile or "").strip().lower() != "milling":
+    profile = str(layout_profile or "").strip().lower()
+    if profile not in ("milling", "sheet_metal"):
         return False
     requested_name = str(requested_view_name or "").strip()
     visible_name = str(visible_feature_view_name or "").strip()
-    if requested_name != "Front":
+    if requested_name not in ORTHOGRAPHIC_VIEWS:
         return False
     if visible_name not in ORTHOGRAPHIC_VIEWS or visible_name == requested_name:
         return False

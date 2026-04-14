@@ -1,0 +1,106 @@
+{
+  "generated_at": "2026-04-14T00:00:00+00:00",
+  "description": "Fixed 20-part real benchmark manifest. Covers sheet metal, milling, and turning parts. Includes all known failure cases and the real_priority gate set. Order is deterministic and must not change between runs.",
+  "samples": [
+    {
+      "name": "logiBOT_02_AbdeckblechSeitlichSpie_V1.1",
+      "group": "real_priority",
+      "notes": "sheet metal, real_priority gate part"
+    },
+    {
+      "name": "202500521_Abdeckblech Motorstecker 1_V1.0",
+      "group": "real_priority",
+      "notes": "sheet metal, real_priority gate part"
+    },
+    {
+      "name": "202500521_Abdeckblech Motorstecker 2_V1.0",
+      "group": "real_priority",
+      "notes": "sheet metal, real_priority gate part"
+    },
+    {
+      "name": "202500521_EOAT Versteifung_V1.0",
+      "group": "real_priority",
+      "notes": "milling, real_priority gate part"
+    },
+    {
+      "name": "202400491_05_Grundlpatte_V1.0",
+      "group": "crash_cluster",
+      "notes": "FreeCAD crash — root cause analysis required"
+    },
+    {
+      "name": "202500145_09_trolleybase_bracket01_V1.0",
+      "group": "crash_cluster",
+      "notes": "FreeCAD crash — root cause analysis required"
+    },
+    {
+      "name": "202500145_09_trolleybase_bracket02_V1.0",
+      "group": "crash_cluster",
+      "notes": "FreeCAD crash — root cause analysis required"
+    },
+    {
+      "name": "202500145_28_productholderpin02_plate02_V1.0",
+      "group": "placement_fail",
+      "notes": "feature_dims_outside missing in Front"
+    },
+    {
+      "name": "202500220_03_Doppelbacke_V1.0",
+      "group": "placement_fail",
+      "notes": "feature_dims_outside missing in Front"
+    },
+    {
+      "name": "202400491_03_Anschlag 3D Scanner_V1.0",
+      "group": "diverse",
+      "notes": "milling part"
+    },
+    {
+      "name": "202500145_01_Frame01Assembly_plate02_V1.0",
+      "group": "diverse",
+      "notes": "large frame plate"
+    },
+    {
+      "name": "202500145_06_02_MontageblechVakuumerzeugung_V2.0",
+      "group": "diverse",
+      "notes": "sheet metal, mounting bracket"
+    },
+    {
+      "name": "202500145_11_productholderpin_plate02_V1.1",
+      "group": "diverse",
+      "notes": "milling part, product holder"
+    },
+    {
+      "name": "202500220_03_Einzelbacke_V1.0",
+      "group": "diverse",
+      "notes": "milling part, gripper jaw"
+    },
+    {
+      "name": "202500220_03_Welle_V1.0",
+      "group": "diverse",
+      "notes": "turning part (Drehteil)"
+    },
+    {
+      "name": "202500260_01_Grundplatte_V1.0",
+      "group": "diverse",
+      "notes": "milling part, base plate"
+    },
+    {
+      "name": "202500521_Halteblech Lackierpistole_V1.0",
+      "group": "diverse",
+      "notes": "sheet metal, bracket"
+    },
+    {
+      "name": "202500220_03_Motorflanschplatte_V1.0",
+      "group": "diverse",
+      "notes": "milling part, motor flange"
+    },
+    {
+      "name": "SP-RHM-000",
+      "group": "diverse",
+      "notes": "sheet metal, magazine cart"
+    },
+    {
+      "name": "UR10_Zwischenplatte",
+      "group": "diverse",
+      "notes": "milling part, robot adapter"
+    }
+  ]
+}

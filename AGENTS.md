@@ -34,6 +34,7 @@ Ein Ergebnis ist nur dann erfolgreich, wenn ein erfahrener Konstrukteur die Zeic
 - Gib keine allgemeine Kritik ohne konkrete technische Folgerung.
 - Wenn derselbe Fehler erneut auftritt, benenne die Root Cause explizit.
 - Wenn Unsicherheit ueber den Domain Impact besteht, waehle mindestens `FULL-PATH`.
+- Jede Iteration mit neuen Render-, Preview- oder Exportartefakten wird vor dem finalen Domain-Urteil visuell geprueft.
 - Jede Rolle liest zuerst `AGENTS.md` und arbeitet dann erst in ihrer Fachrolle weiter.
 - Lange Laeufe duerfen keinen Kontext verlieren; derselbe `run_id` und derselbe Artefaktordner muessen ueber alle Handoffs erhalten bleiben.
 
@@ -100,7 +101,7 @@ Nicht `FAST-PATH`, wenn Prompt-, Regel- oder Prozesslogik fuer die Agenten selbs
 
 ### MEDIUM-PATH
 
-`MEDIUM-PATH` ist fuer Aenderungen, die den Zeichnungsoutput beeinflussen, aber kein neues Rendering erfordern, weil sich das sichtbare Ergebnis vorhersagbar aendert.
+`MEDIUM-PATH` ist fuer Aenderungen, die den Zeichnungsoutput beeinflussen, aber keine neue Kern-Renderlogik oder keinen vollstaendigen `FULL-PATH` erfordern, weil sich das sichtbare Ergebnis weitgehend vorhersagbar aendert.
 
 Typische Faelle:
 
@@ -112,14 +113,18 @@ Typische Faelle:
 
 Nicht `MEDIUM-PATH`, wenn Ansichtswahl, Massstab, Bemaessungsplatzierung oder Layoutlogik betroffen sind.
 
+Trotzdem gilt: Fuer die aktuelle Iteration muss mindestens der Zielcase mit frischen Artefakten vorliegen, damit die sichtbare Delta-Wirkung geprueft werden kann.
+
 MEDIUM-PATH Workflow:
 
 1. Task klassifizieren.
 2. Aenderung umsetzen.
 3. Baseline-Golden regenerieren (`--update-golden`).
 4. Regression pruefen (20/20 baseline).
-5. Delta-Scoring: Critic bewertet nur die geaenderten Kriterien (nicht alle 7).
-6. Iteration dokumentieren.
+5. Aktuelle Ziel-Artefakte fuer die Iteration rendern oder aktualisieren.
+6. Visual Reviewer prueft den sichtbaren Delta-Effekt der Aenderung.
+7. Delta-Scoring: Critic bewertet nur die geaenderten Kriterien (nicht alle 7).
+8. Iteration dokumentieren.
 
 ### FULL-PATH
 
@@ -155,16 +160,16 @@ Typische Faelle:
 ### Routing-Regeln
 
 - `FAST-PATH` => `Agent_planner.md` in `LIGHT` mode -> `Agent_builder.md` -> `Agent_critic.md` in `LIGHT` mode -> `Agent_report.md`
-- `MEDIUM-PATH` => `Agent_builder.md` -> Baseline-Golden regenerieren -> Regression (20/20) -> `Agent_critic.md` in `DELTA` mode -> `Agent_report.md`
-- `FULL-PATH` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_artifact_steward.md` -> `Agent_critic.md` -> `Agent_regression.md` -> `Agent_report.md`
-- `LONG-RUN` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_artifact_steward.md` -> `Agent_critic.md` -> `Agent_regression.md` -> iterative `Agent_builder.md` / `Agent_artifact_steward.md` / `Agent_critic.md` / `Agent_regression.md` cycles as needed -> `Agent_report.md`
+- `MEDIUM-PATH` => `Agent_builder.md` -> Baseline-Golden regenerieren -> Regression (20/20) -> `Agent_visual_review.md` -> `Agent_critic.md` in `DELTA` mode -> `Agent_report.md`
+- `FULL-PATH` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_artifact_steward.md` -> `Agent_visual_review.md` -> `Agent_critic.md` -> `Agent_regression.md` -> `Agent_report.md`
+- `LONG-RUN` => `Agent_planner.md` -> `Agent_builder.md` -> `Agent_artifact_steward.md` -> `Agent_visual_review.md` -> `Agent_critic.md` -> `Agent_regression.md` -> iterative `Agent_builder.md` / `Agent_artifact_steward.md` / `Agent_visual_review.md` / `Agent_critic.md` / `Agent_regression.md` cycles as needed -> `Agent_report.md`
 
 ## Run Context und Persistenz
 
 ### Ziel
 
 Lange oder komplexe Laeufe duerfen ihren Zustand nicht nur im Chat behalten.
-Ab `FULL-PATH` muss derselbe Laufkontext ueber Planner, Builder, Critic, Regression und Report hinweg explizit gefuehrt werden.
+Ab `FULL-PATH` muss derselbe Laufkontext ueber Planner, Builder, Artifact Steward, Visual Reviewer, Critic, Regression und Report hinweg explizit gefuehrt werden.
 Der Laufstatus ist logisch ein Single-Writer-Artefakt; derselbe `run_state.json` darf nicht parallel aus veralteten Stage-Staenden fortgeschrieben werden.
 
 ### Standardpfad
@@ -187,6 +192,9 @@ Der minimale Inhalt ist:
 - `artifact_dir`
 - `latest_builder_change`
 - `latest_artifacts`
+- `visual_review_verdict`
+- `visual_review_findings`
+- `visual_delta_summary`
 - `critic_verdict`
 - `critic_scores`
 - `failure_classes`
@@ -221,6 +229,14 @@ Wenn eine Rolle die Datei nicht direkt schreiben kann, muss sie dieselben Felder
 - Mindestgrenze: betroffene Kriterien muessen jeweils mindestens `4/5` erreichen
 - eskaliert auf `FULL-PATH`, wenn die Aenderung doch breitere Auswirkungen hat
 
+### Visual Reviewer
+
+- prueft die aktuelle Iteration primaer auf Basis von `*_preview.png`, `*_debug.svg` und `*_report.json`
+- vergleicht die aktuelle Iteration mit der Voriteration oder einer klar benannten Vergleichsbasis
+- benennt sichtbare Verbesserungen, sichtbare Rueckschritte und fragliche Deltas explizit
+- ersetzt nicht den Critic und gibt keine finale Release-Freigabe
+- darf einen Ruecksprung zum Builder empfehlen, wenn die sichtbare Aenderung fachlich nicht plausibel wirkt
+
 ## Pflichtworkflow je Iteration
 
 ### FAST-PATH
@@ -241,8 +257,10 @@ Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain
 3. DSE-Unittests ausfuehren (`64/64`).
 4. Baseline-Golden regenerieren (`--update-golden --stability-runs 1`).
 5. Regression pruefen (`--stability-runs 1`, `20/20`).
-6. Critic in `DELTA` mode: nur betroffene Kriterien bewerten (z.B. nur Kriterium 7 bei Schriftfeld-Aenderung).
-7. Iteration dokumentieren.
+6. Ziel-Artefakte fuer die aktuelle Iteration aktualisieren (`*_preview.png`, `*_debug.svg`, `*_report.json`).
+7. Visual Reviewer dokumentiert den sichtbaren Delta-Effekt der Aenderung.
+8. Critic in `DELTA` mode: nur betroffene Kriterien bewerten (z.B. nur Kriterium 7 bei Schriftfeld-Aenderung).
+9. Iteration dokumentieren.
 
 ### FULL-PATH
 
@@ -256,8 +274,10 @@ Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain
 8. Gezielt verbessern.
 9. Neu rendern oder exportieren.
 10. Artifact Steward synchronisiert aktuelle Artefakte und `run_state.json`.
-11. Regression ueber betroffene Benchmark-Faelle oder Geometrieklassen pruefen.
-12. Iteration dokumentieren.
+11. Visual Reviewer prueft die sichtbare Aenderung gegen Voriteration oder Vergleichsbasis.
+12. Critic bewertet nur mit aktueller visueller Review-Evidenz.
+13. Regression ueber betroffene Benchmark-Faelle oder Geometrieklassen pruefen.
+14. Iteration dokumentieren.
 
 ### LONG-RUN
 
@@ -265,9 +285,10 @@ Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain
 2. Nutze einen persistenten `run_id` ueber alle Iterationen.
 3. Fuehre Stabilitaetslaeufe mit mindestens `5` Wiederholungen fuer markierte Faelle aus.
 4. Pruefe mindestens Baseline plus betroffene Geometrieklasse und, falls vorhanden, reale Referenzfaelle.
-5. Fordere zwei aufeinanderfolgende Critic- und Regression-Freigaben vor Release.
-6. Wenn derselbe Fehler erneut auftritt, benenne nicht nur die Root Cause, sondern auch warum die vorige Korrektur unzureichend war.
-7. Dokumentiere jede Iteration knapp, aber zustandsbehaftet.
+5. Fuehre in jeder Iteration vor dem Critic eine visuelle Delta-Pruefung durch.
+6. Fordere zwei aufeinanderfolgende Critic- und Regression-Freigaben vor Release.
+7. Wenn derselbe Fehler erneut auftritt, benenne nicht nur die Root Cause, sondern auch warum die vorige Korrektur unzureichend war.
+8. Dokumentiere jede Iteration knapp, aber zustandsbehaftet.
 
 ## Pflichtartefakte
 
@@ -287,6 +308,7 @@ Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain
 - Liste der geaenderten Dateien
 - DSE-Unittest-Ergebnis
 - Baseline-Regression (`20/20`)
+- Visual-Review-Delta fuer den Zielcase
 - Delta-Scoring (nur betroffene Kriterien)
 - Iteration Report
 
@@ -303,6 +325,7 @@ Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain
 - aktuelles `*_debug.svg`
 - aktuelles `*_preview.png`
 - aktuelles `*_report.json`
+- Visual-Review-Urteil und Delta-Zusammenfassung fuer die aktuelle Iteration
 - Regression ueber betroffene Benchmark-Faelle oder Geometrieklassen
 - Critic-Scoring und Entscheidung
 - `KB_PROPOSAL`-Bloecke fuer MAJOR/SHOWSTOPPER Failures (Critic, siehe Agent_critic.md Abschnitt 8)
@@ -316,6 +339,7 @@ Ein fehlender Render- oder Exportlauf ist nur zulaessig, wenn der geringe Domain
 - mindestens ein Stabilitaetslauf mit `>= 5` Wiederholungen
 - Regression ueber `baseline` plus betroffene Geometrieklassen
 - reale Referenzfaelle oder explizite Begruendung, warum keine verfuegbar sind
+- visuelle Delta-Pruefung in jeder Iteration
 - zwei aufeinanderfolgende Critic- und Regression-Freigaben vor Release
 - Iterationsvergleich mit Voriteration im Report
 - kumulierte KB-Regelvorschlaege ueber alle Iterationen
@@ -340,7 +364,9 @@ Eine Zeichnung muss mindestens diese Kriterien erfuellen:
 Bewerte im Rahmen des aktuellen MVP normnah und fachlich plausibel.
 Unterstelle keine vollstaendige Normabdeckung, wenn diese im System noch nicht implementiert ist.
 
-## Fehlerklassen
+## Fehlerklassen (Critic-Ebene)
+
+Konzeptuelle Kategorien fuer die Critic-Bewertung von Zeichnungen:
 
 - `VIEW_SELECTION_ERROR`
 - `VIEW_ALIGNMENT_ERROR`
@@ -358,11 +384,33 @@ Unterstelle keine vollstaendige Normabdeckung, wenn diese im System noch nicht i
 - `ANNOTATION_OVERLAP`
 - `CHAMFER_UNLABELED`
 
-## Mangelklassen
+## Mangelklassen (Critic-Ebene)
 
-- `SHOWSTOPPER`
-- `MAJOR`
-- `MINOR`
+- `SHOWSTOPPER` — Zeichnung nicht verwendbar
+- `MAJOR` — signifikanter fachlicher Mangel
+- `MINOR` — kosmetisch oder geringfuegig
+
+## Kanonische Runtime Failure Classes
+
+Die Laufzeit-Fehlerklassifikation liegt in `server/rules/failure_classes.py`.
+Dieses Modul ist die einzige kanonische Quelle fuer maschinenlesbare Fehler im Pipeline-Pfad.
+
+**Severities:** `BLOCKER`, `WARNING`, `INFO`
+**Categories:** `LAYOUT`, `DIMENSION`, `FEATURE`, `RENDERING`, `QUALITY`
+
+Vordefinierte Codes (Auswahl):
+- `LABEL_OUT_OF_BOUNDS` (BLOCKER/LAYOUT)
+- `DIMENSION_OUT_OF_BOUNDS` (BLOCKER/LAYOUT)
+- `VIEW_OVERLAP` (BLOCKER/LAYOUT)
+- `TITLE_BLOCK_OVERLAP` (BLOCKER/LAYOUT)
+- `TEXT_OVERLAP` (BLOCKER/DIMENSION)
+- `MISSING_OVERALL_DIMS` (WARNING/DIMENSION)
+- `MISSING_HOLE_CALLOUT` (WARNING/DIMENSION)
+- `DUPLICATE_DIMENSIONS` (WARNING/DIMENSION)
+- `GEOM_OVERLAP_OVERALL` (BLOCKER/DIMENSION)
+- `FALLBACK_PROJECTION` (BLOCKER/RENDERING)
+
+Quality Gate, Report, Run-State und Orchestrierung verwenden ausschliesslich diese Codes.
 
 ## Bewertung
 
@@ -390,9 +438,9 @@ Im `FAST-PATH` ist ein vollstaendiges Scoring nur dann entbehrlich, wenn der Cri
 ## Freigaberegeln
 
 - `FAST-PATH` ist nur freigegeben, wenn Critic `LIGHT` bestaetigt, dass kein fachlich relevanter Output betroffen ist.
-- `MEDIUM-PATH` ist nur freigegeben, wenn Baseline-Regression `20/20` besteht und die betroffenen Critic-Kriterien jeweils `4/5` erreichen.
-- `FULL-PATH` ist nur freigegeben, wenn kein KO-Kriterium greift, jedes Hauptkriterium mindestens `4/5` erreicht, die Summe mindestens `30/35` betraegt und Regression keine fachliche Verschlechterung im Zielbereich zeigt.
-- `LONG-RUN` ist nur freigegeben, wenn zwei aufeinanderfolgende Critic- und Regression-Durchlaeufe dieselben Mindestgrenzen halten, die Stabilitaetslaeufe sauber bleiben und kein relevanter Benchmark-Fall degradiert.
+- `MEDIUM-PATH` ist nur freigegeben, wenn Baseline-Regression `20/20` besteht, eine aktuelle visuelle Delta-Pruefung dokumentiert ist und die betroffenen Critic-Kriterien jeweils `4/5` erreichen.
+- `FULL-PATH` ist nur freigegeben, wenn eine aktuelle visuelle Review fuer die Iteration vorliegt, kein KO-Kriterium greift, jedes Hauptkriterium mindestens `4/5` erreicht, die Summe mindestens `30/35` betraegt und Regression keine fachliche Verschlechterung im Zielbereich zeigt.
+- `LONG-RUN` ist nur freigegeben, wenn jede Iteration visuell geprueft wurde, zwei aufeinanderfolgende Critic- und Regression-Durchlaeufe dieselben Mindestgrenzen halten, die Stabilitaetslaeufe sauber bleiben und kein relevanter Benchmark-Fall degradiert.
 
 ## Iterationsregeln
 
@@ -409,17 +457,19 @@ Im `FAST-PATH` ist ein vollstaendiges Scoring nur dann entbehrlich, wenn der Cri
 - Planner analysiert die bestehende Logik, initialisiert den Laufkontext und erstellt den Verbesserungsplan.
 - Builder setzt nur den naechsten sinnvollen Schritt oder die naechsten eng zusammenhaengenden Schritte um.
 - Artifact Steward synchronisiert `run_state.json`, Artefaktpfade, Iterationsvergleich und Command-Evidenz.
+- Visual Reviewer bewertet jede aktuelle Iteration zuerst optisch anhand der synchronisierten Artefakte und des sichtbaren Delta-Effekts.
 - Critic bewertet das Ergebnis streng, fachlich und visuell anhand der aktuellen Artefakte.
 - Regression prueft Seiteneffekte auf andere Benchmark-Faelle und bewertet den Release-Risiko-Status.
 - Report dokumentiert Iteration, Risiken, Entscheidungen, Laufstatus und den naechsten konkreten Schritt.
 
-Empfohlener Ablauf: `Planner -> Builder -> Critic -> Regression -> Report`
+Empfohlener Ablauf: `Planner -> Builder -> Artifact Steward -> Visual Reviewer -> Critic -> Regression -> Report`
 
 ## Rollenbezogene Markdown-Dateien
 
 - `Agent_planner.md`
 - `Agent_builder.md`
 - `Agent_artifact_steward.md`
+- `Agent_visual_review.md`
 - `Agent_critic.md`
 - `Agent_regression.md`
 - `Agent_report.md`

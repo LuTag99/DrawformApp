@@ -1,3 +1,18 @@
+# ---------------------------------------------------------------------------
+# step_to_pdf.py — Main FreeCAD drawing generation pipeline
+#
+# P2 MODULARIZATION PLAN (not yet extracted):
+#   1. step_to_pdf_orchestration.py — main(), FreeCAD doc loading, view creation
+#   2. step_to_pdf_layout.py — sheet selection, view positioning, scale computation
+#   3. step_to_pdf_flat_pattern.py — build_flat_pattern_overlay(), unfold rendering
+#   4. step_to_pdf_feature_dims.py — build_feature_dimension_svg(), feature text
+#   5. step_to_pdf_quality_gate.py — evaluate_pre_export_quality(), QualityGateError
+#   6. step_to_pdf_title_block.py — build_page_svg(), title block rendering
+#
+# All modules run inside FreeCAD's Python environment (no pydantic).
+# Extract incrementally — keep imports minimal to avoid circular dependencies.
+# ---------------------------------------------------------------------------
+
 import json
 import os
 import re
@@ -7,6 +22,14 @@ import subprocess
 import datetime as dt
 from pathlib import Path
 from xml.sax.saxutils import escape
+
+
+class QualityGateError(RuntimeError):
+    """Raised when the pre-export quality check detects blocker-level issues.
+
+    Exit code 3 distinguishes quality failures from FreeCAD crashes (exit code 1).
+    """
+    pass
 
 from flat_pattern_helpers import build_flange_segment_metadata
 from dimension_placement_helpers import (
@@ -74,10 +97,35 @@ SHEET_SPECS = {
     "A2": {"width": 594.0, "height": 420.0, "title_block_h": 62.0, "template": "iso7200_a2_landscape.svg"},
 }
 _DIMENSION_STRATEGY_HOLE_HELPERS = None
+_FAILURE_CLASSES_MODULE = None
 
 
-def log(message):
-    sys.stderr.write(f"[drawform] {message}\n")
+def _get_failure_classes():
+    """Lazy-import failure_classes from rules/ using the same sys.path pattern."""
+    global _FAILURE_CLASSES_MODULE
+    if _FAILURE_CLASSES_MODULE is not None:
+        return _FAILURE_CLASSES_MODULE
+
+    server_root = Path(__file__).resolve().parent.parent
+    if str(server_root) not in sys.path:
+        sys.path.insert(0, str(server_root))
+
+    try:
+        import rules.failure_classes as fc_mod
+        _FAILURE_CLASSES_MODULE = fc_mod
+    except Exception:
+        _FAILURE_CLASSES_MODULE = None
+    return _FAILURE_CLASSES_MODULE
+
+
+def log(message, level="INFO"):
+    """Log a message with structured prefix for root cause tracing.
+
+    Levels: INFO, WARN, ERROR, DECISION, QUALITY
+    - DECISION: logs a pipeline routing decision (layout profile, view selection, etc.)
+    - QUALITY: logs a quality gate finding (blocker, warning)
+    """
+    sys.stderr.write(f"[drawform:{level}] {message}\n")
 
 
 def _get_dimension_strategy_hole_helpers():
@@ -2090,15 +2138,15 @@ def build_dimension_svg(
     char_w = text_size * 0.6
     width_text_w = max(len(label_w), 1) * char_w
     height_text_w = max(len(label_h), 1) * char_w
-    rect_pad = text_size * 0.2
+    rect_pad = text_size * 0.25  # Unified padding for consistent text mask (ISO 129-1)
     width_rect_x = width_x - width_text_w * 0.5 - rect_pad
-    width_rect_y = width_y - text_size * 0.7
+    width_rect_y = width_y - text_size * 0.8
     width_rect_w = width_text_w + rect_pad * 2
-    width_rect_h = text_size * 1.4
+    width_rect_h = text_size * 1.5
     height_rect_x = height_x - height_text_w * 0.5 - rect_pad
-    height_rect_y = height_y - text_size * 0.7
+    height_rect_y = height_y - text_size * 0.8
     height_rect_w = height_text_w + rect_pad * 2
-    height_rect_h = text_size * 1.4
+    height_rect_h = text_size * 1.5
     height_rotate = f' transform="rotate(-90 {height_x:.3f} {height_y:.3f})"'
     text_parts = [
         f'<g fill="rgb(0, 0, 0)" stroke="none" font-size="{text_size:.3f}" '
@@ -5671,19 +5719,19 @@ def _format_groove_callout_text(groove):
 
 
 def _feature_text_svg(text, x, y, text_size, anchor="middle"):
-    # White background rectangle behind text for readability
+    # White background rectangle behind text for readability (ISO 129-1 text mask)
     char_w = text_size * 0.6
     text_w = max(len(text), 1) * char_w
-    rect_pad = text_size * 0.15
+    rect_pad = text_size * 0.25  # Increased padding to prevent line-through appearance
     if anchor == "middle":
         rect_x = x - text_w * 0.5 - rect_pad
     elif anchor == "start":
         rect_x = x - rect_pad
     else:
         rect_x = x - text_w - rect_pad
-    rect_y = -y - text_size * 0.7
+    rect_y = -y - text_size * 0.8
     rect_w = text_w + rect_pad * 2
-    rect_h = text_size * 1.3
+    rect_h = text_size * 1.5
     return (
         f'<g fill="rgb(0, 0, 0)" stroke="none" font-size="{text_size:.3f}" '
         f'font-family="ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace" '
@@ -9099,64 +9147,22 @@ def build_flat_pattern_overlay(
         return "\n".join(parts) + "\n" + "\n".join(note_parts), abwicklung_meta
 
     else:
-        # Fallback: show projected top/front view with unavailability note
-        top_view = next((item for item in view_data if item.get("name") == "Top"), None)
-        front_view = next((item for item in view_data if item.get("name") == "Front"), None)
-        candidate = top_view or front_view
-        if candidate:
-            scale = compute_fit_scale(candidate.get("bounds_for_scale", candidate["svg_bounds"]), area_w, area_h, padding=0.84)
-            line_profile = iso128_line_profile(scale)
-            stroke_width = float(line_profile.get("visible", compute_stroke_width(scale)))
-            group = build_view_group(
-                candidate["svg"],
-                candidate["svg_bounds"],
-                candidate["proj_bounds"],
-                flat_cx,
-                flat_cy,
-                scale,
-                rotation_deg=candidate.get("rotation_deg", 0),
-                stroke_width=stroke_width,
-                line_profile=line_profile,
-                dimension_svg="",
-                view_name="Abwicklung",
-                show_coordinate_system=False,
-            )
-        else:
-            group = ""
-
-        title_bold_style = (
+        # Fallback: unfold failed — do NOT render as "ABWICKLUNG" (P0 quality gate).
+        # Instead, emit a warning note and mark the result as a quality blocker.
+        log("WARNING: Sheet metal unfold failed — skipping Abwicklung (no fallback projection)")
+        error_style = (
             "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-            "font-size: 4.4px; font-style: normal; font-weight: bold; fill: #000;"
+            "font-size: 3.6px; font-style: normal; font-weight: bold; fill: #c00;"
         )
-        subtitle_style = (
+        note_style = (
             "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-            "font-size: 3.2px; font-style: normal; font-weight: normal; fill: #555;"
-        )
-        note_item_style = (
-            "font-family: ISOCP, ISO 3098, Hershey Simplex, Simplex, monospace; "
-            "font-size: 3.2px; font-style: normal; font-weight: normal; fill: #000;"
+            "font-size: 2.8px; font-style: normal; font-weight: normal; fill: #555;"
         )
         fb_note_parts = [
-            f'<text x="{flat_cx:.1f}" y="{title_y:.1f}" style="{title_bold_style}" text-anchor="middle">ABWICKLUNG</text>',
-            f'<text x="{flat_cx:.1f}" y="{title_y + 5.0:.1f}" style="{subtitle_style}" text-anchor="middle">Kontur: manuelle Entfaltung</text>',
+            f'<text x="{flat_cx:.1f}" y="{title_y:.1f}" style="{error_style}" text-anchor="middle">ABWICKLUNG NICHT VERFUEGBAR</text>',
+            f'<text x="{flat_cx:.1f}" y="{title_y + 5.0:.1f}" style="{note_style}" text-anchor="middle">Unfold fehlgeschlagen — Zeichnung unvollstaendig</text>',
         ]
-        if flat_pattern:
-            k_fb = flat_pattern.get("k_factor_used")
-            t_fb = _optional_float(flat_pattern.get("thickness_mm"))
-            bend_count = len(flat_pattern.get("bend_segments") or [])
-            extra_lines = []
-            if t_fb:
-                extra_lines.append(f"Blechst\u00e4rke = {format_de_number(t_fb)}")
-            if k_fb is not None:
-                extra_lines.append(f"K-Faktor = {format_de_number(k_fb, 2)}")
-            if bend_count:
-                extra_lines.append(f"Biegungen: {bend_count}\u00d7")
-            for i, line in enumerate(extra_lines[:3]):
-                fb_note_parts.append(
-                    f'<text x="{flat_cx:.1f}" y="{title_y + 9.5 + i * 3.5:.1f}" '
-                    f'style="{note_item_style}" text-anchor="middle">{escape(line)}</text>'
-                )
-        return f"{group}\n" + "\n".join(fb_note_parts), {"source": "fallback_projection"}
+        return "\n".join(fb_note_parts), {"source": "fallback_projection", "quality_blocker": True}
 
 
 def _collect_svg_text_entries(svg_text):
@@ -9179,17 +9185,29 @@ def _collect_svg_text_entries(svg_text):
 
 
 def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_tracking=None):
-    issues = []
+    issues = []       # warning-level issues
+    blockers = []     # blocker-level issues (layout, collision, readability)
+    failure_classes = []  # structured FailureClass instances (if module available)
+    fc_mod = _get_failure_classes()
     dt = dim_tracking or {}
     text_entries = _collect_svg_text_entries(page_svg)
     dim_texts = []
-    if report.get("abwicklung"):
+
+    # --- P0: Detect fallback projection (fake Abwicklung) as blocker ---
+    abw = report.get("abwicklung") or {}
+    if abw.get("source") == "fallback_projection":
+        blockers.append("Abwicklung nicht verfuegbar: Unfold fehlgeschlagen, keine echte Entfaltung vorhanden.")
+        if fc_mod:
+            failure_classes.append(fc_mod.FALLBACK_PROJECTION)
+    if abw:
         has_flat_bend_legend = any(
             "NACH " in entry["text"]
             for entry in text_entries
         )
         if has_flat_bend_legend:
             issues.append("Unzulaessige Biegehinweise in der Abwicklung erkannt.")
+            if fc_mod:
+                failure_classes.append(fc_mod.INVALID_BEND_LEGEND)
     skip_markers = (
         "BENENNUNG",
         "FIRMA",
@@ -9228,6 +9246,33 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
         if re.search(r"\d", text):
             dim_texts.append(entry)
 
+    # --- P1: Hard guard against title block overlap ---
+    # Use tracked paper-space dimension boxes (from dim_tracking) instead of raw
+    # SVG text parsing.  This avoids false positives from title-block fields
+    # that contain digits (date, drawing number, scale, sheet size).
+    sheet_name = str(report.get("sheet_name") or "A3").strip().upper()
+    title_block_spec = SHEET_SPECS.get(sheet_name, SHEET_SPECS["A3"])
+    tb_top_y = float(title_block_spec["height"]) - float(title_block_spec["title_block_h"])
+    margin_px = 10.0
+    title_block_zone = (margin_px, float(title_block_spec["width"]) - margin_px, tb_top_y, float(title_block_spec["height"]) - margin_px)
+    dimension_paper_boxes = dt.get("dimension_paper_boxes") or []
+    title_block_overlap_count = 0
+    for dbox in dimension_paper_boxes:
+        if (
+            len(dbox) == 4
+            and dbox[0] < title_block_zone[1]  # box left < zone right
+            and dbox[1] > title_block_zone[0]  # box right > zone left
+            and dbox[2] < title_block_zone[3]  # box top < zone bottom
+            and dbox[3] > title_block_zone[2]  # box bottom > zone top
+        ):
+            title_block_overlap_count += 1
+    if title_block_overlap_count:
+        blockers.append(
+            f"Masse ueberlagern das Schriftfeld ({title_block_overlap_count} Texte)."
+        )
+        if fc_mod:
+            failure_classes.append(fc_mod.TITLE_BLOCK_OVERLAP(title_block_overlap_count))
+
     views = report.get("views", {}) or {}
     displayed_overall_count = sum(
         int(_optional_float(((view or {}).get("dimension_quality") or {}).get("overall_count")) or 0)
@@ -9240,6 +9285,8 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
     )
     if max(displayed_overall_count, present_overall_count) < 2:
         issues.append("Fehlende Aussenmasse: weniger als zwei Gesamtmasswerte gefunden.")
+        if fc_mod:
+            failure_classes.append(fc_mod.MISSING_OVERALL_DIMS)
 
     feature_block = report.get("features", {})
     hole_count = int(_optional_float(feature_block.get("hole_count")) or 0)
@@ -9266,6 +9313,8 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
             )
         if not has_diameter_callout:
             issues.append("Fehlende Lochdurchmesserangabe (\u00D8).")
+            if fc_mod:
+                failure_classes.append(fc_mod.MISSING_HOLE_CALLOUT)
         orthographic_circle_views = [
             name
             for name, view in views.items()
@@ -9276,6 +9325,8 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
         centerline_total = int(_optional_float((report.get("quality", {}) or {}).get("centerline_total")) or 0)
         if orthographic_circle_views and centerline_total <= 0:
             issues.append("Keine Mittellinien bei vorhandenen Bohrungen erkannt.")
+            if fc_mod:
+                failure_classes.append(fc_mod.MISSING_CENTERLINES)
 
     # Duplicate dimension texts (exact duplicates) indicate redundant dimensioning.
     # Only flag as duplicate if the same text appears at NEARBY positions (same view).
@@ -9302,6 +9353,8 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
             redundant.append(text)
     if redundant:
         issues.append(f"Doppelte Masse erkannt: {', '.join(sorted(redundant)[:4])}")
+        if fc_mod:
+            failure_classes.append(fc_mod.DUPLICATE_DIMENSIONS(sorted(redundant)[:4]))
 
     quality = report.get("quality", {}) or {}
     current_layout_profile = str((report or {}).get("layout_profile") or "").strip().lower()
@@ -9314,19 +9367,25 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
     dt["dimension_out_of_bounds_views"] = dimension_out_of_bounds_views
     dt["view_overlap_pairs"] = view_overlap_pairs
     if label_out_of_bounds_views:
-        issues.append(
+        blockers.append(
             "Masszahlen liegen ausserhalb des Zeichenfelds in: "
             + ", ".join(label_out_of_bounds_views)
         )
+        if fc_mod:
+            failure_classes.append(fc_mod.LABEL_OUT_OF_BOUNDS(label_out_of_bounds_views))
     if dimension_out_of_bounds_views:
-        issues.append(
+        blockers.append(
             "Masslinien oder Massgrafik liegen ausserhalb des Zeichenfelds in: "
             + ", ".join(dimension_out_of_bounds_views)
         )
+        if fc_mod:
+            failure_classes.append(fc_mod.DIMENSION_OUT_OF_BOUNDS(dimension_out_of_bounds_views))
     if view_overlap_pairs:
-        issues.append(
+        blockers.append(
             "Ansichten ueberlagern sich: " + ", ".join(view_overlap_pairs)
         )
+        if fc_mod:
+            failure_classes.append(fc_mod.VIEW_OVERLAP(view_overlap_pairs))
 
     overall_geom_overlap_views = sorted(
         name
@@ -9371,36 +9430,47 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
                 if overlap_hits >= 2:
                     break
             if overlap_hits > 0:
-                issues.append("Moegliche Ueberlagerung von Masszahlen erkannt.")
+                blockers.append("Moegliche Ueberlagerung von Masszahlen erkannt.")
     if overall_geom_overlap_views:
-        issues.append(
+        blockers.append(
             "Gesamtmasse liegen zu nah an der Geometrie in: " + ", ".join(overall_geom_overlap_views)
         )
+        if fc_mod:
+            failure_classes.append(fc_mod.GEOM_OVERLAP_OVERALL(overall_geom_overlap_views))
     if feature_geom_overlap_views:
-        issues.append(
+        blockers.append(
             "Featuremasse kollidieren mit der Teilgeometrie in: " + ", ".join(feature_geom_overlap_views)
         )
+        if fc_mod:
+            failure_classes.append(fc_mod.GEOM_OVERLAP_FEATURE(feature_geom_overlap_views))
     if feature_overall_overlap_views:
-        issues.append(
+        blockers.append(
             "Feature- und Gesamtmasse ueberlagern sich in: " + ", ".join(feature_overall_overlap_views)
         )
+        if fc_mod:
+            failure_classes.append(fc_mod.FEATURE_OVERALL_OVERLAP(feature_overall_overlap_views))
     if text_overlap_views:
-        issues.append(
+        blockers.append(
             "Masszahlen ueberlagern sich innerhalb einer Ansicht in: " + ", ".join(text_overlap_views)
         )
+        if fc_mod:
+            failure_classes.append(fc_mod.TEXT_OVERLAP(text_overlap_views))
 
+    # Views where outside was preferred but neither outside nor internal_fallback achieved it.
+    # internal_fallback is a controlled degradation — features are present, just not outside.
+    _outside_ok_modes = {"outside", "internal_fallback"}
     outside_preferred_feature_views = sorted(
         name
         for name, view in views.items()
         if int(_optional_float((view or {}).get("feature_dim_text_count")) or 0) > 0
         and bool((view or {}).get("feature_dim_outside_preferred"))
-        and str((view or {}).get("feature_dim_mode") or "none") != "outside"
+        and str((view or {}).get("feature_dim_mode") or "none") not in _outside_ok_modes
     )
     internal_feature_views = sorted(
         name
         for name, view in views.items()
         if int(_optional_float((view or {}).get("feature_dim_text_count")) or 0) > 0
-        and str((view or {}).get("feature_dim_mode") or "none") == "internal"
+        and str((view or {}).get("feature_dim_mode") or "none") in ("internal", "internal_fallback")
     )
     if outside_preferred_feature_views:
         issues.append(
@@ -9417,10 +9487,17 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
     dt["feature_overall_overlap_views"] = feature_overall_overlap_views
     dt["text_overlap_views"] = text_overlap_views
 
-    status = "OK" if not issues else "WARNUNG"
-    return {
+    all_issues = blockers + issues
+    if blockers:
+        status = "FEHLER"
+    elif issues:
+        status = "WARNUNG"
+    else:
+        status = "OK"
+    result = {
         "status": status,
-        "issues": issues,
+        "blockers": blockers,
+        "issues": all_issues,
         "dim_metrics": {
             "dim_text_count": int(dt.get("dim_text_count", 0)),
             "step_dim_count": int(dt.get("step_dim_count", 0)),
@@ -9439,6 +9516,9 @@ def evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_track
             "view_overlap_pairs": list(dt.get("view_overlap_pairs", [])),
         },
     }
+    if failure_classes:
+        result["failure_classes"] = [fc.to_dict() for fc in failure_classes]
+    return result
 
 
 def format_scale(scale_value):
@@ -9586,13 +9666,26 @@ def main():
         else:
             sheet_metal_subtype = "biegeteil"  # Safer default — assume bends
         log(f"Sheet metal subtype: {sheet_metal_subtype} "
-            f"({unfold_result.get('bend_count', '?') if unfold_result else '?'} bends)")
+            f"({unfold_result.get('bend_count', '?') if unfold_result else '?'} bends)", level="DECISION")
 
-    if isinstance(raw_plan, dict) and raw_plan.get("views"):
+    # P0: For sheet_metal, discard meta plans that were built without unfold data.
+    # These plans lack correct FlatPattern views and must be rebuilt locally.
+    use_meta_plan = isinstance(raw_plan, dict) and raw_plan.get("views")
+    if use_meta_plan and layout_profile == "sheet_metal":
+        has_flat_pattern_view = any(
+            v.get("view_name") == "FlatPattern"
+            for v in (raw_plan.get("views") or [])
+            if isinstance(v, dict)
+        )
+        if not has_flat_pattern_view and unfold_result and unfold_result.get("ok"):
+            log("Discarding meta dimension_plan for sheet_metal (missing FlatPattern view, unfold now available)")
+            use_meta_plan = False
+
+    if use_meta_plan:
         dim_plan = raw_plan
         dim_plan_source = "meta"
         log(f"Dimension plan loaded: part_type={dim_plan.get('part_type')}, "
-            f"views={len(dim_plan.get('views', []))}")
+            f"views={len(dim_plan.get('views', []))}", level="DECISION")
     else:
         dim_plan = build_local_dimension_plan(meta, feature_payload, layout_profile, unfold_result=unfold_result)
         if isinstance(dim_plan, dict) and dim_plan.get("views"):
@@ -10562,6 +10655,7 @@ def main():
         "feature_dim_outside_views": [],
         "feature_dim_internal_views": [],
         "outside_preferred_feature_views": [],
+        "dimension_paper_boxes": [],
     }
     feature_view_name = None
     feature_view_circle_count = 0
@@ -10604,7 +10698,7 @@ def main():
             )
         ]
         if (
-            str(layout_profile or "").strip().lower() == "milling"
+            str(layout_profile or "").strip().lower() in ("milling", "sheet_metal")
             and requested_feature_views
             and feature_view_name
             and feature_view_circle_count > 0
@@ -10841,12 +10935,20 @@ def main():
                     neighbor_view_bounds.append(candidate_view_bounds)
             zone_guard_height = max(6.0, min(12.0, margin * 1.15))
             reserved_paper_boxes = [
+                # Top margin guard
                 (
                     float(draw_left),
                     float(draw_right),
                     float(draw_top),
                     float(min(draw_bottom, draw_top + zone_guard_height)),
-                )
+                ),
+                # Title block guard — prevent dimensions from overlapping the title block
+                (
+                    float(draw_left),
+                    float(draw_right),
+                    float(draw_bottom),
+                    float(sheet_h - margin),
+                ),
             ]
             dimension_metadata["_placement_context"] = {
                 "paper_center": (float(item["cx"]), float(item["cy"])),
@@ -11064,14 +11166,39 @@ def main():
                             (dimension_metadata.get("feature_dimensions") or [])[:feature_dim_count_before]
                         )
                         dimension_metadata["_shared_collision_boxes"] = shared_collision_snapshot
+                # Fallback: if outside placement failed, retry with internal placement.
+                _actual_mode = "outside" if outside_feature_placement else "internal"
+                if not feature_dimension_svg and outside_feature_placement:
+                    log(f"  {name}: outside feature dims empty, falling back to internal placement")
+                    dimension_metadata["feature_dimensions"] = list(
+                        (dimension_metadata.get("feature_dimensions") or [])[:feature_dim_count_before]
+                    )
+                    dimension_metadata["_shared_collision_boxes"] = shared_collision_snapshot
+                    feature_dimension_svg = build_feature_dimension_svg(
+                        item["svg"],
+                        svg_bounds,
+                        feature_payload,
+                        scale,
+                        stroke_width,
+                        line_profile=line_profile,
+                        allowed_dim_types=allowed_feature_dim_types,
+                        outside_placement=False,
+                        metadata=dimension_metadata,
+                        direction=item.get("direction"),
+                        rotation_deg=item.get("rotation_deg", 0),
+                        view_name=name,
+                        layout_profile=layout_profile,
+                        allow_projected_feature_targets=projected_feature_dimension_targets,
+                    )
+                    _actual_mode = "internal_fallback"
                 if feature_dimension_svg:
                     dimension_svg = f"{dimension_svg}{feature_dimension_svg}"
                     feature_dim_text_count = feature_dimension_svg.count("<text")
                     item["feature_dim_text_count"] = int(feature_dim_text_count)
-                    item["feature_dim_mode"] = "outside" if outside_feature_placement else "internal"
+                    item["feature_dim_mode"] = _actual_mode
                     dim_tracking["dim_text_count"] += feature_dim_text_count
                     dim_tracking["feature_dim_present"] = True
-                    if outside_feature_placement:
+                    if _actual_mode == "outside":
                         dim_tracking["feature_dim_outside_views"].append(name)
                     else:
                         dim_tracking["feature_dim_internal_views"].append(name)
@@ -11206,6 +11333,11 @@ def main():
                 paper_overall_dimensions,
                 paper_feature_dimensions,
             )
+            # Collect paper-space text boxes for title-block overlap check
+            for _dim_entry in (paper_overall_dimensions or []) + (paper_feature_dimensions or []):
+                _tb = _dim_entry.get("text_box") if isinstance(_dim_entry, dict) else None
+                if _tb and len(_tb) == 4:
+                    dim_tracking["dimension_paper_boxes"].append(tuple(float(v) for v in _tb))
         item["dimension_metadata"] = dimension_metadata
         item["centerline_count"] = int(centerline_count)
         item["centerline_source"] = str(centerline_source or "none")
@@ -11675,7 +11807,7 @@ def main():
     pre_export_check = evaluate_pre_export_quality(report, page_svg, dim_x, dim_y, dim_z, dim_tracking=dim_tracking)
     report["pre_export_check"] = pre_export_check
     if pre_export_check.get("status") != "OK":
-        log(f"Pre-export quality: {pre_export_check.get('status')} -> {pre_export_check.get('issues')}")
+        log(f"Pre-export quality: {pre_export_check.get('status')} -> {pre_export_check.get('issues')}", level="QUALITY")
     report["quality"]["line_hierarchy"] = {
         "visible_vs_dimension": "thick_vs_thin",
         "hidden_dash": True,
@@ -11684,6 +11816,7 @@ def main():
     svg_path = Path(output_path).with_suffix(".svg")
     svg_path.write_text(page_svg, encoding="utf-8")
 
+    # Always write debug artifacts (SVG + report JSON) before potential abort
     debug_dir = os.getenv("DRAWFORM_DEBUG_DIR")
     if debug_dir:
         try:
@@ -11699,6 +11832,19 @@ def main():
             log(f"Debug SVG written: {debug_path}")
         except (OSError, TypeError, ValueError) as exc:
             log(f"Failed to write debug SVG: {exc}")
+
+    # P0: Hard abort when quality check detects issues
+    if pre_export_check.get("status") != "OK":
+        quality_issues = pre_export_check.get("issues", [])
+        blocker_list = pre_export_check.get("blockers", [])
+        status = pre_export_check["status"]
+        msg_parts = [f"Quality gate {status}: Export blockiert."]
+        if blocker_list:
+            msg_parts.append(f"Blocker ({len(blocker_list)}): " + "; ".join(blocker_list))
+        warnings_only = [i for i in quality_issues if i not in blocker_list]
+        if warnings_only:
+            msg_parts.append(f"Warnungen ({len(warnings_only)}): " + "; ".join(warnings_only))
+        raise QualityGateError(" | ".join(msg_parts))
 
     log(f"Rendering PDF via svg2rlg: {output_path}")
     drawing = svg2rlg(str(svg_path))
@@ -11719,6 +11865,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except QualityGateError as exc:
+        sys.stderr.write(str(exc))
+        sys.exit(3)
     except Exception as exc:
         sys.stderr.write(str(exc))
         sys.exit(1)

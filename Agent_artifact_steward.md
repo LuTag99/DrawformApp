@@ -17,8 +17,9 @@ Your responsibilities:
 3. Sync the newest `*_debug.svg`, `*_preview.png`, `*_report.json`, and related evidence into the active run folder.
 4. Record exact commands that produced the evidence.
 5. Compare the current artifact set to the previous iteration.
-6. Flag missing evidence before Critic or Regression starts.
-7. Advance the run only from the currently recorded stage and revision.
+6. Prepare the artifact comparison basis for the Visual Reviewer.
+7. Flag missing evidence before Visual Reviewer, Critic, or Regression starts.
+8. Advance the run only from the currently recorded stage and revision.
 
 Rules:
 - Do not invent missing artifacts.
@@ -64,7 +65,7 @@ ARTIFACT STATE
 - Notable differences:
 
 5. Handoff Readiness
-- Ready for Critic / Regression? yes/no
+- Ready for Visual Reviewer / Critic / Regression? yes/no
 - Blocking gaps:
 - Next exact steward action:
 

@@ -95,7 +95,17 @@
       "Bash(.venv/Scripts/python.exe test_views.py --sample-set baseline --single bracket)",
       "Bash(.venv/Scripts/python.exe test_views.py --sample-set all --update-golden --parallel 4)",
       "Bash(echo \"PID: $!\")",
-      "Bash(.venv/Scripts/python.exe test_views.py --sample-set all --single UR10_Zwischenplatte)"
+      "Bash(.venv/Scripts/python.exe test_views.py --sample-set all --single UR10_Zwischenplatte)",
+      "Bash(python -m unittest discover -s tests -v)",
+      "Bash(python -c ':*)",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(python test_views.py --sample-set baseline --single simple_plate)",
+      "Bash(python test_views.py --sample-set baseline --single bracket)",
+      "Bash(python test_views.py --sample-set baseline --single 10x10x10)",
+      "Bash(python test_views.py --sample-set baseline --single complex_bracket)",
+      "Bash(python test_views.py --sample-set real20 --single \"202500220_03_Doppelbacke_V1.0\")",
+      "Bash(python test_views.py --sample-set real20 --single \"202500220_03_Doppelbacke_V1.0\" --update-golden)",
+      "Bash(python test_views.py --sample-set baseline)"
     ],
     "additionalDirectories": [
       "\\tmp"

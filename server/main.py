@@ -997,19 +997,29 @@ async def export_step_to_pdf(
         input_path.write_bytes(data)
 
         # DSE: Run feature probe + build dimension plan before FreeCAD subprocess
+        # For sheet_metal parts, the dimension_plan is NOT set here — it must be
+        # built AFTER the unfold result is available (inside step_to_pdf.py).
         try:
             probe_result = run_feature_probe(file.filename, data)
             if probe_result and probe_result.get("ok") is True:
                 dse_layout = select_layout_profile_standalone(
                     file.filename, probe_result
                 )
-                dse_plan = build_dimension_plan(
-                    feature_payload=probe_result,
-                    layout_profile=dse_layout,
-                    detail_level=int(export_meta.get("detail_level", 1)),
-                )
                 export_meta["features"] = probe_result
-                export_meta["dimension_plan"] = dse_plan.model_dump()
+                if dse_layout == "sheet_metal":
+                    # P0: Do not pre-compute dimension_plan for sheet_metal —
+                    # unfold_result is needed for correct FlatPattern planning.
+                    # step_to_pdf.py will build it locally after unfold.
+                    logging.getLogger("drawform.dse").info(
+                        "sheet_metal: dimension_plan deferred to FreeCAD subprocess (needs unfold_result)"
+                    )
+                else:
+                    dse_plan = build_dimension_plan(
+                        feature_payload=probe_result,
+                        layout_profile=dse_layout,
+                        detail_level=int(export_meta.get("detail_level", 1)),
+                    )
+                    export_meta["dimension_plan"] = dse_plan.model_dump()
         except Exception as exc:
             logging.getLogger("drawform.dse").warning("DSE failed (non-fatal): %s", exc)
 
@@ -1063,6 +1073,9 @@ async def export_step_to_pdf(
             encoding="utf-8",
         )
 
+        if result.returncode == 3:
+            # Quality gate failure — drawing has layout/collision/readability issues
+            raise HTTPException(status_code=422, detail=format_error_message(result.stderr, result.stdout))
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail=format_error_message(result.stderr, result.stdout))
 

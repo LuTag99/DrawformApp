@@ -108,7 +108,7 @@ class GDTCallout(BaseModel):
     ]
     tolerance_value: float  # in mm
     tolerance_modifier: Optional[Literal["M", "L", "S", "P"]] = None  # MMC, LMC, RFS, projected
-    datum_refs: list[str] = []  # e.g. ["A", "B"] — ordered primary, secondary, tertiary
+    datum_refs: list[str] = Field(default_factory=list)  # e.g. ["A", "B"] — ordered primary, secondary, tertiary
     target_view: str = "Front"
     target_feature: Optional[str] = None  # "hole_1", "face_top", etc.
     priority: Literal["must", "should"] = "should"
@@ -119,8 +119,8 @@ class ViewPlan(BaseModel):
     """Dimension plan for a single drawing view."""
 
     view_name: str
-    dimensions: list[DimensionItem] = []
-    gdt_callouts: list[GDTCallout] = []
+    dimensions: list[DimensionItem] = Field(default_factory=list)
+    gdt_callouts: list[GDTCallout] = Field(default_factory=list)
     show_centerlines: bool = True
 
 
@@ -153,10 +153,10 @@ class DimensionPlan(BaseModel):
     turning_subtype: Optional[Literal["simple_rotational", "stepped_shaft", "complex_turning"]] = None
     detail_level: int = Field(default=1, ge=1, le=3)
     datum_system: DatumSystem = Field(default_factory=DatumSystem)
-    views: list[ViewPlan] = []
-    section_views: list[SectionViewPlan] = []
-    detail_views: list[DetailViewPlan] = []
-    process_notes: list[ProcessNote] = []
+    views: list[ViewPlan] = Field(default_factory=list)
+    section_views: list[SectionViewPlan] = Field(default_factory=list)
+    detail_views: list[DetailViewPlan] = Field(default_factory=list)
+    process_notes: list[ProcessNote] = Field(default_factory=list)
     surface_finish: Optional[SurfaceFinish] = None
     policy_hints: dict = Field(default_factory=dict)
-    overrides_applied: list[dict] = []
+    overrides_applied: list[dict] = Field(default_factory=list)

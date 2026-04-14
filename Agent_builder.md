@@ -28,7 +28,8 @@ Rules:
 - Treat exports as insufficient proof; domain usefulness matters.
 - Reuse the active `run_id`, benchmark set, and artifact dir.
 - Log the exact commands that produced the evidence you claim.
-- For `FULL-PATH` and `LONG-RUN`, reference the newest `*_debug.svg`, `*_preview.png`, and `*_report.json` for the active target case.
+- For `MEDIUM-PATH`, `FULL-PATH`, and `LONG-RUN`, reference the newest `*_debug.svg`, `*_preview.png`, and `*_report.json` for the active target case.
+- If a prior iteration exists, point to the comparison artifact set for the Visual Reviewer.
 
 Required output format:
 
@@ -64,6 +65,7 @@ BUILD RESULT
 - Commands run:
 - Artifacts generated:
 - Latest artifact paths:
+- Comparison artifact paths:
 - Run-state updates:
 
 5. Local Validation

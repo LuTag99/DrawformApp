@@ -108,6 +108,21 @@ server/
   reference_learning_gate.py  # Real-Part Reference Learning Gate
 ```
 
+### Regressionsmodi
+
+| Sample-Set       | Golden-Quelle                          | Modus    | Fehlende Golden-Eintraege |
+|------------------|----------------------------------------|----------|---------------------------|
+| `baseline`       | `_golden/views_baseline.json`          | **strict** | FAIL                    |
+| `real_priority`  | `_golden/views_real_priority.json`     | **strict** | FAIL                    |
+| `real20`         | `_golden/views_real20.json`            | **strict** | FAIL                    |
+| `real`           | real_priority-Subset                   | subset   | nur Live-Quality-Checks   |
+| `all`            | baseline + real_priority vereint       | subset   | nur Live-Quality-Checks   |
+
+- `strict`: Jedes Sample muss einen Golden-Eintrag haben. Fehlende Eintraege fuehren zu einem Testfehler.
+- `subset`: Nur verwaltete Golden-Eintraege werden geprueft. Samples ohne Golden-Eintrag werden durch Live-Quality-Checks validiert — kein Snapshot-Vergleich.
+- Mit `--strict` wird strict-Modus fuer jedes Sample-Set erzwungen (fehlende Goldens = FAIL).
+- Mit `--golden <path>` wird strict-Modus mit einer expliziten Golden-Datei erzwungen.
+
 ## Deployment
 
 ```bash
