@@ -78,5 +78,30 @@ jobs:
           Write-Error "FreeCAD python.exe not found after installation."
           exit 1
 
+      - name: Install FreeCAD Python Dependencies
+        run: |
+          & $env:FREECAD_PYTHON -m pip --version
+          if ($LASTEXITCODE -ne 0) {
+            & $env:FREECAD_PYTHON -m ensurepip --upgrade
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
+          & $env:FREECAD_PYTHON -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          & $env:FREECAD_PYTHON -m pip install -r server/requirements.txt
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Smoke Check FreeCAD Python
+        run: |
+          & $env:FREECAD_PYTHON -c "import FreeCAD, Import, Part, TechDraw; from reportlab.graphics import renderPDF; from svglib.svglib import svg2rlg; print('FreeCAD smoke OK')"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Run View Regression with Stability Loop
         run: python server/test_views.py --stability-runs 2

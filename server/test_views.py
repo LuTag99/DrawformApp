@@ -24,8 +24,9 @@ from rules.dimension_strategy import (
     select_layout_profile_standalone,
 )
 
-# Force UTF-8 output on Windows
-if sys.platform == "win32":
+# Force UTF-8 output on Windows — only when running as main script,
+# not when imported by pytest (which manages its own capture streams).
+if sys.platform == "win32" and __name__ == "__main__":
     import io
 
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -72,6 +73,7 @@ SCRIPT_PATH = Path(__file__).parent / "freecad" / "step_to_pdf.py"
 FEATURE_SCRIPT_PATH = Path(__file__).parent / "freecad" / "step_feature_probe.py"
 BASELINE_GOLDEN_PATH = Path(__file__).parent / "_golden" / "views_baseline.json"
 REAL_PRIORITY_GOLDEN_PATH = Path(__file__).parent / "_golden" / "views_real_priority.json"
+REAL20_GOLDEN_PATH = Path(__file__).parent / "_golden" / "views_real20.json"
 REAL_GOLDEN_PATH = DEBUG_DIR / "views_baseline_real.json"
 ALL_GOLDEN_PATH = DEBUG_DIR / "views_baseline_all.json"
 
@@ -432,6 +434,11 @@ def resolve_freecad_python() -> str:
 def _run_freecad_subprocess(freecad_python, step_file, pdf_path, env, timeout=180):
     """Run FreeCAD conversion subprocess. Returns (result, error_dict_or_none)."""
     try:
+        from rules.failure_classes import FREECAD_CRASH, FREECAD_TIMEOUT, FREECAD_EXIT_ERROR
+    except ImportError:
+        FREECAD_CRASH = FREECAD_TIMEOUT = FREECAD_EXIT_ERROR = None
+
+    try:
         result = subprocess.run(
             [freecad_python, str(SCRIPT_PATH), str(step_file), str(pdf_path)],
             capture_output=True,
@@ -440,16 +447,31 @@ def _run_freecad_subprocess(freecad_python, step_file, pdf_path, env, timeout=18
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        return None, {"error": f"FreeCAD conversion timed out ({timeout}s)"}
+        err = {"error": f"FreeCAD conversion timed out ({timeout}s)"}
+        if FREECAD_TIMEOUT:
+            err["failure_classes"] = [FREECAD_TIMEOUT(timeout).to_dict()]
+        return None, err
     if result.returncode == 0:
         return result, None
+    # Exit code 3 = QualityGateError — the report/debug artifacts were still written.
+    # Treat as success so the report can be loaded and quality-checked normally.
+    if result.returncode == 3:
+        return result, None
     error_text = (result.stderr or result.stdout or "").strip()
+    error_lines = [line.rstrip() for line in error_text.splitlines() if line.strip()]
+    error_summary = error_lines[0] if error_lines else f"FreeCAD subprocess exit {result.returncode}"
     # Stack overflow / access violation crash (0xC0000409 = 3221226505, signed = -1073740791)
     is_crash = result.returncode in (3221226505, -1073740791)
-    return result, {
-        "error": f"FreeCAD {'crashed' if is_crash else 'failed'} (exit {result.returncode}): {error_text[:200]}",
+    err = {
+        "error": f"FreeCAD {'crashed' if is_crash else 'failed'} (exit {result.returncode}): {error_summary}",
+        "error_detail": error_text,
         "crash_type": "stack_overflow" if is_crash else "exit_error",
     }
+    if is_crash and FREECAD_CRASH:
+        err["failure_classes"] = [FREECAD_CRASH(error_summary[:200]).to_dict()]
+    elif not is_crash and FREECAD_EXIT_ERROR:
+        err["failure_classes"] = [FREECAD_EXIT_ERROR(result.returncode, error_summary[:200]).to_dict()]
+    return result, err
 
 
 def _run_feature_probe(step_file: Path, base_name: str, freecad_python: str) -> dict | None:
@@ -519,6 +541,14 @@ def run_conversion(step_file: Path, sample_name: str | None = None) -> dict:
         lock_error = "Permission denied" in error_text or "WinError 32" in error_text
         if lock_error and attempt < len(pdf_candidates):
             continue
+        detail_text = str(err.get("error_detail") or "").strip()
+        if detail_text:
+            error_log_path = DEBUG_DIR / f"{base_name}_freecad_error.log"
+            try:
+                error_log_path.write_text(detail_text, encoding="utf-8")
+                err["error_log_path"] = str(error_log_path)
+            except OSError:
+                pass
         return err or {"error": f"FreeCAD conversion failed: {error_text[:200]}"}
 
     if not json_path.exists():
@@ -1076,8 +1106,9 @@ def check_abwicklung(report: dict, expected: dict) -> tuple[bool, list[str]]:
 
     source = abw.get("source", "")
     if source == "fallback_projection":
-        # Fallback projection has no dimensioning metadata to validate
-        return True, []
+        # P1: Fallback projection is a quality blocker — no longer accepted as valid
+        issues.append("Abwicklung source is fallback_projection (fake unfold — not acceptable for manufacturing).")
+        return False, issues
 
     # 1. Outline bounds must have positive dimensions
     bounds = abw.get("outline_bounds", [])
@@ -1505,7 +1536,7 @@ def _is_dimension_like_text(content: str) -> bool:
         return False
     if text.lower() in {"a", "b", "c", "d", "e"}:
         return False
-    if not re.match(r'^[\d.,Ã˜âŒ€Ã—xRMt\sÂ°\-]+$', text):
+    if not re.match(r'^[\d.,\u00D8\u2300\u00D7xRMt\s\u00B0\-]+$', text):
         return False
     return bool(re.search(r"\d", text))
 
@@ -2210,7 +2241,7 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Run view tests and optional golden baseline checks.")
     parser.add_argument(
         "--sample-set",
-        choices=("baseline", "real_priority", "real", "all"),
+        choices=("baseline", "real_priority", "real20", "real", "all"),
         default="baseline",
         help="Sample set to test (default: baseline).",
     )
@@ -2250,6 +2281,11 @@ def parse_args(argv=None):
         metavar="N",
         help="Run N tests in parallel (default: 1 = sequential).",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Force strict mode for all sample sets (missing golden entries = FAIL).",
+    )
     return parser.parse_args(argv)
 
 
@@ -2259,6 +2295,8 @@ def resolve_golden_path(sample_set: str, explicit: Path | None) -> Path:
     normalized = str(sample_set or "").strip().lower() or "baseline"
     if normalized == "real_priority":
         return REAL_PRIORITY_GOLDEN_PATH
+    if normalized == "real20":
+        return REAL20_GOLDEN_PATH
     if normalized == "real":
         return REAL_GOLDEN_PATH
     if normalized == "all":
@@ -2266,9 +2304,56 @@ def resolve_golden_path(sample_set: str, explicit: Path | None) -> Path:
     return BASELINE_GOLDEN_PATH
 
 
+def load_reference_golden_parts(sample_set: str, explicit: Path | None) -> tuple[dict, bool, str]:
+    """Load snapshot baselines for the requested sample set.
+
+    Default behavior deliberately differs between maintained benchmark sets and
+    exploratory broad sweeps:
+    - `baseline`, `real_priority`, and `real20` use their managed goldens strictly.
+    - `real` and `all` default to the maintained subsets only, so samples
+      outside those curated sets are validated by live quality checks without
+      stale snapshot drift from debug-only legacy golden files.
+    - Passing `--golden` restores strict behavior for the provided file.
+    """
+
+    def _load_parts(path: Path) -> dict:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload.get("parts", {})
+
+    if explicit is not None:
+        if not explicit.exists():
+            raise FileNotFoundError(f"Golden baseline missing: {explicit}")
+        try:
+            return _load_parts(explicit), True, str(explicit)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Golden baseline is not valid JSON: {explicit} ({exc})") from exc
+
+    normalized = str(sample_set or "").strip().lower() or "baseline"
+    if normalized == "baseline":
+        return _load_parts(BASELINE_GOLDEN_PATH), True, str(BASELINE_GOLDEN_PATH)
+    if normalized == "real_priority":
+        return _load_parts(REAL_PRIORITY_GOLDEN_PATH), True, str(REAL_PRIORITY_GOLDEN_PATH)
+    if normalized == "real20":
+        if not REAL20_GOLDEN_PATH.exists():
+            raise FileNotFoundError(
+                f"Real20 golden baseline missing: {REAL20_GOLDEN_PATH}\n"
+                "Create it with: python test_views.py --sample-set real20 --update-golden"
+            )
+        return _load_parts(REAL20_GOLDEN_PATH), True, str(REAL20_GOLDEN_PATH)
+    if normalized == "real":
+        return _load_parts(REAL_PRIORITY_GOLDEN_PATH), False, "managed real_priority subset"
+    if normalized == "all":
+        merged = {}
+        merged.update(_load_parts(BASELINE_GOLDEN_PATH))
+        merged.update(_load_parts(REAL_PRIORITY_GOLDEN_PATH))
+        return merged, False, "managed baseline + real_priority subsets"
+    return _load_parts(BASELINE_GOLDEN_PATH), True, str(BASELINE_GOLDEN_PATH)
+
+
 def _test_one_sample(
     sample,
     golden_parts: dict,
+    require_golden_entry: bool,
     update_golden: bool,
     stability_runs: int,
     stability_sleep_ms: int,
@@ -2348,7 +2433,8 @@ def _test_one_sample(
     if not update_golden:
         expected_snapshot = golden_parts.get(name)
         if expected_snapshot is None:
-            all_issues.append(f"Golden baseline missing entry for sample '{name}'")
+            if require_golden_entry:
+                all_issues.append(f"Golden baseline missing entry for sample '{name}'")
         else:
             all_issues.extend(compare_baseline_snapshot(snapshot, expected_snapshot))
 
@@ -2392,19 +2478,25 @@ def main(argv=None):
     args = parse_args(argv)
     DEBUG_DIR.mkdir(exist_ok=True)
     golden_path = resolve_golden_path(args.sample_set, args.golden)
-
-    golden_payload = None
+    golden_parts = {}
+    require_golden_entry = True
+    golden_source_label = str(golden_path)
     if not args.update_golden:
-        if not golden_path.exists():
-            print(f"Golden baseline missing: {golden_path}")
+        try:
+            golden_parts, require_golden_entry, golden_source_label = load_reference_golden_parts(
+                args.sample_set,
+                args.golden,
+            )
+        except FileNotFoundError as exc:
+            print(str(exc))
             print("Create it with: python server/test_views.py --update-golden")
             return 1
-        try:
-            golden_payload = json.loads(golden_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            print(f"Golden baseline is not valid JSON: {golden_path} ({exc})")
+        except ValueError as exc:
+            print(str(exc))
             return 1
-    golden_parts = (golden_payload or {}).get("parts", {})
+        if args.strict:
+            require_golden_entry = True
+            golden_source_label += " (--strict override)"
 
     samples = resolve_sample_set(args.sample_set)
     if args.single:
@@ -2421,10 +2513,21 @@ def main(argv=None):
     print(f"\n{'='*60}")
     print(f"Sample set: {args.sample_set}")
     print(f"Testing {len(samples)} STEP files")
+    if not args.update_golden:
+        strict_text = "strict" if require_golden_entry else "subset"
+        print(f"Golden source: {golden_source_label} ({strict_text})")
+        if not require_golden_entry:
+            print(f"{'!'*60}")
+            print(f"  WARNING: Running in SUBSET mode.")
+            print(f"  Samples without a managed golden entry are validated")
+            print(f"  by live quality checks only — no snapshot regression.")
+            print(f"  Use --strict to enforce golden entries for all samples.")
+            print(f"{'!'*60}")
     print(f"{'='*60}\n")
 
     worker_kwargs = dict(
         golden_parts=golden_parts,
+        require_golden_entry=require_golden_entry,
         update_golden=args.update_golden,
         stability_runs=args.stability_runs,
         stability_sleep_ms=max(0, args.stability_sleep_ms),
@@ -2441,10 +2544,22 @@ def main(argv=None):
             print(f"Testing: {name}... FAILED")
             for issue in issues:
                 print(f"   - {issue}")
+            detail = str(report.get("error_detail") or "").strip()
+            if detail:
+                for line in detail.splitlines():
+                    print(f"      {line}")
+            if report.get("error_log_path"):
+                print(f"      error log: {report['error_log_path']}")
             return False
         det = report.get("detection", {})
         if "error" in report:
-            print(f"Testing: {name}... ERROR: {report['error'][:70]}")
+            print(f"Testing: {name}... ERROR: {report['error']}")
+            detail = str(report.get("error_detail") or "").strip()
+            if detail:
+                for line in detail.splitlines():
+                    print(f"      {line}")
+            if report.get("error_log_path"):
+                print(f"      error log: {report['error_log_path']}")
             return False
         print(f"Testing: {name}... OK (axis={det.get('longest_axis', '?')}, conf={det.get('confidence', 0):.2f})")
         return True
@@ -2469,7 +2584,13 @@ def main(argv=None):
             if result.get("snapshot") is not None:
                 baseline_snapshots[sample.name] = result["snapshot"]
             if "error" in report:
-                print(f"ERROR: {report['error'][:70]}")
+                print(f"ERROR: {report['error']}")
+                detail = str(report.get("error_detail") or "").strip()
+                if detail:
+                    for line in detail.splitlines():
+                        print(f"      {line}")
+                if report.get("error_log_path"):
+                    print(f"      error log: {report['error_log_path']}")
                 all_passed = False
             elif issues:
                 print("FAILED")
@@ -2530,8 +2651,183 @@ def main(argv=None):
         print(f"\nQuality Score: avg={avg_pct:.1f}%  "
               f"GOOD={grades['GOOD']} ACCEPTABLE={grades['ACCEPTABLE']} POOR={grades['POOR']}")
 
+    # Write visual review artifact for agent / iteration comparison.
+    _write_visual_review(args.sample_set, results)
+
     return 0 if all_passed else 1
 
 
+# ---------------------------------------------------------------------------
+# Visual Review Artifact
+# ---------------------------------------------------------------------------
+
+_VISUAL_REVIEW_DIR = DEBUG_DIR / "visual_reviews"
+
+
+def _write_visual_review(sample_set: str, results: list[dict]):
+    """Persist a machine-readable visual review JSON per run.
+
+    Each file captures pass/fail, quality scores, debug SVG paths, and key
+    metrics so an agent or developer can diff iterations without re-running.
+    A ``_latest.json`` symlink (or copy on Windows) always points at the most
+    recent review for the sample set.
+    """
+    _VISUAL_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    ts = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    stamp = ts.strftime("%Y%m%dT%H%M%SZ")
+    filename = f"review_{sample_set}_{stamp}.json"
+
+    parts = {}
+    for r in results:
+        name = r["name"]
+        report = r.get("report", {})
+        det = report.get("detection", {})
+        qs = r.get("quality_score", {})
+        entry: dict = {
+            "passed": r["passed"],
+            "issues": r.get("issues", []),
+            "quality_percent": qs.get("percent", 0.0),
+            "quality_grade": qs.get("grade", "POOR"),
+            "longest_axis": det.get("longest_axis"),
+            "layout_profile": report.get("layout_profile"),
+        }
+        # Reference debug SVG if it exists.
+        debug_svg = DEBUG_DIR / f"{name}_debug.svg"
+        if debug_svg.exists():
+            entry["debug_svg"] = str(debug_svg)
+        preview_png = DEBUG_DIR / f"{name}_preview.png"
+        if preview_png.exists():
+            entry["preview_png"] = str(preview_png)
+        if "error" in report:
+            entry["error"] = report["error"]
+        if report.get("failure_classes"):
+            entry["failure_classes"] = report["failure_classes"]
+        parts[name] = entry
+
+    passed = sum(1 for r in results if r["passed"])
+    scored = [r for r in results if "error" not in r.get("report", {})]
+    avg_pct = (
+        sum(r.get("quality_score", {}).get("percent", 0) for r in scored) / len(scored)
+        if scored else 0.0
+    )
+
+    # Load previous review for same sample set to build delta.
+    previous = _load_latest_visual_review(sample_set)
+    delta = _compute_visual_delta(previous, parts) if previous else None
+
+    review = {
+        "generated_at": ts.isoformat(),
+        "sample_set": sample_set,
+        "total": len(results),
+        "passed": passed,
+        "failed": len(results) - passed,
+        "avg_quality_percent": round(avg_pct, 1),
+        "verdict": "PASS" if passed == len(results) else "FAIL_RECOMMENDED",
+        "parts": parts,
+    }
+    if delta:
+        review["delta_vs_previous"] = delta
+
+    review_path = _VISUAL_REVIEW_DIR / filename
+    review_path.write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Update latest pointer.
+    latest_path = _VISUAL_REVIEW_DIR / f"_latest_{sample_set}.json"
+    try:
+        if latest_path.exists():
+            latest_path.unlink()
+        shutil.copy2(review_path, latest_path)
+    except OSError:
+        pass
+
+    print(f"\nVisual review: {review_path}")
+    if delta:
+        imp = delta.get("newly_passing", [])
+        reg = delta.get("newly_failing", [])
+        if imp:
+            print(f"  Improved: {', '.join(imp)}")
+        if reg:
+            print(f"  Regressed: {', '.join(reg)}")
+
+
+def _load_latest_visual_review(sample_set: str) -> dict | None:
+    latest_path = _VISUAL_REVIEW_DIR / f"_latest_{sample_set}.json"
+    if not latest_path.exists():
+        return None
+    try:
+        payload = json.loads(latest_path.read_text(encoding="utf-8"))
+        return payload.get("parts", {})
+    except Exception:
+        return None
+
+
+def _compute_visual_delta(previous: dict, current: dict) -> dict:
+    """Compare two visual reviews and return a structured delta."""
+    newly_passing = []
+    newly_failing = []
+    score_changes = {}
+    for name in sorted(set(previous) | set(current)):
+        prev = previous.get(name, {})
+        curr = current.get(name, {})
+        was_pass = prev.get("passed", False)
+        now_pass = curr.get("passed", False)
+        if not was_pass and now_pass:
+            newly_passing.append(name)
+        elif was_pass and not now_pass:
+            newly_failing.append(name)
+        prev_score = prev.get("quality_percent", 0)
+        curr_score = curr.get("quality_percent", 0)
+        if abs(curr_score - prev_score) >= 1.0:
+            score_changes[name] = {"previous": prev_score, "current": curr_score}
+    return {
+        "newly_passing": newly_passing,
+        "newly_failing": newly_failing,
+        "score_changes": score_changes,
+    }
+
+
+def compare_reviews(argv=None):
+    """CLI entry point: compare two visual review JSON files.
+
+    Usage: python test_views.py --compare-reviews before.json after.json
+    """
+    parser = argparse.ArgumentParser(description="Compare two visual review artifacts.")
+    parser.add_argument("before", type=Path, help="Path to the 'before' review JSON.")
+    parser.add_argument("after", type=Path, help="Path to the 'after' review JSON.")
+    args = parser.parse_args(argv)
+
+    before = json.loads(args.before.read_text(encoding="utf-8"))
+    after = json.loads(args.after.read_text(encoding="utf-8"))
+    delta = _compute_visual_delta(before.get("parts", {}), after.get("parts", {}))
+
+    before_passed = before.get("passed", 0)
+    after_passed = after.get("passed", 0)
+    before_total = before.get("total", 0)
+    after_total = after.get("total", 0)
+
+    print(f"Before: {before_passed}/{before_total}  ({before.get('generated_at', '?')})")
+    print(f"After:  {after_passed}/{after_total}  ({after.get('generated_at', '?')})")
+    print()
+    if delta.get("newly_passing"):
+        print(f"Newly passing ({len(delta['newly_passing'])}):")
+        for name in delta["newly_passing"]:
+            print(f"  + {name}")
+    if delta.get("newly_failing"):
+        print(f"Newly failing ({len(delta['newly_failing'])}):")
+        for name in delta["newly_failing"]:
+            print(f"  - {name}")
+    if delta.get("score_changes"):
+        print(f"Score changes ({len(delta['score_changes'])}):")
+        for name, change in sorted(delta["score_changes"].items()):
+            direction = "+" if change["current"] > change["previous"] else ""
+            diff = change["current"] - change["previous"]
+            print(f"  {name}: {change['previous']:.1f}% -> {change['current']:.1f}% ({direction}{diff:.1f})")
+    if not delta.get("newly_passing") and not delta.get("newly_failing") and not delta.get("score_changes"):
+        print("No changes detected.")
+    return 0
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--compare-reviews":
+        sys.exit(compare_reviews(sys.argv[2:]))
     sys.exit(main())
