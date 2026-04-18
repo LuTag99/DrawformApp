@@ -1,3 +1,5 @@
+import { authorizedFetch } from './apiClient';
+
 export interface AiInsight {
   narrative: string;
   chips: string[];
@@ -20,7 +22,7 @@ export async function fetchAiInsight(
   statusSummary: string,
 ): Promise<AiInsight> {
   try {
-    const response = await fetch('/api/ai-insight', {
+    const response = await authorizedFetch('/api/ai-insight', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ statusSummary }),

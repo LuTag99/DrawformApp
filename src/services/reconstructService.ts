@@ -1,3 +1,6 @@
+import { authorizedFetch } from './apiClient';
+import { uploadReconstructInput } from './firebaseStorageService';
+
 export type ReconstructStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
 export interface ReconstructDimensions {
@@ -152,7 +155,7 @@ function stopPolling(jobId: string) {
 
 async function fetchServerJob(jobId: string): Promise<ReconstructJob | null> {
   try {
-    const response = await fetch(`${API_BASE}/${jobId}`);
+    const response = await authorizedFetch(`${API_BASE}/${jobId}`);
     if (!response.ok) return null;
     return normalizeServerJob(await response.json());
   } catch {
@@ -196,7 +199,7 @@ function ensurePolling(jobs: ReconstructJob[]) {
 
 async function refreshFromBackend() {
   try {
-    const response = await fetch(API_BASE);
+    const response = await authorizedFetch(API_BASE);
     if (!response.ok) return;
     const payload = await response.json();
     if (!Array.isArray(payload)) return;
@@ -251,7 +254,7 @@ export async function createReconstructJob(params: ReconstructParams): Promise<R
   formData.append('height_mm', String(params.heightMm));
   formData.append('depth_mm', String(params.depthMm));
 
-  const response = await fetch(API_BASE, { method: 'POST', body: formData });
+  const response = await authorizedFetch(API_BASE, { method: 'POST', body: formData });
   if (!response.ok) {
     const detail = await response.text().catch(() => String(response.status));
     throw new Error(`Rekonstruktion fehlgeschlagen: ${detail}`);
@@ -260,13 +263,42 @@ export async function createReconstructJob(params: ReconstructParams): Promise<R
   const job = normalizeServerJob(payload);
   if (!job) throw new Error('Server returned invalid job payload.');
 
+  // Storage-Mirror laeuft erst nachdem der Server die kanonische jobId
+  // vergeben hat, damit der Pfad users/{uid}/reconstruct/{jobId}/input/... der
+  // tatsaechlichen Job-ID entspricht (siehe DATA_MODEL.md).
+  void Promise.all([
+    uploadReconstructInput(params.front, job.id, 'front'),
+    uploadReconstructInput(params.top, job.id, 'top'),
+    uploadReconstructInput(params.left, job.id, 'left'),
+    uploadReconstructInput(params.right, job.id, 'right'),
+    uploadReconstructInput(params.back, job.id, 'back'),
+  ]).catch((error) => {
+    console.warn('Reconstruct-Quellbilder konnten nicht in Firebase Storage gespeichert werden.', error);
+  });
+
   upsertJob(job);
   startPolling(job.id);
   return job;
 }
 
-export function downloadReconstructFile(jobId: string, type: 'stl' | 'step' | 'pdf') {
-  window.open(`${API_BASE}/${jobId}/download?type=${type}`, '_blank');
+export async function downloadReconstructFile(jobId: string, type: 'stl' | 'step' | 'pdf') {
+  const response = await authorizedFetch(`${API_BASE}/${jobId}/download?type=${type}`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => String(response.status));
+    throw new Error(detail || `Download fehlgeschlagen (${response.status}).`);
+  }
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const fallbackName = `reconstruct-${jobId}.${type}`;
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const fileName = disposition.match(/filename="([^"]+)"/i)?.[1] ?? fallbackName;
+  const anchor = document.createElement('a');
+  anchor.href = blobUrl;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
 }
 
 export function clearReconstructJobs() {

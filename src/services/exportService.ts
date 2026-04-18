@@ -1,8 +1,17 @@
+import { authorizedFetch } from './apiClient';
+import {
+  newClientExportId,
+  uploadExportOutput,
+  uploadExportSource,
+} from './firebaseStorageService';
+
 export interface ExportResult {
   success: boolean;
   message: string;
   fileName?: string;
   blobUrl?: string;
+  storagePath?: string;
+  exportId?: string;
 }
 
 export interface PdfExportOptions {
@@ -64,13 +73,31 @@ async function readErrorMessage(response: Response) {
   return text || `Export failed (${response.status})`;
 }
 
+async function persistExportArtifacts(
+  file: File,
+  resultBlob: Blob,
+  exportId: string,
+  resultName: string,
+): Promise<string | undefined> {
+  try {
+    await uploadExportSource(file, exportId);
+    const storedResult = await uploadExportOutput(resultBlob, exportId, resultName);
+    return storedResult.fullPath;
+  } catch (error) {
+    console.warn('Firebase Storage Upload fehlgeschlagen.', error);
+    return undefined;
+  }
+}
+
 export async function requestPdfExport(
   file: File,
   options: PdfExportOptions = {},
 ): Promise<ExportResult> {
+  const exportId = newClientExportId();
   const formData = new FormData();
   formData.append('file', file);
   formData.append('format', 'pdf');
+  formData.append('export_id', exportId);
   appendOptionalField(formData, 'title', options.title);
   appendOptionalField(formData, 'drawing_no', options.drawingNo);
   appendOptionalField(formData, 'revision', options.revision);
@@ -88,7 +115,7 @@ export async function requestPdfExport(
     formData.append('include_flat_pattern', options.includeFlatPattern ? '1' : '0');
   }
   try {
-    const response = await fetch('/api/export', {
+    const response = await authorizedFetch('/api/export', {
       method: 'POST',
       body: formData,
     });
@@ -109,13 +136,21 @@ export async function requestPdfExport(
 
     const blob = await response.blob();
     const fallbackName = `${file.name.replace(/\.[^.]+$/, '')}.pdf`;
-    const fileName = getFileNameFromDisposition(response.headers.get('content-disposition'), fallbackName);
+    const fileName = getFileNameFromDisposition(
+      response.headers.get('content-disposition'),
+      fallbackName,
+    );
     const blobUrl = URL.createObjectURL(blob);
+    const storagePath = await persistExportArtifacts(file, blob, exportId, fileName);
     return {
       success: true,
-      message: 'PDF erstellt.',
+      message: storagePath
+        ? 'PDF erstellt und in Firebase Storage gespeichert.'
+        : 'PDF erstellt.',
       fileName,
       blobUrl,
+      storagePath,
+      exportId,
     };
   } catch (error) {
     return {
@@ -129,11 +164,13 @@ export async function requestDxfExport(
   file: File,
   options: DxfExportOptions = {},
 ): Promise<ExportResult> {
+  const exportId = newClientExportId();
   const formData = new FormData();
   formData.append('file', file);
+  formData.append('export_id', exportId);
   appendOptionalField(formData, 'k_factor', options.kFactor);
   try {
-    const response = await fetch('/api/export-dxf', {
+    const response = await authorizedFetch('/api/export-dxf', {
       method: 'POST',
       body: formData,
     });
@@ -154,13 +191,21 @@ export async function requestDxfExport(
 
     const blob = await response.blob();
     const fallbackName = `${file.name.replace(/\.[^.]+$/, '')}_flat.dxf`;
-    const fileName = getFileNameFromDisposition(response.headers.get('content-disposition'), fallbackName);
+    const fileName = getFileNameFromDisposition(
+      response.headers.get('content-disposition'),
+      fallbackName,
+    );
     const blobUrl = URL.createObjectURL(blob);
+    const storagePath = await persistExportArtifacts(file, blob, exportId, fileName);
     return {
       success: true,
-      message: 'DXF erstellt.',
+      message: storagePath
+        ? 'DXF erstellt und in Firebase Storage gespeichert.'
+        : 'DXF erstellt.',
       fileName,
       blobUrl,
+      storagePath,
+      exportId,
     };
   } catch (error) {
     return {

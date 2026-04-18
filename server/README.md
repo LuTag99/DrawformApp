@@ -34,6 +34,44 @@ uvicorn main:app --reload --port 8000
 Invoke-RestMethod http://localhost:8000/api/health
 ```
 
+## Auth-Modi
+
+Die geschuetzten Endpunkte (`/api/export`, `/api/analyze`,
+`/api/reconstruct`, `/api/ai-insight`) kennen genau zwei Modi. Welcher Modus
+aktiv ist, entscheidet `DRAWFORM_REQUIRE_FIREBASE_AUTH`:
+
+- **Produktion / Standardentwicklung** — `DRAWFORM_REQUIRE_FIREBASE_AUTH=1`
+  (Default). Jeder Aufruf braucht einen
+  `Authorization: Bearer <Firebase ID Token>`-Header. Das Backend verifiziert
+  den Token via Firebase Admin SDK; ohne gueltiges Service-Account-Setup
+  liefert das Backend `503 Firebase Admin SDK ist nicht initialisiert`.
+
+  ```powershell
+  $token = "<Firebase ID Token>"
+  curl -X POST http://localhost:8000/api/export `
+       -H "Authorization: Bearer $token" `
+       -F "file=@bauteil.step" -F "format=pdf" -o drawing.pdf
+  ```
+
+- **Lokaler Dev/Test ohne Firebase Auth** — `DRAWFORM_REQUIRE_FIREBASE_AUTH=0`.
+  Authentifizierung wird komplett deaktiviert; statt 503 haengt das Backend
+  einen stabilen Stub-User ein
+  (`uid=local-dev`, `email=dev@drawform.local`, ueberschreibbar via
+  `DRAWFORM_LOCAL_DEV_UID` / `DRAWFORM_LOCAL_DEV_EMAIL`). Aufrufe gehen ohne
+  Token durch. Dieser Modus ist ausschliesslich fuer lokale Entwicklung und
+  Tests gedacht und darf in Produktion **nicht** gesetzt sein.
+
+  ```powershell
+  $env:DRAWFORM_REQUIRE_FIREBASE_AUTH="0"
+  uvicorn main:app --reload --port 8000
+  curl -X POST http://localhost:8000/api/ai-insight `
+       -H "Content-Type: application/json" `
+       -d '{"statusSummary":"Fast gate ok"}'
+  ```
+
+Der Auth-Vertrag wird durch `server/test_api_endpoints.py::AuthContractTests`
+abgesichert (Stub-User-Modus + 401 ohne Token im strict-Modus).
+
 ## Debug SVG (wenn PDF leer ist)
 
 Das Backend schreibt eine Debug-SVG nach `server/_debug`.
@@ -50,14 +88,27 @@ Der Service laeuft danach auf `http://localhost:8000`.
 
 ## Export
 
+Die folgenden Beispiele gelten fuer den Default-Modus
+`DRAWFORM_REQUIRE_FIREBASE_AUTH=1`. Im lokalen Dev-Modus mit
+`DRAWFORM_REQUIRE_FIREBASE_AUTH=0` kann der Header bewusst weggelassen werden.
+
 ```powershell
-curl -F "file=@C:\path\model.step" -F "format=pdf" http://localhost:8000/api/export -o drawing.pdf
+$token = "<Firebase ID Token>"
+curl -X POST http://localhost:8000/api/export `
+  -H "Authorization: Bearer $token" `
+  -F "file=@C:\path\model.step" `
+  -F "format=pdf" `
+  -o drawing.pdf
 ```
 
 Alle optionalen Parameter (werden validiert):
 
 ```powershell
-curl -F "file=@C:\path\model.step" -F "format=pdf" `
+$token = "<Firebase ID Token>"
+curl -X POST http://localhost:8000/api/export `
+  -H "Authorization: Bearer $token" `
+  -F "file=@C:\path\model.step" `
+  -F "format=pdf" `
   -F "scale=1:2" `
   -F "projection=1. Winkel (DIN EN ISO 5456-2)" `
   -F "standard=DIN EN ISO 128/129-1" `
@@ -67,7 +118,7 @@ curl -F "file=@C:\path\model.step" -F "format=pdf" `
   -F "k_factor=0.33" `
   -F "detail_level=1" `
   -F "include_flat_pattern=1" `
-  http://localhost:8000/api/export -o drawing.pdf
+  -o drawing.pdf
 ```
 
 **`include_flat_pattern`** (Default: `1` = aktiviert):
@@ -110,14 +161,18 @@ View regression tests against golden baseline:
 ```powershell
 cd server
 .venv\Scripts\python.exe test_views.py --sample-set baseline
+.venv\Scripts\python.exe test_views.py --sample-set real20
 .venv\Scripts\python.exe test_views.py --sample-set real_priority
 .venv\Scripts\python.exe test_views.py --sample-set real
 .venv\Scripts\python.exe test_views.py --sample-set all
 .venv\Scripts\python.exe test_views.py --sample-set baseline --parallel 4
+.venv\Scripts\python.exe test_views.py --compare-reviews before_review.json after_review.json
 ```
 
 If a task iteration produces fresh `*_preview.png` or `*_debug.svg` artifacts,
 run the mandatory visual review handoff before treating the result as Critic-ready.
+If the run is relevant for learning or release quality, follow with a knowledge-capture
+decision and preserve the latest `visual_review` / `delta_review` artifacts.
 
 Reference-learning gate for curated real parts:
 

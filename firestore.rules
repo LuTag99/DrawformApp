@@ -1,0 +1,79 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // users/{uid}: nur der Nutzer selbst darf sein eigenes Profil lesen/schreiben.
+    // Die uid im Dokument muss mit dem Auth-Kontext uebereinstimmen.
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid)
+                    && request.resource.data.uid == uid;
+      allow update: if isOwner(uid)
+                    && request.resource.data.uid == uid;
+      allow delete: if false;
+
+      // users/{uid}/exports/{exportId}: Export-Metadaten.
+      // Clientseitig nur lesen; Schreiben erfolgt ausschliesslich serverseitig
+      // ueber das Admin SDK, das diese Rules umgeht.
+      match /exports/{exportId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      // Platzhalter fuer spaetere Analyzer-/Reconstruct-Persistenz.
+      // Bis zur expliziten TODO fuer diese Jobs bleiben Schreibrechte zu.
+      match /analyzer/{jobId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+      match /reconstruct/{jobId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+    }
+
+    // Gemeinsame KB-Sichtbarkeitslogik: ein Dokument ist clientseitig nur
+    // lesbar, wenn es aktiv ist, fuer eingeloggte Nutzer freigegeben ist und
+    // der Review-Status nicht 'rejected' ist. Chunks erben diese Logik strikt.
+    function kbDocReadable(docId) {
+      let doc = get(/databases/$(database)/documents/kb_documents/$(docId));
+      return doc != null
+             && doc.data.isActive == true
+             && doc.data.visibility == 'authenticated'
+             && doc.data.reviewStatus != 'rejected';
+    }
+
+    // kb_documents: angemeldete Nutzer duerfen lesen; Schreiben nur Admin SDK.
+    match /kb_documents/{docId} {
+      allow read: if isSignedIn() && kbDocReadable(docId);
+      allow write: if false;
+
+      // Chunks sind genau dann lesbar, wenn das Eltern-Dokument lesbar waere.
+      // Damit driften Chunk- und Dokument-Sichtbarkeit nicht auseinander.
+      match /chunks/{chunkId} {
+        allow read: if isSignedIn() && kbDocReadable(docId);
+        allow write: if false;
+      }
+    }
+
+    // kb_sync_runs: technische Laufdaten sind ausschliesslich serverseitig.
+    match /kb_sync_runs/{runId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // Alles andere ist standardmaessig verboten.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

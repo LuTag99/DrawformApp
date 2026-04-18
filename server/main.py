@@ -20,7 +20,12 @@ from typing import Any, Dict, Optional
 from urllib.parse import quote
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional if env is provided by the shell
+    load_dotenv = None
+
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -31,7 +36,25 @@ from rules.dimension_strategy import (
     select_layout_profile_standalone,
 )
 
+try:
+    import firebase_admin
+    from firebase_admin import auth as firebase_auth
+    from firebase_admin import credentials as firebase_credentials
+except ImportError:  # pragma: no cover - optional until deployment dependencies are installed
+    firebase_admin = None
+    firebase_auth = None
+    firebase_credentials = None
+
 ROOT = Path(__file__).resolve().parent
+if load_dotenv is not None:
+    for candidate in (
+        ROOT / ".env",
+        ROOT.parent / ".env",
+        ROOT.parent / ".env.local",
+    ):
+        if candidate.exists():
+            load_dotenv(candidate, override=False)
+
 FREECAD_SCRIPT = ROOT / "freecad" / "step_to_pdf.py"
 FREECAD_UNFOLD_SCRIPT = ROOT / "freecad" / "step_unfold.py"
 FREECAD_FEATURE_SCRIPT = ROOT / "freecad" / "step_feature_probe.py"
@@ -48,6 +71,18 @@ ANALYZER_FREECAD_TIMEOUT_SECONDS = int(os.getenv("DRAWFORM_ANALYZER_FREECAD_TIME
 ANALYZER_UNITS = {"mm", "cm", "inch"}
 ANALYZER_FEATURE_EXTENSIONS = {".step", ".stp", ".iges", ".igs", ".stl", ".brep"}
 AI_INSIGHT_MAX_SUMMARY_CHARS = int(os.getenv("DRAWFORM_AI_INSIGHT_MAX_SUMMARY_CHARS", "2000"))
+FIREBASE_SERVICE_ACCOUNT_PATH = os.getenv("DRAWFORM_FIREBASE_SERVICE_ACCOUNT_PATH") or os.getenv(
+    "GOOGLE_APPLICATION_CREDENTIALS"
+)
+FIREBASE_SERVICE_ACCOUNT_JSON = os.getenv("DRAWFORM_FIREBASE_SERVICE_ACCOUNT_JSON")
+FIREBASE_PROJECT_ID = os.getenv("DRAWFORM_FIREBASE_PROJECT_ID")
+FIREBASE_AUTH_ENABLED = str(os.getenv("DRAWFORM_REQUIRE_FIREBASE_AUTH", "1")).strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
+LOCAL_DEV_UID = os.getenv("DRAWFORM_LOCAL_DEV_UID", "local-dev")
+LOCAL_DEV_EMAIL = os.getenv("DRAWFORM_LOCAL_DEV_EMAIL", "dev@drawform.local")
 
 ANALYZER_LOCK = threading.Lock()
 
@@ -68,6 +103,7 @@ EXPORT_ALLOWED_SCALES = {
     "1:100",
 }
 DRAWING_NO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,31}$")
+CLIENT_ENTITY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def _safe_content_disposition(filename: str) -> dict[str, str]:
@@ -118,6 +154,11 @@ class AiInsightResponse(BaseModel):
     chips: list[str]
 
 
+class AuthenticatedUser(BaseModel):
+    uid: str
+    email: Optional[str] = None
+
+
 def _restore_job_map(path: Path, *, interruption_message: str) -> Dict[str, Dict[str, Any]]:
     jobs = load_job_map(path)
     if not jobs:
@@ -144,6 +185,63 @@ def _persist_job_map(path: Path, jobs: Dict[str, Dict[str, Any]]) -> None:
         save_job_map(path, jobs)
     except OSError as error:
         sys.stderr.write(f"[drawform] failed to persist jobs for {path}: {error}\n")
+
+
+def _load_firebase_credentials():
+    if firebase_credentials is None:
+        raise RuntimeError("firebase-admin package is not installed.")
+    if FIREBASE_SERVICE_ACCOUNT_JSON:
+        try:
+            payload = json.loads(FIREBASE_SERVICE_ACCOUNT_JSON)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("DRAWFORM_FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON.") from error
+        return firebase_credentials.Certificate(payload)
+    if FIREBASE_SERVICE_ACCOUNT_PATH:
+        service_account_path = Path(FIREBASE_SERVICE_ACCOUNT_PATH)
+        if not service_account_path.exists():
+            raise RuntimeError(f"Firebase service account file not found: {service_account_path}")
+        return firebase_credentials.Certificate(str(service_account_path))
+    raise RuntimeError(
+        "Missing Firebase service account. Set DRAWFORM_FIREBASE_SERVICE_ACCOUNT_PATH "
+        "or DRAWFORM_FIREBASE_SERVICE_ACCOUNT_JSON."
+    )
+
+
+def _ensure_firebase_admin() -> None:
+    if not FIREBASE_AUTH_ENABLED:
+        return
+    if firebase_admin is None:
+        raise RuntimeError("firebase-admin package is not installed.")
+    if firebase_admin._apps:
+        return
+    credentials_obj = _load_firebase_credentials()
+    options: Dict[str, Any] = {}
+    if FIREBASE_PROJECT_ID:
+        options["projectId"] = FIREBASE_PROJECT_ID
+    firebase_admin.initialize_app(credentials_obj, options or None)
+
+
+def require_current_user(authorization: Optional[str] = Header(None)) -> AuthenticatedUser:
+    # Zwei klare Modi:
+    #   AUTH_REQUIRED: FIREBASE_AUTH_ENABLED=True -> Bearer-Token pflicht.
+    #   AUTH_DISABLED_FOR_LOCAL_DEV_AND_TEST: FIREBASE_AUTH_ENABLED=False ->
+    #   ein stabiler Stub-User ersetzt die Firebase-Identity, ohne 503.
+    if not FIREBASE_AUTH_ENABLED:
+        return AuthenticatedUser(uid=LOCAL_DEV_UID, email=LOCAL_DEV_EMAIL)
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header.")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="Authorization header must use Bearer token.")
+    try:
+        _ensure_firebase_admin()
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+    except Exception as error:
+        raise HTTPException(status_code=401, detail=f"Invalid Firebase token: {error}") from error
+    return AuthenticatedUser(uid=str(decoded.get("uid")), email=decoded.get("email"))
 
 
 ANALYZER_JOBS: Dict[str, Dict[str, Any]] = _restore_job_map(
@@ -217,6 +315,17 @@ def _normalize_revision(value: Optional[str]) -> str:
             "revision has invalid format (allowed: letters, numbers, ., _, -)."
         )
     return revision
+
+
+def _normalize_client_entity_id(value: Optional[str], *, field_name: str) -> str:
+    entity_id = str(value or "").strip()
+    if not entity_id:
+        raise MetadataValidationError(f"{field_name} must not be empty.")
+    if not CLIENT_ENTITY_ID_RE.fullmatch(entity_id):
+        raise MetadataValidationError(
+            f"{field_name} has invalid format (allowed: letters, numbers, ., _, -)."
+        )
+    return entity_id
 
 
 def _normalize_scale(value: Optional[str]) -> str:
@@ -847,6 +956,11 @@ def health() -> Dict[str, str]:
 
 @app.get("/api/logs/last")
 def last_export_log() -> Response:
+    if FIREBASE_AUTH_ENABLED:
+        raise HTTPException(
+            status_code=403,
+            detail="Global export log endpoint is disabled in authenticated multi-user mode.",
+        )
     log_path = ROOT / "_debug" / "last_export.log"
     if not log_path.exists():
         raise HTTPException(status_code=404, detail="No export log found yet.")
@@ -854,23 +968,33 @@ def last_export_log() -> Response:
 
 
 @app.post("/api/ai-insight", response_model=AiInsightResponse)
-def ai_insight(payload: AiInsightRequest) -> AiInsightResponse:
+def ai_insight(
+    payload: AiInsightRequest,
+    current_user: AuthenticatedUser = Depends(require_current_user),
+) -> AiInsightResponse:
     return _build_ai_insight(payload.statusSummary)
 
 
 @app.get("/api/analyze")
-def list_analyzer_jobs() -> list[Dict[str, Any]]:
+def list_analyzer_jobs(current_user: AuthenticatedUser = Depends(require_current_user)) -> list[Dict[str, Any]]:
     with ANALYZER_LOCK:
-        jobs = [dict(job) for job in ANALYZER_JOBS.values()]
+        jobs = [
+            dict(job)
+            for job in ANALYZER_JOBS.values()
+            if str(job.get("ownerUid") or "") == current_user.uid
+        ]
     jobs.sort(key=lambda item: item.get("createdAt", ""), reverse=True)
     return jobs
 
 
 @app.get("/api/analyze/{job_id}")
-def get_analyzer_job(job_id: str) -> Dict[str, Any]:
+def get_analyzer_job(
+    job_id: str,
+    current_user: AuthenticatedUser = Depends(require_current_user),
+) -> Dict[str, Any]:
     with ANALYZER_LOCK:
         job = ANALYZER_JOBS.get(job_id)
-    if job is None:
+    if job is None or str(job.get("ownerUid") or "") != current_user.uid:
         raise HTTPException(status_code=404, detail="Analyzer job not found.")
     return dict(job)
 
@@ -878,7 +1002,9 @@ def get_analyzer_job(job_id: str) -> Dict[str, Any]:
 @app.post("/api/analyze")
 async def create_analyzer_job(
     background_tasks: BackgroundTasks,
+    current_user: AuthenticatedUser = Depends(require_current_user),
     file: UploadFile = File(...),
+    job_id: Optional[str] = Form(None),
     units: str = Form("mm"),
     scale: float = Form(1.0),
     layer: str = Form("AI_DIMENSIONS"),
@@ -891,7 +1017,13 @@ async def create_analyzer_job(
     if normalized_units not in ANALYZER_UNITS:
         raise HTTPException(status_code=400, detail=f"Unsupported units: {units}")
 
+    try:
+        resolved_job_id = uuid4().hex if job_id is None else _normalize_client_entity_id(job_id, field_name="job_id")
+    except MetadataValidationError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
     metadata = {
+        "jobId": resolved_job_id,
         "units": normalized_units,
         "scale": safe_float(scale, 1.0),
         "layer": (layer or "AI_DIMENSIONS").strip() or "AI_DIMENSIONS",
@@ -903,10 +1035,9 @@ async def create_analyzer_job(
     if len(payload) > ANALYZER_MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail=f"File too large (max {ANALYZER_MAX_FILE_BYTES // (1024 * 1024)} MB).")
 
-    job_id = uuid4().hex
     source_type = detect_source_type(file.filename, file.content_type)
     job: Dict[str, Any] = {
-        "id": job_id,
+        "id": resolved_job_id,
         "createdAt": now_iso(),
         "status": "pending",
         "fileName": Path(file.filename).name,
@@ -914,22 +1045,26 @@ async def create_analyzer_job(
         "metadata": metadata,
         "sourceType": source_type,
         "executionMode": "backend",
+        "ownerUid": current_user.uid,
+        "ownerEmail": current_user.email,
         "result": None,
         "error": None,
     }
     with ANALYZER_LOCK:
-        ANALYZER_JOBS[job_id] = job
+        ANALYZER_JOBS[resolved_job_id] = job
         snapshot = copy.deepcopy(ANALYZER_JOBS)
     _persist_job_map(ANALYZER_JOBS_PATH, snapshot)
 
-    background_tasks.add_task(process_analyzer_job, job_id, payload)
+    background_tasks.add_task(process_analyzer_job, resolved_job_id, payload)
     return dict(job)
 
 
 @app.post("/api/export")
 async def export_step_to_pdf(
+    current_user: AuthenticatedUser = Depends(require_current_user),
     file: UploadFile = File(...),
     format: str = Form("pdf"),
+    export_id: Optional[str] = Form(None),
     title: Optional[str] = Form(None),
     drawing_no: Optional[str] = Form(None),
     revision: Optional[str] = Form(None),
@@ -956,6 +1091,11 @@ async def export_step_to_pdf(
         raise HTTPException(status_code=400, detail="Only STEP files (.step/.stp) are supported.")
 
     try:
+        resolved_export_id = (
+            _normalize_client_entity_id(export_id, field_name="export_id")
+            if export_id is not None
+            else None
+        )
         export_meta = build_metadata(
             title,
             drawing_no,
@@ -972,6 +1112,8 @@ async def export_step_to_pdf(
             detail_level=detail_level,
             include_flat_pattern=None if include_flat_pattern is None else include_flat_pattern not in ("0", "false", "False"),
         )
+        if resolved_export_id is not None:
+            export_meta["export_id"] = resolved_export_id
     except MetadataValidationError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -1093,7 +1235,9 @@ async def export_step_to_pdf(
 
 @app.post("/api/export-dxf")
 async def export_step_to_dxf(
+    current_user: AuthenticatedUser = Depends(require_current_user),
     file: UploadFile = File(...),
+    export_id: Optional[str] = Form(None),
     k_factor: Optional[float] = Form(None),
 ) -> Response:
     """Export the flat pattern (Abwicklung / laser contour) of a sheet metal STEP as DXF."""
@@ -1102,6 +1246,11 @@ async def export_step_to_dxf(
     extension = Path(file.filename).suffix.lower()
     if extension not in (".step", ".stp"):
         raise HTTPException(status_code=400, detail="Only STEP files (.step/.stp) are supported.")
+    try:
+        if export_id is not None:
+            _normalize_client_entity_id(export_id, field_name="export_id")
+    except MetadataValidationError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
     freecad_cmd = resolve_freecad_cmd()
     if not freecad_cmd or not freecad_cmd.exists():
@@ -1325,28 +1474,39 @@ def _run_reconstruct_pipeline(
 
 
 @app.get("/api/reconstruct")
-def list_reconstruct_jobs() -> list[Dict[str, Any]]:
+def list_reconstruct_jobs(current_user: AuthenticatedUser = Depends(require_current_user)) -> list[Dict[str, Any]]:
     with RECONSTRUCT_LOCK:
-        jobs = [dict(job) for job in RECONSTRUCT_JOBS.values()]
+        jobs = [
+            dict(job)
+            for job in RECONSTRUCT_JOBS.values()
+            if str(job.get("ownerUid") or "") == current_user.uid
+        ]
     jobs.sort(key=lambda item: item.get("createdAt", ""), reverse=True)
     return jobs
 
 
 @app.get("/api/reconstruct/{job_id}")
-def get_reconstruct_job(job_id: str) -> Dict[str, Any]:
+def get_reconstruct_job(
+    job_id: str,
+    current_user: AuthenticatedUser = Depends(require_current_user),
+) -> Dict[str, Any]:
     with RECONSTRUCT_LOCK:
         job = RECONSTRUCT_JOBS.get(job_id)
-    if job is None:
+    if job is None or str(job.get("ownerUid") or "") != current_user.uid:
         raise HTTPException(status_code=404, detail="Reconstruct job not found.")
     return dict(job)
 
 
 @app.get("/api/reconstruct/{job_id}/download")
-def download_reconstruct_file(job_id: str, type: str = "stl") -> Response:
+def download_reconstruct_file(
+    job_id: str,
+    type: str = "stl",
+    current_user: AuthenticatedUser = Depends(require_current_user),
+) -> Response:
     """Lädt STL, STEP oder PDF eines abgeschlossenen Rekonstruktions-Jobs herunter."""
     with RECONSTRUCT_LOCK:
         job = RECONSTRUCT_JOBS.get(job_id)
-    if job is None:
+    if job is None or str(job.get("ownerUid") or "") != current_user.uid:
         raise HTTPException(status_code=404, detail="Job nicht gefunden.")
     if job.get("status") != "completed":
         raise HTTPException(status_code=409, detail="Job noch nicht abgeschlossen.")
@@ -1372,6 +1532,7 @@ def download_reconstruct_file(job_id: str, type: str = "stl") -> Response:
 @app.post("/api/reconstruct")
 async def create_reconstruct_job(
     background_tasks: BackgroundTasks,
+    current_user: AuthenticatedUser = Depends(require_current_user),
     front: UploadFile = File(...),
     top: UploadFile = File(...),
     left: UploadFile = File(...),
@@ -1420,6 +1581,8 @@ async def create_reconstruct_job(
         "partName": safe_part_name,
         "totalSize": total_size,
         "dimensionsMm": {"width": dims[0], "height": dims[1], "depth": dims[2]},
+        "ownerUid": current_user.uid,
+        "ownerEmail": current_user.email,
         "progress": None,
         "result": None,
         "error": None,

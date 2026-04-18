@@ -1,6 +1,10 @@
+import { authorizedFetch } from './apiClient';
+import { uploadAnalyzerInput } from './firebaseStorageService';
+
 export type AnalyzerUnit = 'mm' | 'cm' | 'inch';
 
 export interface AnalyzerMetadata {
+  jobId: string;
   units: AnalyzerUnit;
   scale: number;
   layer: string;
@@ -144,13 +148,18 @@ function normalizeUnit(value: unknown): AnalyzerUnit {
   return 'mm';
 }
 
-function normalizeMetadata(value: unknown): AnalyzerMetadata {
+function normalizeMetadata(value: unknown, fallbackJobId?: string): AnalyzerMetadata {
   const meta = asRecord(value);
   const viewsRaw = meta?.views;
   const views = Array.isArray(viewsRaw)
     ? viewsRaw.map((item) => String(item).trim()).filter(Boolean)
     : [];
+  const jobId =
+    typeof meta?.jobId === 'string' && meta.jobId.trim()
+      ? meta.jobId.trim()
+      : fallbackJobId ?? nextId();
   return {
+    jobId,
     units: normalizeUnit(meta?.units),
     scale: Number(meta?.scale) > 0 ? Number(meta?.scale) : 1,
     layer: typeof meta?.layer === 'string' && meta.layer.trim() ? meta.layer.trim() : 'AI_DIMENSIONS',
@@ -227,7 +236,7 @@ function normalizeServerJob(value: unknown): AnalyzerJob | null {
     status: normalizeStatus(raw.status),
     fileName: typeof raw.fileName === 'string' ? raw.fileName : 'unknown',
     size: Number(raw.size) || 0,
-    metadata: normalizeMetadata(raw.metadata),
+    metadata: normalizeMetadata(raw.metadata, raw.id),
     sourceType,
     executionMode,
     result,
@@ -287,7 +296,7 @@ function stopPolling(jobId: string) {
 }
 
 async function fetchServerJob(jobId: string): Promise<AnalyzerJob | null> {
-  const response = await fetch(`${ANALYZE_API}/${jobId}`);
+  const response = await authorizedFetch(`${ANALYZE_API}/${jobId}`);
   if (!response.ok) {
     return null;
   }
@@ -338,7 +347,7 @@ function ensurePolling(jobs: AnalyzerJob[]) {
 
 async function refreshJobsFromBackend() {
   try {
-    const response = await fetch(ANALYZE_API);
+    const response = await authorizedFetch(ANALYZE_API);
     if (!response.ok) {
       return;
     }
@@ -404,6 +413,7 @@ function updateJob(
 async function createServerJob(file: File, metadata: AnalyzerMetadata): Promise<AnalyzerJob> {
   const formData = new FormData();
   formData.append('file', file);
+  formData.append('job_id', metadata.jobId);
   formData.append('units', metadata.units);
   formData.append('scale', String(metadata.scale));
   formData.append('layer', metadata.layer);
@@ -411,7 +421,7 @@ async function createServerJob(file: File, metadata: AnalyzerMetadata): Promise<
     formData.append('notes', metadata.notes);
   }
   formData.append('views', JSON.stringify(metadata.views));
-  const response = await fetch(ANALYZE_API, {
+  const response = await authorizedFetch(ANALYZE_API, {
     method: 'POST',
     body: formData,
   });
@@ -566,16 +576,18 @@ export function subscribeToJobs(listener: Listener) {
 
 export async function createAnalysisJob(
   file: File,
-  metadata: AnalyzerMetadata,
+  metadata: Omit<AnalyzerMetadata, 'jobId'>,
 ): Promise<AnalyzerJob> {
   const preview = await fileToPreview(file);
+  const jobId = nextId();
+  const normalizedMetadata = normalizeMetadata({ ...metadata, jobId }, jobId);
   const localJob: AnalyzerJob = {
-    id: nextId(),
+    id: jobId,
     createdAt: new Date().toISOString(),
     status: 'pending',
     fileName: file.name,
     size: file.size,
-    metadata,
+    metadata: normalizedMetadata,
     preview,
     sourceType: detectSourceType(file),
     executionMode: 'backend',
@@ -585,8 +597,12 @@ export async function createAnalysisJob(
   persist(jobs);
   emit(jobs);
 
+  void uploadAnalyzerInput(file, localJob.id).catch((error) => {
+    console.warn('Analyzer-Datei konnte nicht in Firebase Storage gespeichert werden.', error);
+  });
+
   try {
-    const serverJob = await createServerJob(file, metadata);
+    const serverJob = await createServerJob(file, normalizedMetadata);
     const merged = replaceJob(localJob.id, {
       ...serverJob,
       preview: preview ?? serverJob.preview,

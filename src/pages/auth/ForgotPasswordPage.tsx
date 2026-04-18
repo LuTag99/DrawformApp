@@ -6,7 +6,7 @@ import { GradientButton } from '../../components/GradientButton';
 import { useAuth } from '../../hooks/useAuth';
 
 export function ForgotPasswordPage() {
-  const { resetPassword } = useAuth();
+  const { resetPassword, firebaseConfigured } = useAuth();
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -29,6 +29,11 @@ export function ForgotPasswordPage() {
         </>
       }
     >
+      {!firebaseConfigured && (
+        <div className="status-banner status-banner--error">
+          Firebase ist noch nicht konfiguriert. Trage zuerst die `VITE_FIREBASE_*` Werte ein.
+        </div>
+      )}
       {status && (
         <div
           className={`status-banner ${

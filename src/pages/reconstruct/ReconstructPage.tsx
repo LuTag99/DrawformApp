@@ -217,7 +217,9 @@ function JobCard({ job }: { job: ReconstructJob }) {
               <button
                 type="button"
                 className="chip"
-                onClick={() => downloadReconstructFile(job.id, 'stl')}
+                onClick={() => {
+                  void downloadReconstructFile(job.id, 'stl').catch(console.error);
+                }}
                 style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
               >
                 <HiOutlineArrowDownTray /> STL
@@ -227,7 +229,9 @@ function JobCard({ job }: { job: ReconstructJob }) {
               <button
                 type="button"
                 className="chip"
-                onClick={() => downloadReconstructFile(job.id, 'step')}
+                onClick={() => {
+                  void downloadReconstructFile(job.id, 'step').catch(console.error);
+                }}
                 style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
               >
                 <HiOutlineArrowDownTray /> STEP
@@ -237,7 +241,9 @@ function JobCard({ job }: { job: ReconstructJob }) {
               <button
                 type="button"
                 className="chip"
-                onClick={() => downloadReconstructFile(job.id, 'pdf')}
+                onClick={() => {
+                  void downloadReconstructFile(job.id, 'pdf').catch(console.error);
+                }}
                 style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
               >
                 <HiOutlineArrowDownTray /> Zeichnung PDF

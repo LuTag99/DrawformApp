@@ -6,7 +6,7 @@ Das neue Frontend setzt den iOS 26 Glass Look konsequent um, fühlt sich wie ein
 ## Features
 
 - Glasiges, responsives UI mit Desktop-Sidebar & Mobile-Tab-Bar.
-- Auth-Flow (Login, Registrierung, Passwort-Reset) ohne Backend – Status bleibt im LocalStorage.
+- Firebase Auth mit E-Mail/Passwort, Google Login und Passwort-Reset.
 - Dashboard mit AI-Insights (Backend-Proxy) und animiertem Canvas-Chart.
 - Projektübersicht, Export-Center inkl. Server-Aufruf `/api/export`, Profilverwaltung mit Avatar + Passwortwechsel.
 - Bemaessungslabor mit Backend-Jobflow ueber `/api/analyze` (Status: pending/processing/completed) inkl. CAD-Feature-Probe (Bounding-Box, Bohrung, Biegeradius, Fasen, Langlocher).
@@ -32,6 +32,48 @@ cd C:\Projects\DrawformApp\server
 .venv\Scripts\Activate.ps1
 $env:FREECAD_PYTHON="C:\Program Files\FreeCAD 1.0\bin\python.exe"
 uvicorn main:app --reload --port 8000
+
+## Firebase Setup
+
+1. In Firebase eine Web-App registrieren und die `VITE_FIREBASE_*` Werte in `.env.local` eintragen.
+2. In `Authentication -> Sign-in method` `Email/Password` und `Google` aktivieren.
+3. In `Storage` einen Bucket anlegen.
+4. Fuer das Backend einen Service Account erzeugen und `DRAWFORM_FIREBASE_SERVICE_ACCOUNT_PATH`
+   (oder `DRAWFORM_FIREBASE_SERVICE_ACCOUNT_JSON`) setzen.
+5. Falls noetig `DRAWFORM_FIREBASE_PROJECT_ID` setzen und den Backend-Server neu starten.
+
+### Auth-Modi des Backends
+
+Die geschuetzten Endpunkte (`/api/export`, `/api/analyze`, `/api/reconstruct`,
+`/api/ai-insight`) kennen genau zwei Modi:
+
+- **Produktion / Standardentwicklung**: `DRAWFORM_REQUIRE_FIREBASE_AUTH=1`
+  (Default). Jeder Aufruf braucht einen `Authorization: Bearer <Firebase ID Token>`-Header;
+  das Backend verifiziert den Token via Firebase Admin SDK. Beispiel:
+
+  ```bash
+  TOKEN="<Firebase ID Token aus einer angemeldeten Drawform-Session>"
+  curl -X POST http://localhost:8000/api/export \
+       -H "Authorization: Bearer $TOKEN" \
+       -F "file=@bauteil.step" \
+       -F "format=pdf"
+  ```
+
+- **Lokaler Dev/Test ohne Firebase Auth**: `DRAWFORM_REQUIRE_FIREBASE_AUTH=0`.
+  In diesem Modus wird ein fixer Stub-User (`uid=local-dev`,
+  `email=dev@drawform.local`, ueber `DRAWFORM_LOCAL_DEV_UID` /
+  `DRAWFORM_LOCAL_DEV_EMAIL` ueberschreibbar) angenommen. Es gibt **keinen**
+  503-Fehler, sondern alle Endpunkte sind ohne Token aufrufbar:
+
+  ```bash
+  DRAWFORM_REQUIRE_FIREBASE_AUTH=0 uvicorn main:app --reload --port 8000
+  curl -X POST http://localhost:8000/api/ai-insight \
+       -H "Content-Type: application/json" \
+       -d '{"statusSummary":"Fast gate ok"}'
+  ```
+
+  Dieser Modus ist ausschliesslich fuer lokale Entwicklung und Tests gedacht
+  und darf in Produktion **nicht** gesetzt sein.
 
 
 ## Lokales Backend (STEP -> PDF)
@@ -90,8 +132,8 @@ src/
   components/        # Glas-UI Bausteine (Buttons, Header, Cards)
   layouts/           # Auth Layout + App Shell (Sidebar, Mobile Nav)
   pages/             # Auth, Dashboard, Projekte, Export, Profil, Reconstruct
-  providers/         # AuthContext (LocalStorage)
-  services/          # AI-Insight-Proxy + Export-API + Analyzer + Reconstruct
+  providers/         # AuthContext auf Firebase Auth
+  services/          # AI-Insight-Proxy + Export-API + Analyzer + Reconstruct + Storage Helper
   styles/            # globals.css mit Glass Look Tokens
 
 server/
@@ -138,7 +180,9 @@ Für klassische Plesk-Server (Apache/Nginx) findest du eine Schritt-für-Schritt
 
 ## Weiterentwicklung
 
-- Die Authentifizierung ist absichtlich lokal gehalten. Hänge hier dein bestehendes Backend an (`AuthProvider` austauschen).
+- Auth und Storage laufen über Firebase. Trage dafür die `VITE_FIREBASE_*` Werte im Frontend und den Firebase Service Account im Backend ein.
+- Backend-Endpunkte prüfen Firebase ID Tokens und filtern Analyse-/Reconstruct-Jobs auf den angemeldeten Benutzer.
+- Export-, Analyzer- und Reconstruct-Uploads werden zusätzlich benutzergebunden in Firebase Storage gespiegelt.
 - Für AI-Features lassen sich weitere Panels (Co-Pilot, Generative Assist) leicht über `fetchAiInsight` erweitern.
 - Die Export-Seite unterstützt bereits Drag & Drop – bei Bedarf Dateianalyse/Progress-Bar ergänzen.
 - Fuer Entwickler-Dokumentation siehe `Developer.md`, `DEVELOPER_DOCS.md` und `REPO_SYNC_POLICY.md`.

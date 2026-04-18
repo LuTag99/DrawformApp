@@ -23,6 +23,7 @@ const navLinks = [
 export function AppShell() {
   const { user, logout } = useAuth();
   const initials = user?.email?.substring(0, 2)?.toUpperCase() ?? 'DF';
+  const displayName = user?.displayName?.trim() || (user?.email ?? 'Willkommen');
 
   return (
     <div className="content-layer">
@@ -39,7 +40,7 @@ export function AppShell() {
                 <div className="fallback">{initials}</div>
               )}
               <div>
-                <strong>{user?.email ?? 'Willkommen'}</strong>
+                <strong>{displayName}</strong>
                 <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
                   AI Design Workspace
                 </p>

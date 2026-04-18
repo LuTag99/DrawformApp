@@ -6,13 +6,14 @@ import { GradientButton } from '../../components/GradientButton';
 import { useAuth } from '../../hooks/useAuth';
 
 export function RegisterPage() {
-  const { register, user, loading } = useAuth();
+  const { register, loginWithGoogle, user, loading, firebaseConfigured } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
 
   if (!loading && user) {
     return <Navigate to="/" replace />;
@@ -21,7 +22,7 @@ export function RegisterPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (password !== confirmPassword) {
-      setStatus('Die Passwörter stimmen nicht überein.');
+      setStatus('Die Passwoerter stimmen nicht ueberein.');
       return;
     }
     setBusy(true);
@@ -34,25 +35,33 @@ export function RegisterPage() {
     setBusy(false);
   };
 
+  const handleGoogleSignup = async () => {
+    setGoogleBusy(true);
+    const error = await loginWithGoogle();
+    if (error) {
+      setStatus(error);
+    } else {
+      navigate('/');
+    }
+    setGoogleBusy(false);
+  };
+
   return (
     <AuthLayout
       title="Account erstellen"
-      subtitle="Glas-UI, AI Co-Pilot & Export-Automation in einem Workspace."
+      subtitle="Firebase Auth erstellt dein Benutzerkonto fuer eigene Daten und Dateien."
       footer={
         <>
           Bereits dabei? <Link to="/login">Zum Login</Link>
         </>
       }
     >
-      {status && (
-        <div
-          className={`status-banner ${
-            status.startsWith('Profil') ? 'status-banner--success' : 'status-banner--error'
-          }`}
-        >
-          {status}
+      {!firebaseConfigured && (
+        <div className="status-banner status-banner--error">
+          Firebase ist noch nicht konfiguriert. Trage zuerst die `VITE_FIREBASE_*` Werte ein.
         </div>
       )}
+      {status && <div className="status-banner status-banner--error">{status}</div>}
       <form onSubmit={handleSubmit} className="stack">
         <InputField
           label="E-Mail"
@@ -71,7 +80,7 @@ export function RegisterPage() {
           placeholder="Mindestens 6 Zeichen"
         />
         <InputField
-          label="Passwort bestätigen"
+          label="Passwort bestaetigen"
           type="password"
           required
           value={confirmPassword}
@@ -82,9 +91,18 @@ export function RegisterPage() {
           type="submit"
           label="Workspace anlegen"
           busy={busy}
-          busyLabel="Erstelle Glas-Workspace …"
+          busyLabel="Erstelle Workspace..."
         />
       </form>
+      <div className="stack" style={{ marginTop: '1rem' }}>
+        <GradientButton
+          type="button"
+          label="Mit Google fortfahren"
+          busy={googleBusy}
+          busyLabel="Google-Login startet..."
+          onClick={handleGoogleSignup}
+        />
+      </div>
     </AuthLayout>
   );
 }

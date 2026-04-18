@@ -1,0 +1,33 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Nutzerdaten: Avatare, Export-Inputs, Export-Outputs, Reconstruct-Inputs.
+    match /users/{uid}/{allPaths=**} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // Knowledge Base Mirror:
+    // - Lesen ist fuer angemeldete Nutzer erlaubt.
+    // - Clientseitiges Schreiben ist niemals erlaubt; alle Uploads erfolgen
+    //   ausschliesslich ueber das Admin SDK (serverseitiger KB-Sync).
+    match /knowledge-base/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Default deny fuer alle nicht explizit erlaubten Pfade.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
