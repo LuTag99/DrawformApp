@@ -4,12 +4,9 @@ import {
   HiOutlineCubeTransparent,
   HiOutlineChartPie,
   HiOutlineArrowUpTray,
-  HiOutlineUserCircle,
   HiOutlineCube,
 } from 'react-icons/hi2';
 import './AppShell.css';
-import { GradientButton } from '../components/GradientButton';
-import { useAuth } from '../hooks/useAuth';
 
 const navLinks = [
   { to: '/', label: 'Dashboard', icon: HiSparkles },
@@ -17,14 +14,9 @@ const navLinks = [
   { to: '/reconstruct', label: 'Rekonstruktion', icon: HiOutlineCube },
   { to: '/projects', label: 'Projekte', icon: HiOutlineChartPie },
   { to: '/export', label: 'Export', icon: HiOutlineArrowUpTray },
-  { to: '/profile', label: 'Profil', icon: HiOutlineUserCircle },
 ];
 
 export function AppShell() {
-  const { user, logout } = useAuth();
-  const initials = user?.email?.substring(0, 2)?.toUpperCase() ?? 'DF';
-  const displayName = user?.displayName?.trim() || (user?.email ?? 'Willkommen');
-
   return (
     <div className="content-layer">
       <div className="app-shell">
@@ -34,13 +26,9 @@ export function AppShell() {
               <span>Drawform AI</span>
             </div>
             <div className="sidebar__avatar">
-              {user?.avatarUrl ? (
-                <img src={user.avatarUrl} alt="Profil" />
-              ) : (
-                <div className="fallback">{initials}</div>
-              )}
+              <div className="fallback">DF</div>
               <div>
-                <strong>{displayName}</strong>
+                <strong>Drawform Workspace</strong>
                 <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
                   AI Design Workspace
                 </p>
@@ -64,11 +52,6 @@ export function AppShell() {
               ))}
             </nav>
           </div>
-          <GradientButton
-            label="Logout"
-            onClick={logout}
-            style={{ width: '100%' }}
-          />
         </aside>
         <main className="app-shell__main">
           <Outlet />

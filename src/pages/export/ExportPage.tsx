@@ -8,7 +8,7 @@ import {
   requestDxfExport,
   type PdfExportOptions,
 } from '../../services/exportService';
-import { authorizedFetch } from '../../services/apiClient';
+import { apiFetch } from '../../services/apiClient';
 
 const SCALE_OPTIONS = ['auto', '20:1', '10:1', '5:1', '2:1', '1:1', '1:2', '1:5', '1:10', '1:20', '1:50', '1:100'];
 const SHEET_OPTIONS = ['auto', 'A3', 'A2'];
@@ -213,7 +213,7 @@ export function ExportPage() {
     }
     setLogBusy(true);
     try {
-      const response = await authorizedFetch('/api/logs/last');
+      const response = await apiFetch('/api/logs/last');
       if (!response.ok) {
         const message = await response.text();
         setLogText(message || `Log nicht verfuegbar (${response.status}).`);

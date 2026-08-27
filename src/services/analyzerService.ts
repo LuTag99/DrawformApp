@@ -1,5 +1,4 @@
-import { authorizedFetch } from './apiClient';
-import { uploadAnalyzerInput } from './firebaseStorageService';
+import { apiFetch } from './apiClient';
 
 export type AnalyzerUnit = 'mm' | 'cm' | 'inch';
 
@@ -296,7 +295,7 @@ function stopPolling(jobId: string) {
 }
 
 async function fetchServerJob(jobId: string): Promise<AnalyzerJob | null> {
-  const response = await authorizedFetch(`${ANALYZE_API}/${jobId}`);
+  const response = await apiFetch(`${ANALYZE_API}/${jobId}`);
   if (!response.ok) {
     return null;
   }
@@ -347,7 +346,7 @@ function ensurePolling(jobs: AnalyzerJob[]) {
 
 async function refreshJobsFromBackend() {
   try {
-    const response = await authorizedFetch(ANALYZE_API);
+    const response = await apiFetch(ANALYZE_API);
     if (!response.ok) {
       return;
     }
@@ -421,7 +420,7 @@ async function createServerJob(file: File, metadata: AnalyzerMetadata): Promise<
     formData.append('notes', metadata.notes);
   }
   formData.append('views', JSON.stringify(metadata.views));
-  const response = await authorizedFetch(ANALYZE_API, {
+  const response = await apiFetch(ANALYZE_API, {
     method: 'POST',
     body: formData,
   });
@@ -596,10 +595,6 @@ export async function createAnalysisJob(
   jobs.unshift(localJob);
   persist(jobs);
   emit(jobs);
-
-  void uploadAnalyzerInput(file, localJob.id).catch((error) => {
-    console.warn('Analyzer-Datei konnte nicht in Firebase Storage gespeichert werden.', error);
-  });
 
   try {
     const serverJob = await createServerJob(file, normalizedMetadata);

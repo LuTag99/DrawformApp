@@ -1,16 +1,10 @@
-import { authorizedFetch } from './apiClient';
-import {
-  newClientExportId,
-  uploadExportOutput,
-  uploadExportSource,
-} from './firebaseStorageService';
+import { apiFetch } from './apiClient';
 
 export interface ExportResult {
   success: boolean;
   message: string;
   fileName?: string;
   blobUrl?: string;
-  storagePath?: string;
   exportId?: string;
 }
 
@@ -73,20 +67,11 @@ async function readErrorMessage(response: Response) {
   return text || `Export failed (${response.status})`;
 }
 
-async function persistExportArtifacts(
-  file: File,
-  resultBlob: Blob,
-  exportId: string,
-  resultName: string,
-): Promise<string | undefined> {
-  try {
-    await uploadExportSource(file, exportId);
-    const storedResult = await uploadExportOutput(resultBlob, exportId, resultName);
-    return storedResult.fullPath;
-  } catch (error) {
-    console.warn('Firebase Storage Upload fehlgeschlagen.', error);
-    return undefined;
+function newClientExportId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `exp-${crypto.randomUUID()}`;
   }
+  return `exp-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 
 export async function requestPdfExport(
@@ -115,7 +100,7 @@ export async function requestPdfExport(
     formData.append('include_flat_pattern', options.includeFlatPattern ? '1' : '0');
   }
   try {
-    const response = await authorizedFetch('/api/export', {
+    const response = await apiFetch('/api/export', {
       method: 'POST',
       body: formData,
     });
@@ -141,15 +126,11 @@ export async function requestPdfExport(
       fallbackName,
     );
     const blobUrl = URL.createObjectURL(blob);
-    const storagePath = await persistExportArtifacts(file, blob, exportId, fileName);
     return {
       success: true,
-      message: storagePath
-        ? 'PDF erstellt und in Firebase Storage gespeichert.'
-        : 'PDF erstellt.',
+      message: 'PDF erstellt.',
       fileName,
       blobUrl,
-      storagePath,
       exportId,
     };
   } catch (error) {
@@ -170,7 +151,7 @@ export async function requestDxfExport(
   formData.append('export_id', exportId);
   appendOptionalField(formData, 'k_factor', options.kFactor);
   try {
-    const response = await authorizedFetch('/api/export-dxf', {
+    const response = await apiFetch('/api/export-dxf', {
       method: 'POST',
       body: formData,
     });
@@ -196,15 +177,11 @@ export async function requestDxfExport(
       fallbackName,
     );
     const blobUrl = URL.createObjectURL(blob);
-    const storagePath = await persistExportArtifacts(file, blob, exportId, fileName);
     return {
       success: true,
-      message: storagePath
-        ? 'DXF erstellt und in Firebase Storage gespeichert.'
-        : 'DXF erstellt.',
+      message: 'DXF erstellt.',
       fileName,
       blobUrl,
-      storagePath,
       exportId,
     };
   } catch (error) {
