@@ -1,188 +1,226 @@
-# Drawform AI Workspace (React)
+# Drawform
 
-Ein kompletter Rewrite der Drawform-App auf Basis von React, TypeScript und Vite.
-Das neue Frontend setzt den iOS 26 Glass Look konsequent um, fühlt sich wie eine KI-Experience an und kann auf demselben Server wie [Drawform-Website](https://github.com/LuTag99/Drawform-Website) ausgeliefert werden.
+### From 3D CAD models to technical drawings.
 
-## Features
+Drawform is a functional prototype that automates parts of the technical drawing workflow for mechanical engineering.
 
-- Glasiges, responsives UI mit Desktop-Sidebar & Mobile-Tab-Bar.
-- Firebase Auth mit E-Mail/Passwort, Google Login und Passwort-Reset.
-- Dashboard mit AI-Insights (Backend-Proxy) und animiertem Canvas-Chart.
-- Projektübersicht, Export-Center inkl. Server-Aufruf `/api/export`, Profilverwaltung mit Avatar + Passwortwechsel.
-- Bemaessungslabor mit Backend-Jobflow ueber `/api/analyze` (Status: pending/processing/completed) inkl. CAD-Feature-Probe (Bounding-Box, Bohrung, Biegeradius, Fasen, Langlocher).
-- Foto-zu-3D-Rekonstruktion ueber `/api/reconstruct` (5 Ansichtsfotos -> STL -> STEP).
-- Komponentenbibliothek für Glass Cards, Gradient Buttons, Chips usw.
+The project started from a problem I experienced firsthand as a mechanical designer: once a 3D model was finished, creating the corresponding 2D manufacturing drawing was often repetitive and time-consuming.
 
-## Tech-Stack
+I started building Drawform to explore how much of that workflow can be automated.
 
-- React 19, React Router 7, TypeScript.
-- Vite 7 als Dev- und Build-Tool.
-- Framer Motion für subtile Animationen.
-- clsx + Custom CSS (glassmorphism + iOS Typographie).
+## What works today
 
-## Schnellstart
+- STEP/STP file import
+- Geometry processing with FreeCAD
+- Automatic orthographic and isometric projections
+- Rule-based selection of basic dimensions
+- Automatic drawing layout
+- Technical PDF export
+- Drawing-quality checks before export
 
-## frontend:
+## Current status
+
+Drawform is a **functional prototype**, not a production-ready engineering tool.
+
+Complex section views, complete tolerancing, GD&T, surface specifications and full manufacturing-documentation reliability are not yet implemented.
+
+Generated drawings currently require engineering review.
+
+## How I built it
+
+My background is mechanical engineering, not software development.
+
+I built Drawform largely through AI-assisted development using **Codex and Claude**, combining AI coding tools with my own experience in CAD, automation and manufacturing.
+
+That is one of the ideas behind the project:
+
+> **What becomes possible when domain experts can use AI to build software for problems they know firsthand?**
+
+## Workflow
+
+```text
+STEP / STP Model
+      ↓
+Geometry Analysis
+      ↓
+Rule-Based Drawing Logic
+      ↓
+Views + Basic Dimensions
+      ↓
+Technical PDF
+```
+
+## Built with
+
+React · TypeScript · FastAPI · Python · FreeCAD · Electron
+
+---
+
+**Status:** Prototype / Work in Progress
+
+## Development setup
+
+### Frontend
+
 ```bash
 npm install
 npm run dev
 ```
-## Backend
+
+The Vite development server runs on port `5173` by default.
+
+### Backend
+
+```powershell
 cd C:\Projects\DrawformApp\server
 .venv\Scripts\Activate.ps1
 $env:FREECAD_PYTHON="C:\Program Files\FreeCAD 1.0\bin\python.exe"
 uvicorn main:app --reload --port 8000
-
-## Firebase Setup
-
-1. In Firebase eine Web-App registrieren und die `VITE_FIREBASE_*` Werte in `.env.local` eintragen.
-2. In `Authentication -> Sign-in method` `Email/Password` und `Google` aktivieren.
-3. In `Storage` einen Bucket anlegen.
-4. Fuer das Backend einen Service Account erzeugen und `DRAWFORM_FIREBASE_SERVICE_ACCOUNT_PATH`
-   (oder `DRAWFORM_FIREBASE_SERVICE_ACCOUNT_JSON`) setzen.
-5. Falls noetig `DRAWFORM_FIREBASE_PROJECT_ID` setzen und den Backend-Server neu starten.
-
-### Auth-Modi des Backends
-
-Die geschuetzten Endpunkte (`/api/export`, `/api/analyze`, `/api/reconstruct`,
-`/api/ai-insight`) kennen genau zwei Modi:
-
-- **Produktion / Standardentwicklung**: `DRAWFORM_REQUIRE_FIREBASE_AUTH=1`
-  (Default). Jeder Aufruf braucht einen `Authorization: Bearer <Firebase ID Token>`-Header;
-  das Backend verifiziert den Token via Firebase Admin SDK. Beispiel:
-
-  ```bash
-  TOKEN="<Firebase ID Token aus einer angemeldeten Drawform-Session>"
-  curl -X POST http://localhost:8000/api/export \
-       -H "Authorization: Bearer $TOKEN" \
-       -F "file=@bauteil.step" \
-       -F "format=pdf"
-  ```
-
-- **Lokaler Dev/Test ohne Firebase Auth**: `DRAWFORM_REQUIRE_FIREBASE_AUTH=0`.
-  In diesem Modus wird ein fixer Stub-User (`uid=local-dev`,
-  `email=dev@drawform.local`, ueber `DRAWFORM_LOCAL_DEV_UID` /
-  `DRAWFORM_LOCAL_DEV_EMAIL` ueberschreibbar) angenommen. Es gibt **keinen**
-  503-Fehler, sondern alle Endpunkte sind ohne Token aufrufbar:
-
-  ```bash
-  DRAWFORM_REQUIRE_FIREBASE_AUTH=0 uvicorn main:app --reload --port 8000
-  curl -X POST http://localhost:8000/api/ai-insight \
-       -H "Content-Type: application/json" \
-       -d '{"statusSummary":"Fast gate ok"}'
-  ```
-
-  Dieser Modus ist ausschliesslich fuer lokale Entwicklung und Tests gedacht
-  und darf in Produktion **nicht** gesetzt sein.
-
-
-## Lokales Backend (STEP -> PDF)
-
-Fuer den MVP-Export (STEP -> PDF mit ISO7200-Schriftkopf, `sheet=auto|A3|A2`) gibt es einen lokalen FastAPI-Service.
-Details und Setup findest du unter `server/README.md`.
-
-| Script           | Zweck                               |
-| ---------------- | ----------------------------------- |
-| `npm run dev`    | Vite-Dev-Server auf `5173`          |
-| `npm run build`  | Type-Check + Production Build (`dist/`) |
-| `npm run preview`| Vorschau des gebauten Bundles       |
-| `npm run lint`   | ESLint über das Repo                |
-
-## Backend-Capabilities
-
-Der FastAPI-Service (`server/main.py`) bietet:
-
-- **PDF-Export**: STEP -> Normkonforme 2D-Fertigungszeichnung (DIN EN ISO, First-Angle)
-- **DXF-Export**: Blech-Abwicklung als DXF
-- **Feature-Analyse**: Geometrie-Erkennung (Bohrungen, Gewinde, Biegeradien, Fasen, Langlocher)
-- **Dimension Strategy Engine (DSE)**: Regelbasierte Bemaessungsplanung mit KB-gesteuertem Closed-Loop-Learning
-- **Normkonforme Annotationen**: GD&T (ISO 1101), Schnittansichten (ISO 128-40), Oberflaechenangaben (ISO 1302), Schweisssymbole (ISO 2553), Diagonale Massfuehrung (ISO 129-1)
-- **Foto-Rekonstruktion**: 5 Ansichtsfotos -> Voxel-Carving -> STL -> STEP
-- **AI-Insights**: Backend-Proxy fuer AI-gestuetzte Analyse
-- **Abwicklung-Toggle**: Checkbox im Export-Center steuert ob Flat-Pattern auf dem Blatt erscheint
-
-### Zeichnungsqualitaet
-
-- ISO 7200 Schriftfeld mit Masse, Material, Oberflaechenangabe, Skalenlabel (ISO 5455)
-- DIN EN ISO First-Angle Projektion
-- Aktuelle Test- und Regressionsergebnisse werden nicht fest in dieses README geschrieben
-- Die kanonischen Regeln dafuer stehen in `AGENTS.md` und `REPO_SYNC_POLICY.md`
-- Live-Status immer ueber `server/README.md`, CI und aktuelle Run-Artefakte pruefen
-- Closed-Loop KB-Learning: Critic-Feedback wird automatisch als KB-Regelvorschlag strukturiert
-
-## AI-Insights
-
-- `src/services/aiService.ts` ruft den Backend-Proxy `POST /api/ai-insight` auf.
-- API-Keys liegen ausschliesslich serverseitig — kein Key im Browser.
-- Ist das Backend nicht erreichbar oder der Endpunkt nicht implementiert, faellt die App automatisch auf kuratierte Insights zurueck.
-
-## Export-Service & gemeinsamer Server
-
-- `src/services/exportService.ts` erwartet einen Endpoint `POST /api/export` auf **derselben Domain** wie die Website.
-- Lokal ist ein laufendes Backend unter `/api/export` erforderlich; ohne Backend zeigt die Seite einen Fehlerstatus.
-- Für eine gemeinsame Auslieferung mit [Drawform-Website](https://github.com/LuTag99/Drawform-Website):
-  1. `npm run build`
-  2. Den Inhalt aus `dist/` in das Webserver-Verzeichnis der bestehenden Seite kopieren (z. B. als Unterordner `/ai`).
-  3. Reverse-Proxy/Rewrite so konfigurieren, dass `/api/export` an euren Python-Service weitergeleitet wird.
-
-## Projektstruktur
-
 ```
+
+The local backend provides the STEP-to-PDF pipeline and the Analyzer and reconstruction endpoints.
+
+## Firebase setup
+
+1. Register a Firebase web application and add the `VITE_FIREBASE_*` values to `.env.local`.
+2. Enable `Email/Password` and `Google` under Firebase Authentication.
+3. Create a Firebase Storage bucket.
+4. Create a service account for the backend and set `DRAWFORM_FIREBASE_SERVICE_ACCOUNT_PATH` or `DRAWFORM_FIREBASE_SERVICE_ACCOUNT_JSON`.
+5. Set `DRAWFORM_FIREBASE_PROJECT_ID` if the project ID cannot be resolved from the credentials.
+
+The frontend uses Firebase Authentication for protected routes and Firebase Storage for optional artifact and avatar uploads. The application does not currently use Firestore as a project database.
+
+### Backend authentication modes
+
+Protected endpoints such as `/api/export`, `/api/analyze`, `/api/reconstruct`, and `/api/ai-insight` support two modes.
+
+#### Firebase authentication - default
+
+`DRAWFORM_REQUIRE_FIREBASE_AUTH=1` is the default. Requests require a Firebase ID token:
+
+```bash
+TOKEN="<Firebase ID token>"
+curl -X POST http://localhost:8000/api/export \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@part.step" \
+  -F "format=pdf"
+```
+
+#### Local development without Firebase authentication
+
+```powershell
+$env:DRAWFORM_REQUIRE_FIREBASE_AUTH="0"
+uvicorn main:app --reload --port 8000
+```
+
+This mode uses a local stub user and is intended only for development and testing.
+
+## Implemented backend capabilities
+
+- **STEP/STP to PDF:** imports real geometry through FreeCAD and generates projected drawing views.
+- **Feature probe:** extracts bounding dimensions and heuristic hole, bend, chamfer, slot, pocket, and rotational information.
+- **Dimension Strategy Engine:** applies deterministic rules for milling, turning, and sheet-metal profiles.
+- **Drawing layout:** places views, dimensions, annotations, and a fixed A3/A2 title block.
+- **Quality checks:** can reject an export when structural or layout problems are detected.
+- **Conditional sheet-metal DXF:** requires the FreeCAD SheetMetal workbench to be installed separately.
+- **Experimental photo reconstruction:** processes five silhouette views into STL, a tessellated STEP shell, and optionally a PDF.
+
+The `/api/ai-insight` endpoint is currently keyword-based and does not call an AI model. Unsupported Analyzer inputs can fall back to simulated measurements.
+
+## Main API endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/health` | Backend health check |
+| `POST /api/export` | STEP/STP to PDF export |
+| `POST /api/export-dxf` | Conditional sheet-metal DXF export |
+| `POST /api/analyze` | Geometry probe or simulated Analyzer job |
+| `POST /api/reconstruct` | Start a five-photo reconstruction job |
+| `GET /api/reconstruct/{job_id}` | Read reconstruction status |
+| `GET /api/reconstruct/{job_id}/download` | Download an available reconstruction artifact |
+| `POST /api/ai-insight` | Return a rule-based status message |
+
+## Project structure
+
+```text
 src/
-  components/        # Glas-UI Bausteine (Buttons, Header, Cards)
-  layouts/           # Auth Layout + App Shell (Sidebar, Mobile Nav)
-  pages/             # Auth, Dashboard, Projekte, Export, Profil, Reconstruct
-  providers/         # AuthContext auf Firebase Auth
-  services/          # AI-Insight-Proxy + Export-API + Analyzer + Reconstruct + Storage Helper
-  styles/            # globals.css mit Glass Look Tokens
+  components/        Reusable UI components
+  layouts/           Authentication and application layouts
+  pages/             Dashboard, Analyzer, Export, Projects, Profile, Reconstruct
+  providers/         Firebase authentication context
+  services/          Backend API and Firebase Storage clients
+  styles/            Global application styles
 
 server/
-  main.py            # FastAPI Endpunkte + DSE-Orchestrierung
-  freecad/           # FreeCAD-Subprozesse (step_to_pdf, step_feature_probe, step_unfold)
-  rules/             # Dimension Strategy Engine + Schema
-  knowledge/         # Wissensbasis (knowledge_base.json) + Reference Learning
-  tests/             # DSE Unit Tests
-  _debug/            # Debug-Artefakte (SVG, PNG, JSON, Agent-Runs)
-  _golden/           # Golden Baselines fuer Regression (baseline + real_priority)
-  _samples/          # STEP-Samples in Kategorie-Ordnern (Fraesteile, Drehteile, Blechteile, Baugruppen)
-  sample_catalog.py  # Sample-Sets (baseline, real, real_priority, all)
-  test_views.py      # View-Regression + Quality Checks
-  reference_learning_gate.py  # Real-Part Reference Learning Gate
+  main.py            FastAPI routes and job orchestration
+  freecad/           STEP probing, drawing generation, unfolding, reconstruction
+  rules/             Dimension planning, quality scoring, and rule schemas
+  knowledge/         Drawing-rule knowledge base and reference-learning data
+  tests/             Backend and drawing-strategy tests
+  _debug/            Generated previews, reports, logs, and run artifacts
+  _golden/           Managed regression baselines
+  _samples/          STEP sample models
+  test_views.py      Drawing regression and quality checks
+
+electron/
+  main.cjs           Desktop shell and local backend launcher
 ```
 
-### Regressionsmodi
+## Verification
 
-| Sample-Set       | Golden-Quelle                          | Modus    | Fehlende Golden-Eintraege |
-|------------------|----------------------------------------|----------|---------------------------|
-| `baseline`       | `_golden/views_baseline.json`          | **strict** | FAIL                    |
-| `real_priority`  | `_golden/views_real_priority.json`     | **strict** | FAIL                    |
-| `real20`         | `_golden/views_real20.json`            | **strict** | FAIL                    |
-| `real`           | real_priority-Subset                   | subset   | nur Live-Quality-Checks   |
-| `all`            | baseline + real_priority vereint       | subset   | nur Live-Quality-Checks   |
+Backend unit and API tests:
 
-- `strict`: Jedes Sample muss einen Golden-Eintrag haben. Fehlende Eintraege fuehren zu einem Testfehler.
-- `subset`: Nur verwaltete Golden-Eintraege werden geprueft. Samples ohne Golden-Eintrag werden durch Live-Quality-Checks validiert — kein Snapshot-Vergleich.
-- Mit `--strict` wird strict-Modus fuer jedes Sample-Set erzwungen (fehlende Goldens = FAIL).
-- Mit `--golden <path>` wird strict-Modus mit einer expliziten Golden-Datei erzwungen.
+```powershell
+cd server
+python -m pytest tests test_api_endpoints.py test_norm_profile.py test_sample_catalog.py -q
+```
+
+Dimension-strategy tests:
+
+```powershell
+cd server
+python -m pytest tests/test_dimension_strategy.py -q
+```
+
+Drawing smoke test:
+
+```powershell
+cd server
+python test_views.py --sample-set baseline --stability-runs 1
+```
+
+Primary drawing-quality gate:
+
+```powershell
+cd server
+python test_views.py --sample-set real20 --stability-runs 1
+```
+
+Current pass/fail numbers are intentionally not embedded in this README. Check CI and the latest artifacts under `server/_debug/visual_reviews/`.
+
+## Available scripts
+
+| Script | Purpose |
+|---|---|
+| `npm run dev` | Start the Vite development server |
+| `npm run build` | Type-check and build the frontend |
+| `npm run preview` | Preview the production frontend build |
+| `npm run lint` | Run ESLint |
+| `npm run dist:win` | Build Windows NSIS and portable Electron packages |
 
 ## Deployment
 
+The repository includes:
+
+- A Dockerfile and Docker Compose configuration for the Python backend
+- Electron Builder configuration for Windows desktop packages
+- Apache/Plesk SPA routing configuration
+- GitHub Actions workflows for frontend, backend, and drawing checks
+
+Build the frontend with:
+
 ```bash
 npm run build
-# dist/ nach Drawform-Website kopieren oder als eigenes Static Hosting ausliefern
 ```
 
-Auf klassischen Hosts (Nginx/Apache) reicht es, das `dist/`-Verzeichnis neben die bestehende Website zu legen und via Rewrite auf `index.html` zu routen. Für moderne Deployments (Vercel, Netlify, Cloudflare Pages) einfach das Repo verbinden und `npm run build` als Build Command hinterlegen.
-
-### Plesk/Ubuntu Server
-
-Für klassische Plesk-Server (Apache/Nginx) findest du eine Schritt-für-Schritt-Anleitung unter `deploy/plesk/README.md`.
-
-## Weiterentwicklung
-
-- Auth und Storage laufen über Firebase. Trage dafür die `VITE_FIREBASE_*` Werte im Frontend und den Firebase Service Account im Backend ein.
-- Backend-Endpunkte prüfen Firebase ID Tokens und filtern Analyse-/Reconstruct-Jobs auf den angemeldeten Benutzer.
-- Export-, Analyzer- und Reconstruct-Uploads werden zusätzlich benutzergebunden in Firebase Storage gespiegelt.
-- Für AI-Features lassen sich weitere Panels (Co-Pilot, Generative Assist) leicht über `fetchAiInsight` erweitern.
-- Die Export-Seite unterstützt bereits Drag & Drop – bei Bedarf Dateianalyse/Progress-Bar ergänzen.
-- Fuer Entwickler-Dokumentation siehe `Developer.md`, `DEVELOPER_DOCS.md` und `REPO_SYNC_POLICY.md`.
+The generated `dist/` directory can be served as a static single-page application. API routes must be forwarded to the FastAPI backend.
